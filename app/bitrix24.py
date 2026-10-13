@@ -339,13 +339,12 @@ class Bitrix24:
         cats = self.call("crm.category.list", {"entityTypeId": 2})["result"].get("categories", [])
         res = {str(c["id"]): {"name": c.get("name") or "Общая", "stages": {}} for c in cats}
         res.setdefault("0", {"name": "Общая", "stages": {}})
-        entity_ids = ["DEAL_STAGE" if cid == "0" else f"DEAL_STAGE_{cid}" for cid in res]
-        for st in self.list_all("crm.status.list", {"filter": {"ENTITY_ID": entity_ids}, "order": {"SORT": "ASC"}}):
-            eid = st.get("ENTITY_ID", "")
-            cid = "0" if eid == "DEAL_STAGE" else eid.replace("DEAL_STAGE_", "")
-            sem = (st.get("EXTRA") or {}).get("SEMANTICS") or st.get("SEMANTICS") or ""
-            res.setdefault(cid, {"name": cid, "stages": {}})["stages"][st["STATUS_ID"]] = {
-                "name": st.get("NAME"), "sort": int(st.get("SORT") or 0), "semantics": sem}
+        for cid in res:
+            # фильтр по ENTITY_ID принимает только строку, поэтому стадии запрашиваются по одной воронке
+            eid = "DEAL_STAGE" if cid == "0" else f"DEAL_STAGE_{cid}"
+            for st in self.list_all("crm.status.list", {"filter": {"ENTITY_ID": eid}, "order": {"SORT": "ASC"}}):
+                sem = (st.get("EXTRA") or {}).get("SEMANTICS") or st.get("SEMANTICS") or ""
+                res[cid]["stages"][st["STATUS_ID"]] = {"name": st.get("NAME"), "sort": int(st.get("SORT") or 0), "semantics": sem}
         return res
 
     def fetch_crm_deals(self, employees, fcfg):
