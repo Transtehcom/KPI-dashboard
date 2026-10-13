@@ -35,18 +35,24 @@ def run(con, config, force_demo=False):
             writes = []  # (источник, таблица, строки, поле даты)
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
+                b24 = Bitrix24(config["bitrix24"], log=log.append)
+                by_uid = {int(e["b24_user_id"]): e["login"] for e in emps if e.get("b24_user_id")}
+                # воронки и данные для KPI выгружаются независимо: ошибка в одном не мешает обновить другое
                 try:
-                    b24 = Bitrix24(config["bitrix24"], log=log.append)
-                    data = b24.fetch({int(e["b24_user_id"]): e["login"] for e in emps if e.get("b24_user_id")}, date_from)
-                    for table, rows in data.items():
-                        writes.append(("Б24", table, rows, B24_DATE_FIELDS.get(table)))
-                    by_uid = {int(e["b24_user_id"]): e["login"] for e in emps if e.get("b24_user_id")}
                     rows = b24.fetch_crm_deals(by_uid, config.get("deal_funnel", {})) + \
                         b24.fetch_crm_leads(by_uid, config.get("lead_funnel", {}))
                     writes.append(("Б24", "crm_deals", rows, None))
                 except Exception as e:  # noqa
                     status = "error"
-                    log.append(f"Ошибка Битрикс24: {e}")
+                    log.append(f"Ошибка Битрикс24 (воронки): {e}")
+                    traceback.print_exc()
+                try:
+                    data = b24.fetch(by_uid, date_from)
+                    for table, rows in data.items():
+                        writes.append(("Б24", table, rows, B24_DATE_FIELDS.get(table)))
+                except Exception as e:  # noqa
+                    status = "error"
+                    log.append(f"Ошибка Битрикс24 (данные для KPI): {e}")
                     traceback.print_exc()
             else:
                 log.append("Битрикс24 не настроен (bitrix24.webhook)")
