@@ -4,7 +4,8 @@
   python manage.py sync                — выгрузить данные из Битрикс24 и 1С (или пересоздать демо-данные)
   python manage.py password ЛОГИН      — задать пароль пользователю
   python manage.py check               — проверить подключение к Битрикс24 и 1С
-  python manage.py preview             — собрать автономную HTML-страницу с текущими данными (web/preview.html)
+  python manage.py stages              — показать воронки и стадии сделок Б24 (для настройки deal_funnel)
+  python manage.py preview            — собрать автономную HTML-страницу с текущими данными (web/preview.html)
 """
 import getpass
 import sys
@@ -55,6 +56,13 @@ def main():
                 print(f"1С → {name} ({ds.get('source', 'http')}): OK, строк за сегодня: {len(rows)}")
             except Exception as e:  # noqa
                 print(f"1С → {name} ({ds.get('source', 'http')}): ошибка — {e}")
+    elif cmd == "stages":
+        from app.bitrix24 import Bitrix24
+        from app.common import load_config
+        for cid, c in Bitrix24(load_config()["bitrix24"]).deal_stages().items():
+            print(f"\nВоронка {cid}: {c['name']}")
+            for sid, st in sorted(c["stages"].items(), key=lambda x: x[1]["sort"]):
+                print(f"  {sid:<28} {st['name']}" + ("  (успех)" if st["semantics"] == "S" else "  (провал)" if st["semantics"] == "F" else ""))
     elif cmd == "preview":
         from build_preview import build
         print("Готово:", build())

@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS deals (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, client TEXT, created TEXT,
   closed_date TEXT, result TEXT, amount REAL);
 
+-- текущий срез сделок CRM для вкладки «Воронка сделок» (все ответственные, не только сотрудники с KPI)
+CREATE TABLE IF NOT EXISTS crm_deals (
+  id TEXT PRIMARY KEY, emp TEXT, responsible_id TEXT, responsible TEXT, category_id TEXT, category TEXT,
+  stage_id TEXT, stage TEXT, stage_sort INTEGER, semantic TEXT, title TEXT, client TEXT, amount REAL,
+  created TEXT, stage_since TEXT, snapshot TEXT);
+
 CREATE TABLE IF NOT EXISTS leads (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, first_contact TEXT, qualified_date TEXT,
   need INTEGER, budget INTEGER, lpr INTEGER, solvency INTEGER, next_step INTEGER, status TEXT);
@@ -114,7 +120,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 """
 
 # таблицы, которые полностью перезаписываются при синхронизации
-SYNC_TABLES = ["activities", "tenders", "deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
+SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()

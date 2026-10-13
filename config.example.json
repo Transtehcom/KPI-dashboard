@@ -57,6 +57,17 @@
     "min_call_seconds": 120
   },
 
+  "deal_funnel": {
+    "_comment": "Вкладка «Воронка сделок» (только для руководителя): текущий срез открытых сделок из CRM «Сделки». Секция задаётся ID стадий (stages) и/или названиями стадий (stage_names, без учёта регистра). all_open: true — в секцию попадают все открытые сделки. Список стадий с ID: python manage.py stages",
+    "category_ids": [],
+    "include_closed": false,
+    "sections": [
+      { "key": "work",        "title": "Сделок в работе",       "all_open": true },
+      { "key": "precontract", "title": "Преддоговорных сделок", "stages": ["PREPARATION", "PREPAYMENT_INVOICE"], "stage_names": ["Подготовка документов", "Согласование договора", "Преддоговорная работа"] },
+      { "key": "contract",    "title": "Договорные сделки",     "stages": ["EXECUTING", "FINAL_INVOICE"], "stage_names": ["Договор подписан", "Договор заключён", "Исполнение договора"] }
+    ]
+  },
+
   "onec": {
     "_comment": "Подключение к 1С. Для каждого набора данных source = http (HTTP-сервис 1С, рекомендуется), odata (стандартный OData-интерфейс) или csv (файл выгрузки). Формат полей — в README, раздел «Данные из 1С».",
     "base_url": "http://СЕРВЕР-1С/БАЗА/",

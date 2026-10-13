@@ -11,6 +11,7 @@ from app import demo, sync  # noqa: E402
 from app.common import (connect, load_json, load_rules, month_add, month_bounds, replace_rows,  # noqa: E402
                         weeks_of_month, working_days)
 from app.engine import Engine  # noqa: E402
+from app.funnel import deal_funnel  # noqa: E402
 
 TODAY = dt.date(2026, 10, 20)
 EXAMPLE = load_json("config.example.json")
@@ -175,6 +176,24 @@ class EngineTest(unittest.TestCase):
         it = self.item("pm", "qualified_leads", "2026-09")
         self.assertEqual(it["status"], "fail")  # 80% < min_pct 90%
         self.assertEqual(it["payout"], 0)
+
+    # ---------------------------------------------------------------- воронка сделок
+    def test_deal_funnel_sections_and_filters(self):
+        def deal(i, stage_id, stage, emp="pm", semantic="P", amount=100):
+            return {"id": f"d{i}", "emp": emp, "responsible_id": "14" if emp else "25", "responsible": "ПМ" if emp else "Другой",
+                    "category_id": "0", "category": "Продажи", "stage_id": stage_id, "stage": stage, "stage_sort": 10,
+                    "semantic": semantic, "title": f"Сделка {i}", "amount": amount, "stage_since": "2026-10-01T09:00:00",
+                    "snapshot": "2026-10-20T09:00:00"}
+        replace_rows(self.con, "crm_deals", [deal(1, "NEW", "Новая"), deal(2, "PREPARATION", "Подготовка документов"),
+                                             deal(3, "C0:AGREE", "согласование договора", emp=None),
+                                             deal(4, "EXECUTING", "Договор подписан"), deal(5, "WON", "Успех", semantic="S")])
+        f = deal_funnel(self.con, EXAMPLE)
+        self.assertEqual([s["count"] for s in f["sections"]], [4, 2, 1])  # закрытая сделка не входит в срез
+        self.assertEqual(f["other_stages"], [{"category": "Продажи", "stage": "Новая", "count": 1}])
+        self.assertEqual(f["sections"][1]["share_of_first"], 0.5)
+        other = deal_funnel(self.con, EXAMPLE, login="id:25")
+        self.assertEqual([s["count"] for s in other["sections"]], [1, 1, 0])
+        self.assertEqual(len(other["filters"]["responsibles"]), 2)  # фильтр не сужает список вариантов
 
     # ---------------------------------------------------------------- демо целиком
     def test_demo_overview_runs_for_all_months(self):

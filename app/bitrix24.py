@@ -332,3 +332,54 @@ class Bitrix24:
                          "closed": self.iso(t.get("closedDate")), "status": str(t.get("status"))}
                         for t in tasks if emp(t.get("responsibleId")) and t.get("deadline")]
         return out
+
+    # ---------- воронка сделок (раздел CRM «Сделки»)
+    def deal_stages(self):
+        """Воронки и стадии сделок: {category_id: {"name": ..., "stages": {stage_id: {"name", "sort", "semantics"}}}}."""
+        cats = self.call("crm.category.list", {"entityTypeId": 2})["result"].get("categories", [])
+        res = {str(c["id"]): {"name": c.get("name") or "Общая", "stages": {}} for c in cats}
+        res.setdefault("0", {"name": "Общая", "stages": {}})
+        entity_ids = ["DEAL_STAGE" if cid == "0" else f"DEAL_STAGE_{cid}" for cid in res]
+        for st in self.list_all("crm.status.list", {"filter": {"ENTITY_ID": entity_ids}, "order": {"SORT": "ASC"}}):
+            eid = st.get("ENTITY_ID", "")
+            cid = "0" if eid == "DEAL_STAGE" else eid.replace("DEAL_STAGE_", "")
+            sem = (st.get("EXTRA") or {}).get("SEMANTICS") or st.get("SEMANTICS") or ""
+            res.setdefault(cid, {"name": cid, "stages": {}})["stages"][st["STATUS_ID"]] = {
+                "name": st.get("NAME"), "sort": int(st.get("SORT") or 0), "semantics": sem}
+        return res
+
+    def fetch_crm_deals(self, employees, fcfg):
+        """Текущий срез открытых сделок для воронки руководителя."""
+        self.log("Б24: сделки для воронки")
+        stages = self.deal_stages()
+        flt = {"CLOSED": "N"}
+        if fcfg.get("include_closed"):
+            flt = {}
+        if fcfg.get("category_ids"):
+            flt["CATEGORY_ID"] = fcfg["category_ids"]
+        deals = self.list_all("crm.deal.list", {
+            "filter": flt, "order": {"ID": "ASC"},
+            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID", "OPPORTUNITY",
+                       "DATE_CREATE", "MOVED_TIME", "COMPANY_ID"]})
+        companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
+        uids = list({int(d["ASSIGNED_BY_ID"]) for d in deals if d.get("ASSIGNED_BY_ID")})
+        users = {}
+        for i in range(0, len(uids), 50):
+            for u in self.list_all("user.get", {"FILTER": {"ID": uids[i:i + 50]}}):
+                users[str(u["ID"])] = " ".join(x for x in (u.get("NAME"), u.get("LAST_NAME")) if x) or f"Пользователь {u['ID']}"
+        snap = time.strftime("%Y-%m-%dT%H:%M:%S")
+        rows = []
+        for d in deals:
+            cid = str(d.get("CATEGORY_ID") or "0")
+            cat = stages.get(cid, {"name": cid, "stages": {}})
+            st = cat["stages"].get(d.get("STAGE_ID"), {})
+            rid = str(d.get("ASSIGNED_BY_ID") or "")
+            rows.append({
+                "id": "deal" + str(d["ID"]), "emp": employees.get(int(rid)) if rid else None, "responsible_id": rid,
+                "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
+                "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
+                "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
+                "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
+        return rows

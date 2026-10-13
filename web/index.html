@@ -27,6 +27,9 @@
   --bar: #0e6a74;
   --bar-2: #9cc9cd;
   --shadow: 0 1px 2px rgba(20, 32, 34, .06), 0 4px 16px rgba(20, 32, 34, .04);
+  --funnel: #2a62cf;
+  --funnel-line: #3d6fd1;
+  --funnel-soft: #e7eefc;
   --font: "Golos Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --r: 10px;
@@ -37,7 +40,7 @@
     --fg: #e6eeee; --fg-2: #a9b8b9; --fg-3: #7d8d8e; --accent: #4fc1cc; --accent-soft: #173a3d; --accent-ink: #062022;
     --good: #43c66a; --good-soft: #163522; --warn: #f0b429; --warn-soft: #3a2f12; --bad: #f06a5f; --bad-soft: #3d1c1a;
     --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #222e2f; --bar: #4fc1cc; --bar-2: #24585d;
-    --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
+    --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #5b8ef0; --funnel-line: #4a74c9; --funnel-soft: #1c2742; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
@@ -45,7 +48,7 @@
   --fg: #e6eeee; --fg-2: #a9b8b9; --fg-3: #7d8d8e; --accent: #4fc1cc; --accent-soft: #173a3d; --accent-ink: #062022;
   --good: #43c66a; --good-soft: #163522; --warn: #f0b429; --warn-soft: #3a2f12; --bad: #f06a5f; --bad-soft: #3d1c1a;
   --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #222e2f; --bar: #4fc1cc; --bar-2: #24585d;
-  --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
+  --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #5b8ef0; --funnel-line: #4a74c9; --funnel-soft: #1c2742; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -253,8 +256,46 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .preview-bar select { min-height: 28px; padding: 2px 8px; }
 .empty { padding: 40px 16px; text-align: center; color: var(--fg-3); }
 
+/* --- вкладки и воронка сделок */
+.tabs { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--surface-2); }
+.tabs a { padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); text-decoration: none; white-space: nowrap; }
+.tabs a:hover { color: var(--fg); }
+.tabs a.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.filters label { font-size: 12px; color: var(--fg-3); display: flex; gap: 6px; align-items: center; }
+.fn { display: flex; flex-direction: column; }
+.fn-row { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: center; border-bottom: 1.5px solid var(--funnel-line);
+  cursor: pointer; position: relative; }
+.fn-row:last-child { border-bottom: 0; }
+.fn-row:focus-visible { outline-offset: -2px; }
+.fn-shape { padding: 7px 0 7px 24px; }
+.fn-shape svg { display: block; width: 100%; height: auto; overflow: visible; }
+.fn-lab { padding: 10px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; align-items: baseline; }
+.fn-lab .t { font-size: 15px; color: var(--fg-2); }
+.fn-lab .c { font: 600 30px/1.1 var(--mono); letter-spacing: -.02em; text-align: right; grid-row: 1 / span 2; grid-column: 2; }
+.fn-lab .a { font: 500 13px var(--mono); color: var(--fg); }
+.fn-lab .h { grid-column: 1 / -1; font-size: 12px; color: var(--fg-3); }
+.fn-row.sel .fn-lab .t { color: var(--fg); font-weight: 600; }
+.fn-row.sel { background: linear-gradient(90deg, transparent, var(--funnel-soft) 60%); }
+.fn-row:hover .fn-lab .t { color: var(--fg); }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.hbars { display: flex; flex-direction: column; gap: 7px; }
+.hbar { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
+.hbar .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar .nm small { color: var(--fg-3); }
+.hbar .tr { height: 10px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.hbar .tr i { display: block; height: 100%; background: var(--funnel); border-radius: 3px; }
+.hbar .v { font: 500 12px var(--mono); text-align: right; white-space: nowrap; }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
+
 @media (max-width: 1100px) { .cards { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .fn-row { grid-template-columns: minmax(0, 44%) minmax(0, 1fr); }
+  .fn-shape { padding-left: 8px; }
+  .fn-lab { padding: 8px 10px; grid-template-columns: minmax(0, 1fr); }
+  .fn-lab .c { grid-row: auto; grid-column: 1; text-align: left; font-size: 24px; }
   .shell { grid-template-columns: minmax(0, 1fr); }
   .side { border-right: 0; border-bottom: 1px solid var(--line); flex-direction: row; overflow-x: auto; padding: 10px 16px; gap: 6px; }
   .nav-group { flex-direction: row; gap: 6px; }
@@ -360,6 +401,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       const d = (PREVIEW.employee[u.searchParams.get("login")] || {})[m];
       return d ? Promise.resolve(d) : Promise.reject(new Error("В превью доступны только последние месяцы"));
     }
+    if (u.pathname === "/api/funnel") {
+      const k = (u.searchParams.get("login") || "") + "|" + (u.searchParams.get("category") || "");
+      const d = PREVIEW.funnel && PREVIEW.funnel[k];
+      return d ? Promise.resolve(d) : Promise.reject(new Error("В превью можно выбрать только один фильтр: ответственного или воронку"));
+    }
     if (body) { toast("В превью изменения не сохраняются. На сервере оценка сразу пересчитает KPI."); return Promise.resolve({ ok: true }); }
     return Promise.reject(new Error("Нет данных"));
   }
@@ -397,6 +443,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const h = (location.hash || "").replace("#", "");
     if (!isMgr) { state.view = "emp"; state.login = b.me.login; }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
+    else if (h === "funnel") { state.view = "funnel"; }
     else { state.view = "team"; }
     renderShell();
     load();
@@ -419,18 +466,25 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><span class="brand-mark">KPI</span><span>KPI-ведомость <small>· ОП и ОС</small></span></div>
+        ${isMgr ? `<nav class="tabs" aria-label="Разделы"><a href="#team" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">KPI сотрудников</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронка сделок</a></nav>` : ""}
         <div class="ctrl">
           ${syncInfo()}
-          <label class="muted small" for="month">Период</label>
-          <select id="month">${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
+          <label class="muted small" for="month" ${state.view === "funnel" ? "hidden" : ""}>Период</label>
+          <select id="month" ${state.view === "funnel" ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
           <button class="btn" id="rulesBtn" type="button">Методика</button>
           ${isMgr && !PREVIEW ? `<button class="btn" id="syncBtn" type="button">Обновить данные</button>` : ""}
           <span class="small muted">${esc(b.me.name)}</span>
           ${PREVIEW ? "" : `<button class="btn ghost" id="logoutBtn" type="button">Выйти</button>`}
         </div></header>
-      <div class="shell ${isMgr ? "" : "single"}">${isMgr ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
+      <div class="shell ${isMgr && state.view !== "funnel" ? "" : "single"}">${isMgr && state.view !== "funnel" ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
     document.getElementById("month").addEventListener("change", (e) => { state.month = e.target.value; load(); });
     document.getElementById("rulesBtn").addEventListener("click", showRules);
+    root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
+      else { state.view = "team"; location.hash = "team"; }
+      renderShell(); load();
+    }));
     const sb = document.getElementById("syncBtn");
     if (sb) sb.addEventListener("click", async () => {
       sb.disabled = true; sb.textContent = "Загружаю…";
@@ -461,13 +515,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     side.querySelectorAll("[data-login]").forEach((a) => a.addEventListener("click", (ev) => { ev.preventDefault(); openEmp(a.dataset.login); }));
     side.querySelector("[data-team]").addEventListener("click", (ev) => { ev.preventDefault(); state.view = "team"; location.hash = "team"; load(); });
   }
-  function openEmp(login) { state.view = "emp"; state.login = login; location.hash = "emp-" + login; load(); window.scrollTo(0, 0); }
+  function openEmp(login) { const fromFunnel = state.view === "funnel"; state.view = "emp"; state.login = login; location.hash = "emp-" + login; if (fromFunnel) renderShell(); load(); window.scrollTo(0, 0); }
 
   let sideCache = {};
   async function load() {
     const main = document.getElementById("main");
     main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
+    if (state.view === "funnel") {
+      try { renderFunnel(await api(`/api/funnel?login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(state.fCat || "")}`)); }
+      catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      return;
+    }
     try {
       if (isMgr && (state.view === "team" || !sideCache[state.month])) {
         sideCache[state.month] = await api("/api/overview?month=" + state.month);
@@ -674,6 +733,91 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }));
   }
 
+  // ---------- воронка сделок
+  const money = (v) => {
+    if (v == null) return "—";
+    const a = Math.abs(v);
+    if (a >= 1e9) return nf(v / 1e9, 2) + " млрд ₽";
+    if (a >= 1e6) return nf(v / 1e6, 1) + " млн ₽";
+    if (a >= 1e3) return nf(v / 1e3, 0) + " тыс ₽";
+    return nf(v) + " ₽";
+  };
+  function roundedPath(pts, r) {
+    const n = pts.length, seg = [];
+    for (let i = 0; i < n; i++) {
+      const p = pts[i], a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+      const da = Math.hypot(a[0] - p[0], a[1] - p[1]), db = Math.hypot(b[0] - p[0], b[1] - p[1]);
+      const ra = Math.min(r, da / 2), rb = Math.min(r, db / 2);
+      const A = [p[0] + ((a[0] - p[0]) * ra) / da, p[1] + ((a[1] - p[1]) * ra) / da];
+      const B = [p[0] + ((b[0] - p[0]) * rb) / db, p[1] + ((b[1] - p[1]) * rb) / db];
+      seg.push(`${i ? "L" : "M"}${A[0].toFixed(1)} ${A[1].toFixed(1)} Q${p[0]} ${p[1]} ${B[0].toFixed(1)} ${B[1].toFixed(1)}`);
+    }
+    return seg.join(" ") + " Z";
+  }
+  function funnelShape(i, n) {
+    // форма как в образце: широкий верх, каждая следующая секция уже, последняя сходится в скруглённое остриё
+    const W = 320, H = 78, cx = W / 2, step = (W - 120) / Math.max(1, n - 1);
+    const top = W - 4 - i * step, last = i === n - 1;
+    const bottom = last ? 8 : top - step * 0.78;
+    const pts = [[cx - top / 2, 1], [cx + top / 2, 1], [cx + bottom / 2, H - 1], [cx - bottom / 2, H - 1]];
+    const filled = i % 2 === 0;
+    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, last ? 14 : 11)}" fill="${filled ? "var(--funnel)" : "var(--surface)"}" stroke="var(--funnel)" stroke-width="${filled ? 0 : 2}" stroke-linejoin="round"/></svg>`;
+  }
+  function hbars(list, valueKey, labelFn, total) {
+    const mx = Math.max(1, ...list.map((x) => x[valueKey]));
+    return `<div class="hbars">${list.map((x) => `<div class="hbar"><div class="nm">${labelFn(x)}</div>
+      <div class="tr"><i style="width:${Math.max(1.5, (x[valueKey] / mx) * 100)}%"></i></div>
+      <div class="v">${nf(x.count)} шт · ${money(x.amount)}</div></div>`).join("")}</div>`;
+  }
+  function renderFunnel(f) {
+    state.fData = f;
+    const main = document.getElementById("main");
+    const secs = f.sections, sel = Math.min(state.fSel || 0, secs.length - 1), cur = secs[sel];
+    const snap = f.snapshot ? f.snapshot.replace("T", " ").slice(0, 16).split(" ") : null;
+    const snapTxt = snap ? snap[0].split("-").reverse().join(".") + " " + snap[1] : "—";
+    const otherSecs = secs.filter((s) => !s.all_open).map((s) => "«" + s.title + "»").join(" и ");
+    main.innerHTML = `
+      <div class="head"><div><div class="eyebrow">Битрикс24 · CRM · Сделки</div><h1>Воронка сделок</h1>
+        <div class="sub">Текущее состояние открытых сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.</div></div>
+        <div class="filters">
+          <label for="fLogin">Ответственный<select id="fLogin"><option value="">Все</option>${f.filters.responsibles.map((r) => `<option value="${esc(r.value)}" ${f.applied.login === r.value ? "selected" : ""}>${esc(r.name)} (${r.count})</option>`).join("")}</select></label>
+          <label for="fCat">Воронка<select id="fCat"><option value="">Все</option>${f.filters.categories.map((c) => `<option value="${esc(c.value)}" ${f.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
+        </div></div>
+      <section class="panel"><div class="fn" role="list">
+        ${secs.map((s, i) => `<div class="fn-row ${i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-sec="${i}" aria-label="${esc(s.title)}: ${s.count} сделок на ${money(s.amount)}">
+          <div class="fn-shape">${funnelShape(i, secs.length)}</div>
+          <div class="fn-lab"><span class="t">${esc(s.title)}</span><span class="c">${nf(s.count)}</span>
+            <span class="a">${money(s.amount)}</span>
+            <span class="h">${i === 0 ? "" : `${pct(s.share_of_first, 1)} от сделок в работе · `}${s.avg_days_on_stage != null ? `в среднем ${nf(s.avg_days_on_stage)} дн. на текущей стадии` : ""}</span></div>
+        </div>`).join("")}
+      </div></section>
+      <section class="panel"><div class="panel-h"><div><div class="eyebrow">Секция воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)} · ${money(cur.amount)}</h2></div>
+        <span class="muted small">${esc(cur.rule)}</span></div>
+        <div class="panel-b" style="display:flex;flex-direction:column;gap:16px">
+          ${cur.count ? `<div class="split">
+            <div><div class="eyebrow" style="margin-bottom:8px">По стадиям</div>${hbars(cur.by_stage, "count", (x) => `${esc(x.stage)} <small>· ${esc(x.category)}</small>`)}</div>
+            <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, "amount", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронку этого сотрудника">${esc(x.name)}</button>`)}</div>
+          </div>
+          <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Сделка</th><th>Клиент</th><th>Ответственный</th><th>Воронка</th><th>Стадия</th><th>Сумма, ₽</th><th>Дней на стадии</th></tr></thead><tbody>
+            ${cur.deals.slice(0, 150).map((d) => `<tr><td>${esc(d.title)}</td><td>${esc(d.client)}</td><td>${esc(d.responsible)}</td><td>${esc(d.category)}</td><td>${esc(d.stage)}</td>
+              <td class="n">${nf(d.amount)}</td><td class="n">${d.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
+          ${cur.deals.length > 150 ? `<div class="muted small">Показаны 150 крупнейших из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">В этой секции сейчас нет сделок.</div>`}
+        </div></section>
+      ${f.other_stages.length && otherSecs ? `<details class="panel more" style="border-top:0"><summary>Стадии, которые учитываются только в «${esc(secs[0].title)}» · ${f.other_stages.length}</summary><div class="more-b">
+        <div class="desc">Сделки на этих стадиях не входят в ${esc(otherSecs)}. Если какая-то стадия должна туда попадать, добавьте её название в config.json → deal_funnel → sections.</div>
+        <div class="hbars">${f.other_stages.map((o) => `<div class="hbar"><div class="nm">${esc(o.stage)} <small>· ${esc(o.category)}</small></div><div></div><div class="v">${nf(o.count)} шт</div></div>`).join("")}</div>
+      </div></details>` : ""}`;
+    main.querySelectorAll("[data-sec]").forEach((row) => {
+      const pick = () => { state.fSel = +row.dataset.sec; renderFunnel(state.fData); };
+      row.addEventListener("click", pick);
+      row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+    const apply = () => { state.fLogin = document.getElementById("fLogin").value; state.fCat = document.getElementById("fCat").value; load(); };
+    document.getElementById("fLogin").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fCat").value = ""; apply(); });
+    document.getElementById("fCat").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fLogin").value = ""; apply(); });
+    main.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => { state.fLogin = b.dataset.resp; if (PREVIEW) state.fCat = ""; load(); }));
+  }
+
   // ---------- методика
   function showRules() {
     const b = state.boot;
@@ -700,7 +844,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (!state.boot || state.boot.me.role !== "manager") return;
     const h = location.hash.replace("#", "");
     if (h.startsWith("emp-") && h.slice(4) !== state.login) { state.view = "emp"; state.login = h.slice(4); load(); }
-    else if (h === "team" && state.view !== "team") { state.view = "team"; load(); }
+    else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
+    else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
   });
   start();
 })();

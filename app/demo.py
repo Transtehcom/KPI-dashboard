@@ -251,6 +251,34 @@ def generate(con, config):
         if pos == "pm" and emp != "zakharov":
             baselines.append((emp, "conversion_last_year", 0.065 if emp == "kuznetsov" else 0.07))
 
+    # срез открытых сделок CRM для вкладки «Воронка сделок»
+    pipelines = {
+        "0": ("Продажи", [("NEW", "Новая"), ("C0:QUAL", "Квалификация"), ("C0:KP", "Подготовка КП"),
+                          ("PREPARATION", "Подготовка документов"), ("C0:AGREE", "Согласование договора"),
+                          ("EXECUTING", "Договор подписан"), ("FINAL_INVOICE", "Исполнение договора")],
+              [30, 22, 18, 11, 8, 6, 5]),
+        "1": ("Тендеры", [("C1:NEW", "Новая закупка"), ("C1:PREPARATION", "В работе"), ("C1:PREPAYMENT_INVOICE", "Подготовка заявки"),
+                          ("C1:EXECUTING", "Рассмотрение ЦП"), ("C1:AGREE", "Согласование договора"), ("C1:SIGNED", "Договор подписан")],
+              [16, 14, 10, 7, 4, 3]),
+    }
+    owners = {"0": [e for e in config["employees"] if e.get("position") == "pm"],
+              "1": [e for e in config["employees"] if e.get("position") in ("tender", "tender_lead")]}
+    extra_owner = {"login": None, "name": "Сергей Волков", "b24_user_id": 25}
+    snap = dt.datetime.combine(t, dt.time(9, 0)).isoformat()
+    for cid, (cname, stages, weights) in pipelines.items():
+        for si, ((sid, sname), w) in enumerate(zip(stages, weights)):
+            for _ in range(w):
+                o = rnd.choice(owners[cid] + [extra_owner]) if owners[cid] else extra_owner
+                created = t - dt.timedelta(days=rnd.randint(5 + si * 6, 40 + si * 15))
+                since = min(t, created + dt.timedelta(days=rnd.randint(1, 4 + si * 5)))
+                data["crm_deals"].append({
+                    "id": nid("cd"), "emp": o.get("login"), "responsible_id": str(o.get("b24_user_id", "")),
+                    "responsible": o["name"], "category_id": cid, "category": cname, "stage_id": sid, "stage": sname,
+                    "stage_sort": (si + 1) * 10, "semantic": "P", "title": f"{cname[:-1] if cid == '1' else 'Сделка'}: "
+                    f"{rnd.choice(['насосное оборудование', 'кабельная продукция', 'запорная арматура', 'щитовое оборудование', 'вентиляция', 'металлопрокат'])}",
+                    "client": rnd.choice(CLIENTS), "amount": round(rnd.lognormvariate(14.2, 0.7), -3),
+                    "created": created.isoformat(), "stage_since": since.isoformat(), "snapshot": snap})
+
     # показательный случай для демо: в прошлом месяце у Петрова торги выиграны ниже плановой себестоимости
     prev_first, prev_last = month_bounds(month_add(current_month(), -1))
     for r in data["tenders"]:

@@ -40,6 +40,9 @@ def run(con, config, force_demo=False):
                     data = b24.fetch({int(e["b24_user_id"]): e["login"] for e in emps if e.get("b24_user_id")}, date_from)
                     for table, rows in data.items():
                         writes.append(("Б24", table, rows, B24_DATE_FIELDS.get(table)))
+                    rows = b24.fetch_crm_deals({int(e["b24_user_id"]): e["login"] for e in emps if e.get("b24_user_id")},
+                                               config.get("deal_funnel", {}))
+                    writes.append(("Б24", "crm_deals", rows, None))
                 except Exception as e:  # noqa
                     status = "error"
                     log.append(f"Ошибка Битрикс24: {e}")
@@ -66,7 +69,8 @@ def run(con, config, force_demo=False):
                 with db_lock():
                     try:
                         for src, table, rows, date_field in writes:
-                            replace_rows(con, table, rows, emps=logins, date_field=date_field,
+                            # воронка сделок — срез по всем ответственным, заменяется целиком
+                            replace_rows(con, table, rows, emps=None if table == "crm_deals" else logins, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         if any(table == "clients" for _, table, _, _ in writes):
                             snapshot_clients(con, current_month())
