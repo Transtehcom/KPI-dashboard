@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from . import sync
 from .common import ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, weeks_of_month
 from .engine import CRITERIA_TITLES, Engine
-from .funnel import KINDS as FUNNEL_KINDS, deal_funnel
+from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, deal_funnel
 
 WEB = os.path.join(ROOT, "web")
 PAGE_HEAD = (b'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
@@ -196,6 +196,16 @@ class Handler(BaseHTTPRequestHandler):
         return login
 
     @staticmethod
+    def date_param(v):
+        """Необязательная дата ГГГГ-ММ-ДД из строки запроса."""
+        if not v:
+            return None
+        try:
+            return dt.date.fromisoformat(v).isoformat()
+        except (TypeError, ValueError):
+            raise BadRequest("Дата указывается в формате ГГГГ-ММ-ДД")
+
+    @staticmethod
     def week_param(v):
         try:
             d = dt.date.fromisoformat(v)
@@ -244,7 +254,9 @@ class Handler(BaseHTTPRequestHandler):
                     app.con.commit()
                 return self.send_json({"ok": True}, cookie="kpi_session=; Max-Age=0; Path=/")
 
-            me = app.session_user(self.token())
+            # соединение с базой одно на все потоки: без блокировки параллельные запросы мешают друг другу
+            with app.lock:
+                me = app.session_user(self.token())
             if not me:
                 return self.send_json({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
@@ -261,7 +273,14 @@ class Handler(BaseHTTPRequestHandler):
                     kind = q.get("kind") or "deals"
                     if kind not in FUNNEL_KINDS:
                         raise BadRequest("Неизвестная воронка")
-                    return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category"), kind))
+                    date_field = q.get("date_field") or "created"
+                    if date_field not in FUNNEL_DATE_FIELDS:
+                        raise BadRequest("Неизвестная дата для отбора")
+                    date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
+                    if date_from and date_to and date_from > date_to:
+                        raise BadRequest("Начало периода позже его конца")
+                    return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category"), kind,
+                                                      date_from, date_to, date_field))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:

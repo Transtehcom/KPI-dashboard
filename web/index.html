@@ -73,7 +73,7 @@ h3 { font-size: 14px; }
   font: 600 11px var(--mono); }
 .brand small { font-weight: 400; color: var(--fg-3); }
 .ctrl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-select, input[type=text], input[type=password], input[type=number] { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px;
+select, input[type=text], input[type=password], input[type=number], input[type=date], input[type=month] { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px;
   padding: 6px 10px; min-height: 34px; }
 .btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 6px 12px; min-height: 34px; font-weight: 500; }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -530,7 +530,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "funnel") {
       try {
-        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(cat)}`);
+        const [dFrom, dTo] = funnelPeriod();
+        const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(cat)}${per}`);
         const [leads, deals] = await Promise.all([q("leads", ""), q("deals", state.fCat || "")]);
         renderFunnel({ leads, deals });
       }
@@ -784,8 +786,34 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     { kind: "leads", title: "Лиды", gen: "лидов", one: "Лид", stage: "Статус" },
     { kind: "deals", title: "Сделки", gen: "сделок", one: "Сделка", stage: "Стадия" },
   ];
+  // период на вкладке «Воронки»: state.fPer = { mode: all | day | month | year | range, day, month, year, from, to }
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const isoDay = (x) => `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
+  const ruDay = (v) => v.split("-").reverse().join(".");
+  function funnelPeriod() {
+    const p = state.fPer || { mode: "all" };
+    if (p.mode === "day" && p.day) return [p.day, p.day];
+    if (p.mode === "month" && /^\d{4}-\d{2}$/.test(p.month || "")) {
+      const [y, m] = p.month.split("-").map(Number);
+      return [`${p.month}-01`, `${p.month}-${pad2(new Date(y, m, 0).getDate())}`];
+    }
+    if (p.mode === "year" && /^\d{4}$/.test(String(p.year || ""))) return [`${p.year}-01-01`, `${p.year}-12-31`];
+    if (p.mode === "range") {
+      const a = p.from || "", b = p.to || "";
+      return a && b && a > b ? [b, a] : [a, b];
+    }
+    return ["", ""];
+  }
   function renderFunnel(d) {
     state.fData = d;
+    const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage";
+    const perHtml = PREVIEW ? "" : `<label for="fMode">Период<select id="fMode">${[["all", "Всё время"], ["day", "День"], ["month", "Месяц"], ["year", "Год"], ["range", "С … по …"]].map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+          ${per.mode === "day" ? `<input type="date" id="fDay" aria-label="День" value="${esc(per.day || "")}">` : ""}
+          ${per.mode === "month" ? `<input type="month" id="fMonth" aria-label="Месяц" value="${esc(per.month || "")}">` : ""}
+          ${per.mode === "year" ? `<input type="number" id="fYear" aria-label="Год" min="2000" max="2100" step="1" style="width:90px" value="${esc(String(per.year || ""))}">` : ""}
+          ${per.mode === "range" ? `<label for="fFrom">с<input type="date" id="fFrom" value="${esc(per.from || "")}"></label><label for="fTo">по<input type="date" id="fTo" value="${esc(per.to || "")}"></label>` : ""}
+          ${per.mode !== "all" ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
+    const perTxt = !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`}.`;
     const main = document.getElementById("main");
     if (!d[state.fKind]) state.fKind = "leads";
     const K = FUNNELS.find((x) => x.kind === state.fKind);
@@ -818,8 +846,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
-        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.</div></div>
+        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}</div></div>
         <div class="filters">
+          ${perHtml}
           <label for="fLogin">Ответственный<select id="fLogin"><option value="">Все</option>${respList.map((r) => `<option value="${esc(r.value)}" ${login === r.value ? "selected" : ""}>${esc(r.name)} (${r.count})</option>`).join("")}</select></label>
           <label for="fCat">Воронка сделок<select id="fCat"><option value="">Все</option>${cats.map((c) => `<option value="${esc(c.value)}" ${d.deals.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
         </div></div>
@@ -845,6 +874,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       row.addEventListener("click", pick);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     });
+    const onChange = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { fn(el.value); load(); }); };
+    onChange("fMode", (v) => {
+      const t = new Date(), p = state.fPer || {};
+      state.fPer = { ...p, mode: v, day: p.day || isoDay(t), month: p.month || isoDay(t).slice(0, 7), year: p.year || t.getFullYear(),
+                     from: p.from || isoDay(t).slice(0, 8) + "01", to: p.to || isoDay(t) };
+    });
+    onChange("fDay", (v) => { state.fPer.day = v; });
+    onChange("fMonth", (v) => { state.fPer.month = v; });
+    onChange("fYear", (v) => { state.fPer.year = v; });
+    onChange("fFrom", (v) => { state.fPer.from = v; });
+    onChange("fTo", (v) => { state.fPer.to = v; });
+    onChange("fField", (v) => { state.fDateField = v; });
     const apply = () => { state.fLogin = document.getElementById("fLogin").value; state.fCat = document.getElementById("fCat").value; load(); };
     document.getElementById("fLogin").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fCat").value = ""; apply(); });
     document.getElementById("fCat").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fLogin").value = ""; apply(); });

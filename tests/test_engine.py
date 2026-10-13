@@ -208,6 +208,23 @@ class EngineTest(unittest.TestCase):
                          [("Распределено", 1), ("В работе", 2), ("Запросили ТКП", 0)])
         self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
 
+    def test_funnel_period_filters_by_created_or_stage_date(self):
+        def row(i, created, since):
+            return {"id": f"d{i}", "entity": "deal", "emp": "pm", "responsible_id": "14", "responsible": "ПМ",
+                    "category_id": "0", "category": "Отдел продаж", "stage_id": "PREPARATION", "stage": "Подготовка КП",
+                    "semantic": "P", "amount": 1, "created": created, "stage_since": since}
+        replace_rows(self.con, "crm_deals", [row(1, "2026-09-30T23:59:00", "2026-10-05T10:00:00"),
+                                             row(2, "2026-10-01T00:00:00", "2026-10-01T09:00:00"),
+                                             row(3, "2026-10-31T18:00:00", "2026-11-02T09:00:00")])
+        count = lambda **kw: deal_funnel(self.con, EXAMPLE, **kw)["sections"][0]["count"]
+        self.assertEqual(count(), 3)
+        self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-31"), 2)  # границы включительно
+        self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-01"), 1)
+        self.assertEqual(count(date_to="2026-09-30"), 1)
+        self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-31", date_field="stage"), 2)
+        f = deal_funnel(self.con, EXAMPLE, date_from="2027-01-01")
+        self.assertEqual((f["total"], f["filters"]["responsibles"][0]["count"]), (0, 0))  # вариант фильтра остаётся в списке
+
     # ---------------------------------------------------------------- демо целиком
     def test_demo_overview_runs_for_all_months(self):
         cfg = {**CONFIG, "employees": EXAMPLE["employees"]}

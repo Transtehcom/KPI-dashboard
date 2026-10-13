@@ -15,6 +15,8 @@ DEFAULT_SECTIONS = {
 }
 # вид воронки → значение crm_deals.entity и блок настроек в config.json
 KINDS = {"deals": ("deal", "deal_funnel"), "leads": ("lead", "lead_funnel")}
+# по какой дате отбирать записи за период → столбец crm_deals
+DATE_FIELDS = {"created": "created", "stage": "stage_since"}
 
 
 def _days(since, now):
@@ -24,22 +26,33 @@ def _days(since, now):
         return None
 
 
-def deal_funnel(con, config, login=None, category=None, kind="deals"):
+def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created"):
+    """date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
+    в период: created — дата создания, stage — дата перехода на текущую стадию."""
     entity, cfg_key = KINDS[kind]
     fcfg = config.get(cfg_key, {})
     sections_cfg = fcfg.get("sections") or DEFAULT_SECTIONS[kind]
     all_rows = [dict(r) for r in con.execute("SELECT * FROM crm_deals WHERE COALESCE(entity, 'deal') = ?", (entity,))]
     if not fcfg.get("include_closed"):
         all_rows = [r for r in all_rows if r["semantic"] not in ("S", "F")]
+    snap = max((r["snapshot"] for r in all_rows if r["snapshot"]), default=None)
 
-    # варианты фильтров считаем по всем записям среза
+    # варианты фильтров — по всему срезу (чтобы выбранный вариант не пропадал из списка), счётчики — по периоду
     resp = {}
     for r in all_rows:
         key = r["emp"] or ("id:" + (r["responsible_id"] or ""))
-        resp.setdefault(key, {"value": key, "name": r["responsible"] or "Без ответственного", "count": 0})["count"] += 1
+        resp.setdefault(key, {"value": key, "name": r["responsible"] or "Без ответственного", "count": 0})
     cats = {}
     for r in all_rows:
-        cats.setdefault(r["category_id"], {"value": r["category_id"], "name": r["category"], "count": 0})["count"] += 1
+        cats.setdefault(r["category_id"], {"value": r["category_id"], "name": r["category"], "count": 0})
+
+    if date_from or date_to:
+        col = DATE_FIELDS[date_field]
+        all_rows = [r for r in all_rows if r[col] and (not date_from or r[col][:10] >= date_from)
+                    and (not date_to or r[col][:10] <= date_to)]
+    for r in all_rows:
+        resp[r["emp"] or ("id:" + (r["responsible_id"] or ""))]["count"] += 1
+        cats[r["category_id"]]["count"] += 1
 
     rows = all_rows
     if login:
@@ -94,7 +107,6 @@ def deal_funnel(con, config, login=None, category=None, kind="deals"):
         if r["id"] not in matched_any:
             other.setdefault((r["category"], r["stage"]), 0)
             other[(r["category"], r["stage"])] += 1
-    snap = max((r["snapshot"] for r in all_rows if r["snapshot"]), default=None)
     return {
         "kind": kind,
         "config_key": cfg_key,
@@ -106,5 +118,6 @@ def deal_funnel(con, config, login=None, category=None, kind="deals"):
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),
             "categories": sorted(cats.values(), key=lambda x: x["name"]),
         },
-        "applied": {"login": login or "", "category": "" if category is None else str(category)},
+        "applied": {"login": login or "", "category": "" if category is None else str(category),
+                    "date_from": date_from or "", "date_to": date_to or "", "date_field": date_field},
     }
