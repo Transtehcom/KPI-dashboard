@@ -441,7 +441,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (!state.month || !months.includes(state.month)) state.month = PREVIEW ? PREVIEW.default_month : b.current_month;
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
-    if (!isMgr) { state.view = "emp"; state.login = b.me.login; }
+    if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
     else if (h === "funnel") { state.view = "funnel"; }
     else { state.view = "team"; }
@@ -466,7 +466,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><span class="brand-mark">KPI</span><span>KPI-ведомость <small>· ОП и ОС</small></span></div>
-        ${isMgr ? `<nav class="tabs" aria-label="Разделы"><a href="#team" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">KPI сотрудников</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронка сделок</a></nav>` : ""}
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронка сделок</a></nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${state.view === "funnel" ? "hidden" : ""}>Период</label>
@@ -482,7 +482,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
       ev.preventDefault();
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
-      else { state.view = "team"; location.hash = "team"; }
+      else if (isMgr) { state.view = "team"; location.hash = "team"; }
+      else { state.view = "emp"; location.hash = "kpi"; }
       renderShell(); load();
     }));
     const sb = document.getElementById("syncBtn");
@@ -841,8 +842,13 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   }
 
   window.addEventListener("hashchange", () => {
-    if (!state.boot || state.boot.me.role !== "manager") return;
+    if (!state.boot) return;
     const h = location.hash.replace("#", "");
+    if (state.boot.me.role !== "manager") {
+      const view = h === "funnel" ? "funnel" : "emp";
+      if (view !== state.view) { state.view = view; renderShell(); load(); }
+      return;
+    }
     if (h.startsWith("emp-") && h.slice(4) !== state.login) { state.view = "emp"; state.login = h.slice(4); load(); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }

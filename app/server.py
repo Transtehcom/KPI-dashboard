@@ -257,9 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
                     return self.send_json(app.engine.overview(month))
-                if path == "/api/funnel":
-                    if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                if path == "/api/funnel":  # воронка сделок открыта всем, кто вошёл в дашборд
                     return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category")))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
