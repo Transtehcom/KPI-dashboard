@@ -251,34 +251,54 @@ def generate(con, config):
         if pos == "pm" and emp != "zakharov":
             baselines.append((emp, "conversion_last_year", 0.065 if emp == "kuznetsov" else 0.07))
 
-    # срез открытых сделок CRM для вкладки «Воронка сделок»
+    # срез открытых сделок и лидов CRM для вкладки «Воронки»
     pipelines = {
-        "0": ("Продажи", [("NEW", "Новая"), ("C0:QUAL", "Квалификация"), ("C0:KP", "Подготовка КП"),
-                          ("PREPARATION", "Подготовка документов"), ("C0:AGREE", "Согласование договора"),
-                          ("EXECUTING", "Договор подписан"), ("FINAL_INVOICE", "Исполнение договора")],
-              [30, 22, 18, 11, 8, 6, 5]),
-        "1": ("Тендеры", [("C1:NEW", "Новая закупка"), ("C1:PREPARATION", "В работе"), ("C1:PREPAYMENT_INVOICE", "Подготовка заявки"),
-                          ("C1:EXECUTING", "Рассмотрение ЦП"), ("C1:AGREE", "Согласование договора"), ("C1:SIGNED", "Договор подписан")],
-              [16, 14, 10, 7, 4, 3]),
+        "0": ("Отдел продаж", "Сделка", "pm", [
+            ("NEW", "Выявление потребности", 8), ("UC_SUPPLY", "Обработка отделами снабжения и логистики", 14),
+            ("PREPARATION", "Подготовка КП", 12), ("PREPAYMENT_INVOICE", "КП отправлено клиенту", 22),
+            ("UC_PRE", "Преддоговорные сделки", 6), ("EXECUTING", "Подписание договора", 5),
+            ("UC_DOCS", "Закрывающие документы", 4), ("FINAL_INVOICE", "Ожидает оплаты", 6)]),
+        "4": ("Поиск тендеров", "Тендер", "tender", [
+            ("C4:NEW", "Черновик", 3), ("C4:PREPARATION", "В работе", 14), ("C4:UC_ASK", "Дозапрос заказчику", 3),
+            ("C4:PREPAYMENT_INVOICE", "Экономическое обоснование", 5), ("C4:EXECUTING", "Подготовка документации", 6),
+            ("C4:FINAL_INVOICE", "Обеспечение заявки", 3), ("C4:UC_SUBMIT", "Подача на площадке", 4),
+            ("C4:UC_WAIT", "Ожидает результатов", 20), ("C4:UC_EXPL", "Разъяснение от заказчика", 2),
+            ("C4:UC_PRE", "Преддоговорные сделки", 3)]),
+        "2": ("Договорная работа (тендеры)", "Тендер", "tender", [
+            ("C2:NEW", "Подписание договора", 3), ("C2:UC_PROD", "В производстве", 5),
+            ("C2:UC_SHIP", "В отгрузке и доставке", 4), ("C2:UC_CLAIM", "Рекламации", 1),
+            ("C2:UC_DOCS", "Закрывающие документы", 3), ("C2:UC_PAY", "Ожидает оплаты", 6),
+            ("C2:UC_OVERDUE", "Просроченная оплата", 2)]),
     }
-    owners = {"0": [e for e in config["employees"] if e.get("position") == "pm"],
-              "1": [e for e in config["employees"] if e.get("position") in ("tender", "tender_lead")]}
+    lead_statuses = [("NEW", "Не обработан", 4), ("UC_DIST", "Распределённые", 60), ("IN_PROCESS", "В работе", 25),
+                     ("UC_CONTACTS", "Поиск контактов", 6), ("UC_CALL", "Ожидают звонка", 30),
+                     ("UC_CONTR", "Поиск подрядчиков", 3), ("UC_TEND", "Поиск тендеров", 4),
+                     ("UC_MEET", "Переговоры о встрече", 5), ("UC_TKP", "Запросили ТКП", 12)]
+    by_group = {"pm": [e for e in config["employees"] if e.get("position") == "pm"],
+                "tender": [e for e in config["employees"] if e.get("position") in ("tender", "tender_lead")]}
     extra_owner = {"login": None, "name": "Сергей Волков", "b24_user_id": 25}
     snap = dt.datetime.combine(t, dt.time(9, 0)).isoformat()
-    for cid, (cname, stages, weights) in pipelines.items():
-        for si, ((sid, sname), w) in enumerate(zip(stages, weights)):
-            for _ in range(w):
-                o = rnd.choice(owners[cid] + [extra_owner]) if owners[cid] else extra_owner
-                created = t - dt.timedelta(days=rnd.randint(5 + si * 6, 40 + si * 15))
-                since = min(t, created + dt.timedelta(days=rnd.randint(1, 4 + si * 5)))
-                data["crm_deals"].append({
-                    "id": nid("cd"), "emp": o.get("login"), "responsible_id": str(o.get("b24_user_id", "")),
-                    "responsible": o["name"], "category_id": cid, "category": cname, "stage_id": sid, "stage": sname,
-                    "stage_sort": (si + 1) * 10, "semantic": "P", "title": f"{cname[:-1] if cid == '1' else 'Сделка'}: "
-                    f"{rnd.choice(['насосное оборудование', 'кабельная продукция', 'запорная арматура', 'щитовое оборудование', 'вентиляция', 'металлопрокат'])}",
-                    "client": rnd.choice(CLIENTS), "amount": round(rnd.lognormvariate(14.2, 0.7), -3),
-                    "created": created.isoformat(), "stage_since": since.isoformat(), "snapshot": snap})
+    goods = ["насосное оборудование", "кабельная продукция", "запорная арматура", "щитовое оборудование", "вентиляция",
+             "металлопрокат"]
 
+    def crm_row(entity, cid, cname, sid, sname, si, owners, title, amount):
+        o = rnd.choice(owners + [extra_owner])
+        created = t - dt.timedelta(days=rnd.randint(5 + si * 6, 40 + si * 15))
+        since = min(t, created + dt.timedelta(days=rnd.randint(1, 4 + si * 5)))
+        return {"id": nid("cd"), "entity": entity, "emp": o.get("login"), "responsible_id": str(o.get("b24_user_id", "")),
+                "responsible": o["name"], "category_id": cid, "category": cname, "stage_id": sid, "stage": sname,
+                "stage_sort": (si + 1) * 10, "semantic": "P", "title": title, "client": rnd.choice(CLIENTS), "amount": amount,
+                "created": created.isoformat(), "stage_since": since.isoformat(), "snapshot": snap}
+
+    for cid, (cname, word, group, stages) in pipelines.items():
+        for si, (sid, sname, w) in enumerate(stages):
+            for _ in range(w):
+                data["crm_deals"].append(crm_row("deal", cid, cname, sid, sname, si, by_group[group],
+                                                 f"{word}: {rnd.choice(goods)}", round(rnd.lognormvariate(14.2, 0.7), -3)))
+    for si, (sid, sname, w) in enumerate(lead_statuses):
+        for _ in range(w):
+            data["crm_deals"].append(crm_row("lead", "lead", "Лиды", sid, sname, min(si, 3), by_group["pm"] + by_group["tender"],
+                                             f"Запрос: {rnd.choice(goods)}", 0))
     # показательный случай для демо: в прошлом месяце у Петрова торги выиграны ниже плановой себестоимости
     prev_first, prev_last = month_bounds(month_add(current_month(), -1))
     for r in data["tenders"]:

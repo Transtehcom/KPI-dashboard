@@ -46,11 +46,12 @@ CREATE TABLE IF NOT EXISTS deals (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, client TEXT, created TEXT,
   closed_date TEXT, result TEXT, amount REAL);
 
--- текущий срез сделок CRM для вкладки «Воронка сделок» (все ответственные, не только сотрудники с KPI)
+-- текущий срез сделок и лидов CRM для вкладки «Воронки» (все ответственные, не только сотрудники с KPI);
+-- entity: deal — сделка, lead — лид
 CREATE TABLE IF NOT EXISTS crm_deals (
   id TEXT PRIMARY KEY, emp TEXT, responsible_id TEXT, responsible TEXT, category_id TEXT, category TEXT,
   stage_id TEXT, stage TEXT, stage_sort INTEGER, semantic TEXT, title TEXT, client TEXT, amount REAL,
-  created TEXT, stage_since TEXT, snapshot TEXT);
+  created TEXT, stage_since TEXT, snapshot TEXT, entity TEXT);
 
 CREATE TABLE IF NOT EXISTS leads (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, first_contact TEXT, qualified_date TEXT,
@@ -124,7 +125,8 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
-ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")], "sales": [("signed_date", "TEXT")]}
+ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")], "sales": [("signed_date", "TEXT")],
+                 "crm_deals": [("entity", "TEXT")]}
 
 
 def migrate(con):

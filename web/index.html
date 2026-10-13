@@ -279,6 +279,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .fn-row.sel { background: linear-gradient(90deg, transparent, var(--funnel-soft) 60%); }
 .fn-row:hover .fn-lab .t { color: var(--fg); }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.fn2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.fn2 .fn-row { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
+.fn2 .fn-shape { padding-left: 12px; }
+.fn2 .fn-lab { padding: 10px 14px; }
+.fn2 .fn-lab .c { font-size: 26px; }
 .hbars { display: flex; flex-direction: column; gap: 7px; }
 .hbar { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
 .hbar .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -289,7 +294,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
 .linkish:hover { text-decoration: underline; }
 
-@media (max-width: 1100px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .cards { grid-template-columns: minmax(0, 1fr); } .fn2 { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) {
   .split { grid-template-columns: minmax(0, 1fr); }
   .fn-row { grid-template-columns: minmax(0, 44%) minmax(0, 1fr); }
@@ -402,7 +407,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       return d ? Promise.resolve(d) : Promise.reject(new Error("В превью доступны только последние месяцы"));
     }
     if (u.pathname === "/api/funnel") {
-      const k = (u.searchParams.get("login") || "") + "|" + (u.searchParams.get("category") || "");
+      const k = (u.searchParams.get("kind") || "deals") + "|" + (u.searchParams.get("login") || "") + "|" + (u.searchParams.get("category") || "");
       const d = PREVIEW.funnel && PREVIEW.funnel[k];
       return d ? Promise.resolve(d) : Promise.reject(new Error("В превью можно выбрать только один фильтр: ответственного или воронку"));
     }
@@ -466,7 +471,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><span class="brand-mark">KPI</span><span>KPI-ведомость <small>· ОП и ОС</small></span></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронка сделок</a></nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a></nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${state.view === "funnel" ? "hidden" : ""}>Период</label>
@@ -524,7 +529,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "funnel") {
-      try { renderFunnel(await api(`/api/funnel?login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(state.fCat || "")}`)); }
+      try {
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(cat)}`);
+        const [leads, deals] = await Promise.all([q("leads", ""), q("deals", state.fCat || "")]);
+        renderFunnel({ leads, deals });
+      }
       catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
       return;
     }
@@ -764,52 +773,75 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const filled = i % 2 === 0;
     return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, last ? 14 : 11)}" fill="${filled ? "var(--funnel)" : "var(--surface)"}" stroke="var(--funnel)" stroke-width="${filled ? 0 : 2}" stroke-linejoin="round"/></svg>`;
   }
-  function hbars(list, valueKey, labelFn, total) {
+  function hbars(list, valueKey, labelFn, withAmount) {
     const mx = Math.max(1, ...list.map((x) => x[valueKey]));
     return `<div class="hbars">${list.map((x) => `<div class="hbar"><div class="nm">${labelFn(x)}</div>
       <div class="tr"><i style="width:${Math.max(1.5, (x[valueKey] / mx) * 100)}%"></i></div>
-      <div class="v">${nf(x.count)} шт · ${money(x.amount)}</div></div>`).join("")}</div>`;
+      <div class="v">${nf(x.count)} шт${withAmount ? ` · ${money(x.amount)}` : ""}</div></div>`).join("")}</div>`;
   }
-  function renderFunnel(f) {
-    state.fData = f;
+  // две воронки на одной вкладке: лиды и сделки; d = { leads, deals } — ответы /api/funnel
+  const FUNNELS = [
+    { kind: "leads", title: "Лиды", gen: "лидов", one: "Лид", stage: "Статус" },
+    { kind: "deals", title: "Сделки", gen: "сделок", one: "Сделка", stage: "Стадия" },
+  ];
+  function renderFunnel(d) {
+    state.fData = d;
     const main = document.getElementById("main");
-    const secs = f.sections, sel = Math.min(state.fSel || 0, secs.length - 1), cur = secs[sel];
-    const snap = f.snapshot ? f.snapshot.replace("T", " ").slice(0, 16).split(" ") : null;
+    if (!d[state.fKind]) state.fKind = "leads";
+    const K = FUNNELS.find((x) => x.kind === state.fKind);
+    const f = d[K.kind], secs = f.sections, sel = Math.min(state.fSel || 0, secs.length - 1), cur = secs[sel];
+    const hasAmount = (x) => x.sections.some((s) => s.amount);
+    const snapRaw = d.deals.snapshot || d.leads.snapshot;
+    const snap = snapRaw ? snapRaw.replace("T", " ").slice(0, 16).split(" ") : null;
     const snapTxt = snap ? snap[0].split("-").reverse().join(".") + " " + snap[1] : "—";
-    const otherSecs = secs.filter((s) => !s.all_open).map((s) => "«" + s.title + "»").join(" и ");
-    main.innerHTML = `
-      <div class="head"><div><div class="eyebrow">Битрикс24 · CRM · Сделки</div><h1>Воронка сделок</h1>
-        <div class="sub">Текущее состояние открытых сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.</div></div>
-        <div class="filters">
-          <label for="fLogin">Ответственный<select id="fLogin"><option value="">Все</option>${f.filters.responsibles.map((r) => `<option value="${esc(r.value)}" ${f.applied.login === r.value ? "selected" : ""}>${esc(r.name)} (${r.count})</option>`).join("")}</select></label>
-          <label for="fCat">Воронка<select id="fCat"><option value="">Все</option>${f.filters.categories.map((c) => `<option value="${esc(c.value)}" ${f.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
-        </div></div>
-      <section class="panel"><div class="fn" role="list">
-        ${secs.map((s, i) => `<div class="fn-row ${i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-sec="${i}" aria-label="${esc(s.title)}: ${s.count} сделок на ${money(s.amount)}">
-          <div class="fn-shape">${funnelShape(i, secs.length)}</div>
+    // ответственные из обеих воронок в одном списке
+    const resp = new Map();
+    FUNNELS.forEach((x) => d[x.kind].filters.responsibles.forEach((r) => {
+      const o = resp.get(r.value) || { value: r.value, name: r.name, count: 0 };
+      o.count += r.count; resp.set(r.value, o);
+    }));
+    const respList = [...resp.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    const login = d.deals.applied.login, cats = d.deals.filters.categories;
+    const panel = (x) => {
+      const fx = d[x.kind], amt = hasAmount(fx);
+      return `<section class="panel"><div class="panel-h"><h2>${x.title}</h2><span class="muted small">${nf(fx.total)} ${x.gen} в воронке</span></div>
+        <div class="fn" role="list">
+        ${fx.sections.map((s, i) => `<div class="fn-row ${x.kind === K.kind && i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-kind="${x.kind}" data-sec="${i}" aria-label="${x.title}, ${esc(s.title)}: ${s.count}">
+          <div class="fn-shape">${funnelShape(i, fx.sections.length)}</div>
           <div class="fn-lab"><span class="t">${esc(s.title)}</span><span class="c">${nf(s.count)}</span>
-            <span class="a">${money(s.amount)}</span>
-            <span class="h">${i === 0 ? "" : `${pct(s.share_of_first, 1)} от сделок в работе · `}${s.avg_days_on_stage != null ? `в среднем ${nf(s.avg_days_on_stage)} дн. на текущей стадии` : ""}</span></div>
+            ${amt ? `<span class="a">${money(s.amount)}</span>` : ""}
+            <span class="h">${s.share_of_total != null ? `${pct(s.share_of_total, 1)} воронки` : ""}${s.avg_days_on_stage != null ? ` · в среднем ${nf(s.avg_days_on_stage)} дн. на стадии` : ""}</span></div>
         </div>`).join("")}
-      </div></section>
-      <section class="panel"><div class="panel-h"><div><div class="eyebrow">Секция воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)} · ${money(cur.amount)}</h2></div>
+        </div></section>`;
+    };
+    const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
+    const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
+    main.innerHTML = `
+      <div class="head"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
+        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.</div></div>
+        <div class="filters">
+          <label for="fLogin">Ответственный<select id="fLogin"><option value="">Все</option>${respList.map((r) => `<option value="${esc(r.value)}" ${login === r.value ? "selected" : ""}>${esc(r.name)} (${r.count})</option>`).join("")}</select></label>
+          <label for="fCat">Воронка сделок<select id="fCat"><option value="">Все</option>${cats.map((c) => `<option value="${esc(c.value)}" ${d.deals.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
+        </div></div>
+      <div class="fn2">${FUNNELS.map(panel).join("")}</div>
+      <section class="panel"><div class="panel-h"><div><div class="eyebrow">${K.title} · этап воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)}${amt ? ` · ${money(cur.amount)}` : ""}</h2></div>
         <span class="muted small">${esc(cur.rule)}</span></div>
         <div class="panel-b" style="display:flex;flex-direction:column;gap:16px">
           ${cur.count ? `<div class="split">
-            <div><div class="eyebrow" style="margin-bottom:8px">По стадиям</div>${hbars(cur.by_stage, "count", (x) => `${esc(x.stage)} <small>· ${esc(x.category)}</small>`)}</div>
-            <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, "amount", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронку этого сотрудника">${esc(x.name)}</button>`)}</div>
+            <div><div class="eyebrow" style="margin-bottom:8px">По стадиям</div>${hbars(cur.by_stage, "count", (x) => `${esc(x.stage)}${manyCats ? ` <small>· ${esc(x.category)}</small>` : ""}`, amt)}</div>
+            <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, amt ? "amount" : "count", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронки этого сотрудника">${esc(x.name)}</button>`, amt)}</div>
           </div>
-          <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Сделка</th><th>Клиент</th><th>Ответственный</th><th>Воронка</th><th>Стадия</th><th>Сумма, ₽</th><th>Дней на стадии</th></tr></thead><tbody>
-            ${cur.deals.slice(0, 150).map((d) => `<tr><td>${esc(d.title)}</td><td>${esc(d.client)}</td><td>${esc(d.responsible)}</td><td>${esc(d.category)}</td><td>${esc(d.stage)}</td>
-              <td class="n">${nf(d.amount)}</td><td class="n">${d.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
-          ${cur.deals.length > 150 ? `<div class="muted small">Показаны 150 крупнейших из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">В этой секции сейчас нет сделок.</div>`}
+          <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>${K.one}</th><th>Клиент</th><th>Ответственный</th>${manyCats ? "<th>Воронка</th>" : ""}<th>${K.stage}</th>${amt ? "<th>Сумма, ₽</th>" : ""}<th>Дней на стадии</th></tr></thead><tbody>
+            ${cur.deals.slice(0, 150).map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(r.client)}</td><td>${esc(r.responsible)}</td>${manyCats ? `<td>${esc(r.category)}</td>` : ""}<td>${esc(r.stage)}</td>
+              ${amt ? `<td class="n">${nf(r.amount)}</td>` : ""}<td class="n">${r.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
+          ${cur.deals.length > 150 ? `<div class="muted small">Показаны первые 150 из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">На этом этапе сейчас ничего нет.</div>`}
         </div></section>
-      ${f.other_stages.length && otherSecs ? `<details class="panel more" style="border-top:0"><summary>Стадии, которые учитываются только в «${esc(secs[0].title)}» · ${f.other_stages.length}</summary><div class="more-b">
-        <div class="desc">Сделки на этих стадиях не входят в ${esc(otherSecs)}. Если какая-то стадия должна туда попадать, добавьте её название в config.json → deal_funnel → sections.</div>
-        <div class="hbars">${f.other_stages.map((o) => `<div class="hbar"><div class="nm">${esc(o.stage)} <small>· ${esc(o.category)}</small></div><div></div><div class="v">${nf(o.count)} шт</div></div>`).join("")}</div>
-      </div></details>` : ""}`;
+      ${other.map((x) => `<details class="panel more" style="border-top:0"><summary>${x.title}: стадии вне этапов воронки · ${d[x.kind].other_stages.length}</summary><div class="more-b">
+        <div class="desc">Записи на этих стадиях не попали ни в один этап, заданный списком стадий. Чтобы учесть стадию, добавьте её название в config.json → ${d[x.kind].config_key} → sections.</div>
+        <div class="hbars">${d[x.kind].other_stages.map((o) => `<div class="hbar"><div class="nm">${esc(o.stage)}${x.kind === "deals" ? ` <small>· ${esc(o.category)}</small>` : ""}</div><div></div><div class="v">${nf(o.count)} шт</div></div>`).join("")}</div>
+      </div></details>`).join("")}`;
     main.querySelectorAll("[data-sec]").forEach((row) => {
-      const pick = () => { state.fSel = +row.dataset.sec; renderFunnel(state.fData); };
+      const pick = () => { state.fKind = row.dataset.kind; state.fSel = +row.dataset.sec; renderFunnel(state.fData); };
       row.addEventListener("click", pick);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     });

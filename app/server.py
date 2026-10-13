@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from . import sync
 from .common import ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, weeks_of_month
 from .engine import CRITERIA_TITLES, Engine
-from .funnel import deal_funnel
+from .funnel import KINDS as FUNNEL_KINDS, deal_funnel
 
 WEB = os.path.join(ROOT, "web")
 PAGE_HEAD = (b'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
@@ -257,8 +257,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
                     return self.send_json(app.engine.overview(month))
-                if path == "/api/funnel":  # воронка сделок открыта всем, кто вошёл в дашборд
-                    return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category")))
+                if path == "/api/funnel":  # воронки сделок и лидов открыты всем, кто вошёл в дашборд
+                    kind = q.get("kind") or "deals"
+                    if kind not in FUNNEL_KINDS:
+                        raise BadRequest("Неизвестная воронка")
+                    return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category"), kind))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:
@@ -322,8 +325,9 @@ def serve():
     app = App()
     Handler.app = app
     cfg = app.config
-    # демо-база, созданная до появления воронки сделок, пересоздаётся
-    demo_outdated = cfg.get("mode", "demo") == "demo" and not app.con.execute("SELECT COUNT(*) FROM crm_deals").fetchone()[0]
+    # демо-база, созданная до появления воронок сделок и лидов, пересоздаётся
+    demo_outdated = cfg.get("mode", "demo") == "demo" and not app.con.execute(
+        "SELECT COUNT(*) FROM crm_deals WHERE entity = 'lead'").fetchone()[0]
     if not sync.last_sync(app.con) or demo_outdated:
         print("Первая синхронизация…")
         print(sync.run(app.con, cfg)["message"])

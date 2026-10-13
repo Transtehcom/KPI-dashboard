@@ -1,11 +1,20 @@
-"""Воронка сделок: текущий срез открытых сделок CRM, разложенный по секциям из config.deal_funnel."""
+"""Воронки сделок и лидов: текущий срез открытых записей CRM, разложенный по секциям из config.deal_funnel / lead_funnel."""
 import datetime as dt
 
-DEFAULT_SECTIONS = [
-    {"key": "work", "title": "Сделок в работе", "all_open": True},
-    {"key": "precontract", "title": "Преддоговорных сделок", "stages": ["PREPARATION", "PREPAYMENT_INVOICE"]},
-    {"key": "contract", "title": "Договорные сделки", "stages": ["EXECUTING", "FINAL_INVOICE"]},
-]
+DEFAULT_SECTIONS = {
+    "deals": [
+        {"key": "work", "title": "В работе", "all_open": True},
+        {"key": "precontract", "title": "Преддоговорные сделки", "stages": ["PREPARATION", "PREPAYMENT_INVOICE"]},
+        {"key": "contract", "title": "Договорные сделки", "stages": ["EXECUTING", "FINAL_INVOICE"]},
+    ],
+    "leads": [
+        {"key": "new", "title": "Распределено", "stages": ["NEW"]},
+        {"key": "work", "title": "В работе", "stages": ["IN_PROCESS"]},
+        {"key": "processed", "title": "Обработано", "stages": ["PROCESSED"]},
+    ],
+}
+# вид воронки → значение crm_deals.entity и блок настроек в config.json
+KINDS = {"deals": ("deal", "deal_funnel"), "leads": ("lead", "lead_funnel")}
 
 
 def _days(since, now):
@@ -15,14 +24,15 @@ def _days(since, now):
         return None
 
 
-def deal_funnel(con, config, login=None, category=None):
-    fcfg = config.get("deal_funnel", {})
-    sections_cfg = fcfg.get("sections") or DEFAULT_SECTIONS
-    all_rows = [dict(r) for r in con.execute("SELECT * FROM crm_deals")]
+def deal_funnel(con, config, login=None, category=None, kind="deals"):
+    entity, cfg_key = KINDS[kind]
+    fcfg = config.get(cfg_key, {})
+    sections_cfg = fcfg.get("sections") or DEFAULT_SECTIONS[kind]
+    all_rows = [dict(r) for r in con.execute("SELECT * FROM crm_deals WHERE COALESCE(entity, 'deal') = ?", (entity,))]
     if not fcfg.get("include_closed"):
         all_rows = [r for r in all_rows if r["semantic"] not in ("S", "F")]
 
-    # варианты фильтров считаем по всем сделкам среза
+    # варианты фильтров считаем по всем записям среза
     resp = {}
     for r in all_rows:
         key = r["emp"] or ("id:" + (r["responsible_id"] or ""))
@@ -38,15 +48,16 @@ def deal_funnel(con, config, login=None, category=None):
         rows = [r for r in rows if r["category_id"] == str(category)]
 
     now = dt.datetime.now()
-    sections, matched_any = [], set()
+    sections, matched_any, in_funnel = [], set(), set()
     for sc in sections_cfg:
         ids = set(sc.get("stages") or [])
         names = {n.strip().lower() for n in sc.get("stage_names") or []}
-        if sc.get("all_open"):
-            sel = rows
-        else:
-            sel = [r for r in rows if r["stage_id"] in ids or (r["stage"] or "").strip().lower() in names]
+        only_cats = {str(c) for c in sc.get("category_ids") or []}  # секция только по этим воронкам Б24
+        sel = [r for r in rows if not only_cats or r["category_id"] in only_cats]
+        if not sc.get("all_open"):
+            sel = [r for r in sel if r["stage_id"] in ids or (r["stage"] or "").strip().lower() in names]
             matched_any |= {r["id"] for r in sel}
+        in_funnel |= {r["id"] for r in sel}
         by_stage, by_resp = {}, {}
         for r in sel:
             k = (r["category"], r["stage"])
@@ -62,12 +73,12 @@ def deal_funnel(con, config, login=None, category=None):
         deals = sorted(sel, key=lambda r: -(r["amount"] or 0))
         sections.append({
             "key": sc.get("key"), "title": sc.get("title"), "all_open": bool(sc.get("all_open")),
-            "rule": "все открытые сделки" if sc.get("all_open") else
+            "rule": "все открытые" if sc.get("all_open") else
                     "стадии: " + ", ".join(list(sc.get("stage_names") or []) + list(sc.get("stages") or [])),
             "count": len(sel), "amount": sum(r["amount"] or 0 for r in sel),
             "avg_days_on_stage": round(sum(ages) / len(ages)) if ages else None,
             "by_stage": sorted(by_stage.values(), key=lambda x: (x["category"], x["sort"])),
-            "by_responsible": sorted(by_resp.values(), key=lambda x: -x["amount"]),
+            "by_responsible": sorted(by_resp.values(), key=lambda x: (-x["amount"], -x["count"])),
             "deals": [{"title": r["title"], "client": r["client"], "responsible": r["responsible"], "category": r["category"],
                        "stage": r["stage"], "amount": r["amount"], "days": _days(r["stage_since"], now)} for r in deals[:300]],
         })
@@ -76,6 +87,7 @@ def deal_funnel(con, config, login=None, category=None):
         s["share_of_first"] = s["count"] / first if first else None
         prev = sections[i - 1]["count"] if i else None
         s["share_of_prev"] = s["count"] / prev if prev else None
+        s["share_of_total"] = s["count"] / len(in_funnel) if in_funnel else None
 
     other = {}
     for r in rows:
@@ -84,8 +96,11 @@ def deal_funnel(con, config, login=None, category=None):
             other[(r["category"], r["stage"])] += 1
     snap = max((r["snapshot"] for r in all_rows if r["snapshot"]), default=None)
     return {
+        "kind": kind,
+        "config_key": cfg_key,
         "snapshot": snap,
         "sections": sections,
+        "total": len(in_funnel),
         "other_stages": [{"category": c, "stage": s, "count": n} for (c, s), n in sorted(other.items(), key=lambda x: -x[1])],
         "filters": {
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),

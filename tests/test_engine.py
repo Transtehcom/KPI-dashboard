@@ -179,21 +179,34 @@ class EngineTest(unittest.TestCase):
 
     # ---------------------------------------------------------------- воронка сделок
     def test_deal_funnel_sections_and_filters(self):
-        def deal(i, stage_id, stage, emp="pm", semantic="P", amount=100):
-            return {"id": f"d{i}", "emp": emp, "responsible_id": "14" if emp else "25", "responsible": "ПМ" if emp else "Другой",
-                    "category_id": "0", "category": "Продажи", "stage_id": stage_id, "stage": stage, "stage_sort": 10,
-                    "semantic": semantic, "title": f"Сделка {i}", "amount": amount, "stage_since": "2026-10-01T09:00:00",
-                    "snapshot": "2026-10-20T09:00:00"}
-        replace_rows(self.con, "crm_deals", [deal(1, "NEW", "Новая"), deal(2, "PREPARATION", "Подготовка документов"),
-                                             deal(3, "C0:AGREE", "согласование договора", emp=None),
-                                             deal(4, "EXECUTING", "Договор подписан"), deal(5, "WON", "Успех", semantic="S")])
+        def row(i, stage, cat="0", emp="pm", semantic="P", entity="deal"):
+            return {"id": f"{entity}{i}", "entity": entity, "emp": emp, "responsible_id": "14" if emp else "25",
+                    "responsible": "ПМ" if emp else "Другой", "category_id": cat, "category": f"Воронка {cat}",
+                    "stage_id": f"S{i}", "stage": stage, "stage_sort": 10, "semantic": semantic, "title": f"Запись {i}",
+                    "amount": 100, "stage_since": "2026-10-01T09:00:00", "snapshot": "2026-10-20T09:00:00"}
+        replace_rows(self.con, "crm_deals", [
+            row(1, "Выявление потребности"),                       # стадии нет в секциях
+            row(2, "подготовка кп"),                               # название без учёта регистра
+            row(3, "В работе", cat="4", emp=None),
+            row(4, "Подготовка КП", cat="3"),                      # «В работе» берёт только воронки 0 и 4
+            row(5, "Подписание договора", cat="2"), row(6, "Ожидает оплаты", cat="3"),
+            row(7, "Просроченная оплата", cat="2"), row(8, "Сделка успешна", semantic="S"),
+            row(9, "Распределённые", cat="lead", entity="lead"), row(10, "Ожидают звонка", cat="lead", entity="lead"),
+            row(11, "Поиск контактов", cat="lead", entity="lead"), row(12, "Новому менеджеру", cat="lead", entity="lead"),
+        ])
         f = deal_funnel(self.con, EXAMPLE)
-        self.assertEqual([s["count"] for s in f["sections"]], [4, 2, 1])  # закрытая сделка не входит в срез
-        self.assertEqual(f["other_stages"], [{"category": "Продажи", "stage": "Новая", "count": 1}])
-        self.assertEqual(f["sections"][1]["share_of_first"], 0.5)
+        self.assertEqual([(s["title"], s["count"]) for s in f["sections"]],
+                         [("В работе", 2), ("Преддоговорные сделки", 1), ("Договорные сделки", 1), ("ПДЗ", 1)])
+        self.assertEqual(f["total"], 5)  # закрытая сделка и лиды в воронку сделок не входят
+        self.assertEqual({o["stage"] for o in f["other_stages"]}, {"Выявление потребности", "Подготовка КП"})
+        self.assertEqual(f["sections"][0]["share_of_total"], 0.4)
         other = deal_funnel(self.con, EXAMPLE, login="id:25")
-        self.assertEqual([s["count"] for s in other["sections"]], [1, 1, 0])
+        self.assertEqual([s["count"] for s in other["sections"]], [1, 0, 0, 0])
         self.assertEqual(len(other["filters"]["responsibles"]), 2)  # фильтр не сужает список вариантов
+        leads = deal_funnel(self.con, EXAMPLE, kind="leads")
+        self.assertEqual([(s["title"], s["count"]) for s in leads["sections"]],
+                         [("Распределено", 1), ("В работе", 2), ("Запросили ТКП", 0)])
+        self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
 
     # ---------------------------------------------------------------- демо целиком
     def test_demo_overview_runs_for_all_months(self):

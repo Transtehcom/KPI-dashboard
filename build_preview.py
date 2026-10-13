@@ -9,13 +9,20 @@ from app.server import App
 
 
 def _funnels(app):
-    """Срезы воронки для превью: все, по каждому ответственному и по каждой воронке Б24."""
-    base = deal_funnel(app.con, app.config)
-    res = {"|": base}
-    for r in base["filters"]["responsibles"]:
-        res[r["value"] + "|"] = deal_funnel(app.con, app.config, login=r["value"])
-    for c in base["filters"]["categories"]:
-        res["|" + c["value"]] = deal_funnel(app.con, app.config, category=c["value"])
+    """Срезы воронок лидов и сделок для превью: все, по каждому ответственному и по каждой воронке Б24.
+    Ключ — «вид|ответственный|воронка»."""
+    res = {}
+    logins = set()
+    for kind in ("leads", "deals"):
+        base = deal_funnel(app.con, app.config, kind=kind)
+        res[f"{kind}||"] = base
+        logins |= {r["value"] for r in base["filters"]["responsibles"]}
+        if kind == "deals":
+            for c in base["filters"]["categories"]:
+                res[f"{kind}||{c['value']}"] = deal_funnel(app.con, app.config, category=c["value"], kind=kind)
+    for kind in ("leads", "deals"):
+        for login in logins:
+            res[f"{kind}|{login}|"] = deal_funnel(app.con, app.config, login=login, kind=kind)
     return res
 
 
