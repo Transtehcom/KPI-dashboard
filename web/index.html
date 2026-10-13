@@ -284,6 +284,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .fn2 .fn-shape { padding-left: 12px; }
 .fn2 .fn-lab { padding: 10px 14px; }
 .fn2 .fn-lab .c { font-size: 26px; }
+.fn-bar { padding: 8px 0 8px 14px; min-height: 66px; display: flex; align-items: center; }
+.fn-bar i { display: block; min-width: 6px; border: 1.5px solid var(--funnel); border-radius: 4px; }
+.fn-legend { padding: 8px 14px 10px; font-size: 12px; color: var(--fg-3); border-top: 1px solid var(--line); }
+.msel-wrap { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--fg-3); }
+.msel { position: relative; }
+.msel summary { list-style: none; cursor: pointer; min-width: 150px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong);
+  border-radius: 8px; background: var(--surface); color: var(--fg); font-size: 14px; }
+.msel summary::-webkit-details-marker { display: none; }
+.msel summary::after { content: "▾"; float: right; margin-left: 10px; color: var(--fg-3); }
+.msel-pop { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 250px; max-height: 320px; overflow: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
+.filters .msel-pop label { font-size: 13px; color: var(--fg); padding: 4px; gap: 8px; cursor: pointer; }
+.msel-pop .linkish { margin-top: 6px; padding: 4px; font-size: 13px; }
+.print-only { display: none; }
 .hbars { display: flex; flex-direction: column; gap: 7px; }
 .hbar { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
 .hbar .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -320,6 +334,39 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   .funnel .row { grid-template-columns: minmax(0, 120px) minmax(0, 1fr) 40px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* --- печать: документ собирается из блока .print-only, всё остальное скрыто */
+@page { size: A4; margin: 14mm 12mm; }
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    --bg: #fff; --surface: #fff; --surface-2: #f1f3f3; --line: #c9d0d0; --line-strong: #aab4b4; --fg: #000; --fg-2: #2b2b2b; --fg-3: #555;
+    --funnel: #2a62cf; --funnel-line: #9fb6e6; --funnel-soft: #e7eefc; --shadow: none; color-scheme: light; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { background: #fff; font-size: 11pt; }
+  .top, .side, .toast, .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  .shell { display: block; }
+  .main { padding: 0; max-width: none; gap: 0; }
+  .pr-head h1 { font-size: 18pt; margin: 0 0 8pt; }
+  .pr-sec + .pr-sec { break-before: page; }
+  .pr-sec h2 { font-size: 14pt; margin: 14pt 0 8pt; }
+  .pr-sec h3 { font-size: 11pt; margin: 14pt 0 5pt; }
+  .pr-sec .panel { box-shadow: none; break-inside: avoid; }
+  .pr-sec .panel-h { display: none; }
+  .pr-sec .fn-row { grid-template-columns: minmax(0, 38%) minmax(0, 1fr); cursor: default; break-inside: avoid; }
+  .pr-sec .fn-row.sel { background: none; }
+  .pr-sec .fn-row.sel .fn-lab .t { font-weight: 400; color: var(--fg-2); }
+  table.pr { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  table.pr th, table.pr td { border: 0.5pt solid #9aa3a3; padding: 3pt 5pt; text-align: left; vertical-align: top; }
+  table.pr th { background: #eef1f1; font-weight: 600; }
+  table.pr .n { text-align: right; white-space: nowrap; }
+  table.pr thead { display: table-header-group; }
+  table.pr tr { break-inside: avoid; }
+  table.pr .tot td { font-weight: 600; background: #f6f8f8; }
+  table.pr-params { width: auto; min-width: 60%; }
+  table.pr-params th { width: 150pt; }
+  .pr-sec .sm, table.pr .sm { font-size: 8.5pt; color: #444; }
+}
 </style>
 
 <div id="root"></div>
@@ -532,7 +579,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       try {
         const [dFrom, dTo] = funnelPeriod();
         const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
-        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent(state.fLogin || "")}&category=${encodeURIComponent(cat)}${per}`);
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}`);
         const [leads, deals] = await Promise.all([q("leads", ""), q("deals", state.fCat || "")]);
         renderFunnel({ leads, deals });
       }
@@ -766,14 +813,13 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }
     return seg.join(" ") + " Z";
   }
-  function funnelShape(i, n) {
-    // форма как в образце: широкий верх, каждая следующая секция уже, последняя сходится в скруглённое остриё
-    const W = 320, H = 78, cx = W / 2, step = (W - 120) / Math.max(1, n - 1);
-    const top = W - 4 - i * step, last = i === n - 1;
-    const bottom = last ? 8 : top - step * 0.78;
-    const pts = [[cx - top / 2, 1], [cx + top / 2, 1], [cx + bottom / 2, H - 1], [cx - bottom / 2, H - 1]];
-    const filled = i % 2 === 0;
-    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, last ? 14 : 11)}" fill="${filled ? "var(--funnel)" : "var(--surface)"}" stroke="var(--funnel)" stroke-width="${filled ? 0 : 2}" stroke-linejoin="round"/></svg>`;
+  // насыщенность цвета сегмента по доле от максимума (0..1)
+  const toneColor = (t) => `color-mix(in srgb, var(--funnel) ${Math.round(16 + 84 * Math.max(0, Math.min(1, t || 0)))}%, var(--surface))`;
+  // сегмент воронки: ширина сверху и снизу в долях от самого широкого этапа
+  function funnelShape(top, bottom, tone) {
+    const W = 320, H = 78, cx = W / 2, tw = Math.max(8, top * (W - 4)), bw = Math.max(6, bottom * (W - 4));
+    const pts = [[cx - tw / 2, 1], [cx + tw / 2, 1], [cx + bw / 2, H - 1], [cx - bw / 2, H - 1]];
+    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, 9)}" style="fill:${toneColor(tone)}" stroke="var(--funnel)" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
   }
   function hbars(list, valueKey, labelFn, withAmount) {
     const mx = Math.max(1, ...list.map((x) => x[valueKey]));
@@ -804,8 +850,23 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }
     return ["", ""];
   }
+  document.addEventListener("click", (e) => {  // список ответственных закрывается по клику мимо него
+    const det = document.getElementById("fResp");
+    if (det && det.open && !det.contains(e.target)) { det.open = false; state.fRespOpen = false; }
+  });
   function renderFunnel(d) {
     state.fData = d;
+    const main = document.getElementById("main");
+    if (!d[state.fKind]) state.fKind = "leads";
+    const bars = state.fView === "bars";
+    const K = FUNNELS.find((x) => x.kind === state.fKind);
+    const f = d[K.kind], secs = f.sections, sel = Math.min(state.fSel || 0, secs.length - 1), cur = secs[sel];
+    const hasAmount = (x) => x.sections.some((s) => s.amount);
+    const snapRaw = d.deals.snapshot || d.leads.snapshot;
+    const snap = snapRaw ? snapRaw.replace("T", " ").slice(0, 16).split(" ") : null;
+    const snapTxt = snap ? ruDay(snap[0]) + " " + snap[1] : "—";
+
+    // --- фильтры: период, ответственные (несколько), воронка сделок
     const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage";
     const perHtml = PREVIEW ? "" : `<label for="fMode">Период<select id="fMode">${[["all", "Всё время"], ["day", "День"], ["month", "Месяц"], ["year", "Год"], ["range", "С … по …"]].map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
           ${per.mode === "day" ? `<input type="date" id="fDay" aria-label="День" value="${esc(per.day || "")}">` : ""}
@@ -813,63 +874,111 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           ${per.mode === "year" ? `<input type="number" id="fYear" aria-label="Год" min="2000" max="2100" step="1" style="width:90px" value="${esc(String(per.year || ""))}">` : ""}
           ${per.mode === "range" ? `<label for="fFrom">с<input type="date" id="fFrom" value="${esc(per.from || "")}"></label><label for="fTo">по<input type="date" id="fTo" value="${esc(per.to || "")}"></label>` : ""}
           ${per.mode !== "all" ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
-    const perTxt = !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`}.`;
-    const main = document.getElementById("main");
-    if (!d[state.fKind]) state.fKind = "leads";
-    const K = FUNNELS.find((x) => x.kind === state.fKind);
-    const f = d[K.kind], secs = f.sections, sel = Math.min(state.fSel || 0, secs.length - 1), cur = secs[sel];
-    const hasAmount = (x) => x.sections.some((s) => s.amount);
-    const snapRaw = d.deals.snapshot || d.leads.snapshot;
-    const snap = snapRaw ? snapRaw.replace("T", " ").slice(0, 16).split(" ") : null;
-    const snapTxt = snap ? snap[0].split("-").reverse().join(".") + " " + snap[1] : "—";
-    // ответственные из обеих воронок в одном списке
-    const resp = new Map();
+    const perRange = dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`.trim();
+    const perTxt = !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${perRange}.`;
+    const resp = new Map();  // ответственные из обеих воронок в одном списке
     FUNNELS.forEach((x) => d[x.kind].filters.responsibles.forEach((r) => {
       const o = resp.get(r.value) || { value: r.value, name: r.name, count: 0 };
       o.count += r.count; resp.set(r.value, o);
     }));
     const respList = [...resp.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
-    const login = d.deals.applied.login, cats = d.deals.filters.categories;
+    const chosen = (state.fLogins || []).filter((v) => resp.has(v));
+    const chosenNames = chosen.map((v) => resp.get(v).name);
+    const respLabel = !chosen.length ? "Все" : chosen.length === 1 ? chosenNames[0] : `Выбрано: ${chosen.length}`;
+    const cats = d.deals.filters.categories, catName = (cats.find((c) => c.value === d.deals.applied.category) || {}).name;
+
+    // --- графика: ширина (длина) — количество, насыщенность цвета и толщина полосы — сумма
     const panel = (x) => {
-      const fx = d[x.kind], amt = hasAmount(fx);
+      const fx = d[x.kind], amt = hasAmount(fx), ss = fx.sections;
+      const maxC = Math.max(1, ...ss.map((s) => s.count)), maxA = Math.max(1, ...ss.map((s) => s.amount || 0));
+      const w = ss.map((s) => s.count / maxC), tone = ss.map((s) => (amt ? (s.amount || 0) / maxA : s.count / maxC));
+      const shape = (i) => bars
+        ? `<div class="fn-bar"><i style="width:${Math.max(1.5, w[i] * 100)}%;height:${amt ? Math.round(12 + 34 * tone[i]) : 28}px;background:${toneColor(tone[i])}"></i></div>`
+        : `<div class="fn-shape">${funnelShape(w[i], i < ss.length - 1 ? w[i + 1] : w[i] * 0.35, tone[i])}</div>`;
       return `<section class="panel"><div class="panel-h"><h2>${x.title}</h2><span class="muted small">${nf(fx.total)} ${x.gen} в воронке</span></div>
         <div class="fn" role="list">
-        ${fx.sections.map((s, i) => `<div class="fn-row ${x.kind === K.kind && i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-kind="${x.kind}" data-sec="${i}" aria-label="${x.title}, ${esc(s.title)}: ${s.count}">
-          <div class="fn-shape">${funnelShape(i, fx.sections.length)}</div>
+        ${ss.map((s, i) => `<div class="fn-row ${x.kind === K.kind && i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-kind="${x.kind}" data-sec="${i}" aria-label="${x.title}, ${esc(s.title)}: ${s.count}">
+          ${shape(i)}
           <div class="fn-lab"><span class="t">${esc(s.title)}</span><span class="c">${nf(s.count)}</span>
             ${amt ? `<span class="a">${money(s.amount)}</span>` : ""}
             <span class="h">${s.share_of_total != null ? `${pct(s.share_of_total, 1)} воронки` : ""}${s.avg_days_on_stage != null ? ` · в среднем ${nf(s.avg_days_on_stage)} дн. на стадии` : ""}</span></div>
         </div>`).join("")}
-        </div></section>`;
+        </div>
+        <div class="fn-legend">${bars ? "Длина полосы" : "Ширина сегмента"} — количество; ${amt ? `${bars ? "толщина и " : ""}насыщенность цвета — сумма` : "насыщенность цвета — количество"}.</div></section>`;
     };
+
+    // --- документ для печати: параметры отчёта, затем по каждой воронке графика и таблицы
+    const printFunnel = (x) => {
+      const fx = d[x.kind], amt = hasAmount(fx), ss = fx.sections, many = fx.filters.categories.length > 1;
+      const total = ss.some((s) => s.all_open) ? Math.max(...ss.map((s) => s.amount)) : ss.reduce((a, s) => a + (s.amount || 0), 0);
+      const people = new Map();
+      ss.forEach((s, i) => s.by_responsible.forEach((r) => {
+        const o = people.get(r.value) || { name: r.name, cells: ss.map(() => null), count: 0, amount: 0 };
+        o.cells[i] = r; o.count += r.count; o.amount += r.amount || 0; people.set(r.value, o);
+      }));
+      const ppl = [...people.values()].sort((a, b) => b.count - a.count);
+      const cell = (r) => (r ? `${nf(r.count)}${amt && r.amount ? `<br><span class="sm">${money(r.amount)}</span>` : ""}` : "—");
+      return `<section class="pr-sec"><h2>${x.title}: ${nf(fx.total)} ${x.gen}${amt ? ` на ${money(total)}` : ""}</h2>
+        ${panel(x)}
+        <h3>Этапы воронки</h3>
+        <table class="pr"><thead><tr><th>Этап</th><th>${x.kind === "leads" ? "Статусы" : "Стадии"} CRM</th><th class="n">Количество</th>${amt ? `<th class="n">Сумма, ₽</th>` : ""}<th class="n">Доля воронки</th><th class="n">Дней на стадии, в среднем</th></tr></thead><tbody>
+          ${ss.map((s) => `<tr><td><b>${esc(s.title)}</b></td><td>${s.by_stage.map((b) => `${esc(b.stage)}${many ? ` (${esc(b.category)})` : ""} — ${nf(b.count)}`).join("<br>") || "—"}</td>
+            <td class="n">${nf(s.count)}</td>${amt ? `<td class="n">${nf(s.amount)}</td>` : ""}<td class="n">${s.share_of_total != null ? pct(s.share_of_total, 1) : "—"}</td><td class="n">${s.avg_days_on_stage ?? "—"}</td></tr>`).join("")}
+          <tr class="tot"><td colspan="2">Итого в воронке</td><td class="n">${nf(fx.total)}</td>${amt ? `<td class="n">${nf(total)}</td>` : ""}<td></td><td></td></tr>
+        </tbody></table>
+        <h3>По ответственным</h3>
+        ${ppl.length ? `<table class="pr"><thead><tr><th>Ответственный</th>${ss.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
+          ${ppl.map((p) => `<tr><td>${esc(p.name)}</td>${p.cells.map((r) => `<td class="n">${cell(r)}</td>`).join("")}<td class="n"><b>${cell(p)}</b></td></tr>`).join("")}
+        </tbody></table>` : `<p>Записей нет.</p>`}
+        ${fx.other_stages.length ? `<p class="sm">Не вошли в этапы воронки: ${fx.other_stages.map((o) => `${esc(o.stage)}${many ? ` (${esc(o.category)})` : ""} — ${nf(o.count)}`).join("; ")}.</p>` : ""}
+      </section>`;
+    };
+    const now = new Date();
+    const printHtml = `<div class="print-only">
+      <div class="pr-head"><h1>Воронки лидов и сделок</h1>
+        <table class="pr pr-params"><tbody>
+          <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td></tr>
+          <tr><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки</td></tr>
+          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td></tr>
+          <tr><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
+          <tr><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
+        </tbody></table></div>
+      ${FUNNELS.map(printFunnel).join("")}</div>`;
+
     const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
     const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
     main.innerHTML = `
-      <div class="head"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
+      <div class="head no-print"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
         <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}</div></div>
         <div class="filters">
           ${perHtml}
-          <label for="fLogin">Ответственный<select id="fLogin"><option value="">Все</option>${respList.map((r) => `<option value="${esc(r.value)}" ${login === r.value ? "selected" : ""}>${esc(r.name)} (${r.count})</option>`).join("")}</select></label>
+          <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
+            <div class="msel-pop">${respList.map((r) => `<label><input type="checkbox" value="${esc(r.value)}" ${chosen.includes(r.value) ? "checked" : ""}>${esc(r.name)} <span class="muted">(${r.count})</span></label>`).join("")}
+              <button type="button" class="linkish" id="fRespClear">Сбросить выбор</button></div></details></div>
           <label for="fCat">Воронка сделок<select id="fCat"><option value="">Все</option>${cats.map((c) => `<option value="${esc(c.value)}" ${d.deals.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
+          <nav class="tabs" aria-label="Вид"><a href="#funnel" data-fview="funnel" class="${bars ? "" : "on"}">Воронка</a><a href="#funnel" data-fview="bars" class="${bars ? "on" : ""}">Диаграмма</a></nav>
+          <button class="btn" id="fPrintBtn" type="button">Печать</button>
         </div></div>
-      <div class="fn2">${FUNNELS.map(panel).join("")}</div>
-      <section class="panel"><div class="panel-h"><div><div class="eyebrow">${K.title} · этап воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)}${amt ? ` · ${money(cur.amount)}` : ""}</h2></div>
+      <div class="fn2 no-print">${FUNNELS.map(panel).join("")}</div>
+      <section class="panel no-print"><div class="panel-h"><div><div class="eyebrow">${K.title} · этап воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)}${amt ? ` · ${money(cur.amount)}` : ""}</h2></div>
         <span class="muted small">${esc(cur.rule)}</span></div>
         <div class="panel-b" style="display:flex;flex-direction:column;gap:16px">
           ${cur.count ? `<div class="split">
             <div><div class="eyebrow" style="margin-bottom:8px">По стадиям</div>${hbars(cur.by_stage, "count", (x) => `${esc(x.stage)}${manyCats ? ` <small>· ${esc(x.category)}</small>` : ""}`, amt)}</div>
-            <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, amt ? "amount" : "count", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронки этого сотрудника">${esc(x.name)}</button>`, amt)}</div>
+            <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, amt ? "amount" : "count", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронки только этого сотрудника">${esc(x.name)}</button>`, amt)}</div>
           </div>
           <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>${K.one}</th><th>Клиент</th><th>Ответственный</th>${manyCats ? "<th>Воронка</th>" : ""}<th>${K.stage}</th>${amt ? "<th>Сумма, ₽</th>" : ""}<th>Дней на стадии</th></tr></thead><tbody>
             ${cur.deals.slice(0, 150).map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(r.client)}</td><td>${esc(r.responsible)}</td>${manyCats ? `<td>${esc(r.category)}</td>` : ""}<td>${esc(r.stage)}</td>
               ${amt ? `<td class="n">${nf(r.amount)}</td>` : ""}<td class="n">${r.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
           ${cur.deals.length > 150 ? `<div class="muted small">Показаны первые 150 из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">На этом этапе сейчас ничего нет.</div>`}
         </div></section>
-      ${other.map((x) => `<details class="panel more" style="border-top:0"><summary>${x.title}: стадии вне этапов воронки · ${d[x.kind].other_stages.length}</summary><div class="more-b">
+      ${other.map((x) => `<details class="panel more no-print" style="border-top:0"><summary>${x.title}: стадии вне этапов воронки · ${d[x.kind].other_stages.length}</summary><div class="more-b">
         <div class="desc">Записи на этих стадиях не попали ни в один этап, заданный списком стадий. Чтобы учесть стадию, добавьте её название в config.json → ${d[x.kind].config_key} → sections.</div>
         <div class="hbars">${d[x.kind].other_stages.map((o) => `<div class="hbar"><div class="nm">${esc(o.stage)}${x.kind === "deals" ? ` <small>· ${esc(o.category)}</small>` : ""}</div><div></div><div class="v">${nf(o.count)} шт</div></div>`).join("")}</div>
-      </div></details>`).join("")}`;
-    main.querySelectorAll("[data-sec]").forEach((row) => {
+      </div></details>`).join("")}
+      ${printHtml}`;
+
+    main.querySelectorAll(".no-print [data-sec]").forEach((row) => {
       const pick = () => { state.fKind = row.dataset.kind; state.fSel = +row.dataset.sec; renderFunnel(state.fData); };
       row.addEventListener("click", pick);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
@@ -886,10 +995,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     onChange("fFrom", (v) => { state.fPer.from = v; });
     onChange("fTo", (v) => { state.fPer.to = v; });
     onChange("fField", (v) => { state.fDateField = v; });
-    const apply = () => { state.fLogin = document.getElementById("fLogin").value; state.fCat = document.getElementById("fCat").value; load(); };
-    document.getElementById("fLogin").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fCat").value = ""; apply(); });
-    document.getElementById("fCat").addEventListener("change", (e) => { if (PREVIEW) document.getElementById("fLogin").value = ""; apply(); });
-    main.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => { state.fLogin = b.dataset.resp; if (PREVIEW) state.fCat = ""; load(); }));
+    onChange("fCat", (v) => { state.fCat = v; if (PREVIEW) state.fLogins = []; });
+    const det = document.getElementById("fResp");
+    det.addEventListener("toggle", () => { state.fRespOpen = det.open; });
+    const setLogins = (list, keepOpen) => { state.fLogins = list; state.fRespOpen = keepOpen; if (PREVIEW && list.length) state.fCat = ""; load(); };
+    det.querySelectorAll("input[type=checkbox]").forEach((cb) => cb.addEventListener("change", () =>
+      setLogins([...det.querySelectorAll("input[type=checkbox]:checked")].map((x) => x.value), true)));
+    document.getElementById("fRespClear").addEventListener("click", () => setLogins([], false));
+    main.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => setLogins([b.dataset.resp], false)));
+    main.querySelectorAll("[data-fview]").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault(); state.fView = a.dataset.fview; renderFunnel(state.fData);
+    }));
+    document.getElementById("fPrintBtn").addEventListener("click", () => window.print());
   }
 
   // ---------- методика

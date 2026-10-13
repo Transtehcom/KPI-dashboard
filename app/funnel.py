@@ -27,7 +27,8 @@ def _days(since, now):
 
 
 def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created"):
-    """date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
+    """login — ключ ответственного (логин сотрудника или «id:<ID в Б24>») либо список таких ключей.
+    date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
     в период: created — дата создания, stage — дата перехода на текущую стадию."""
     entity, cfg_key = KINDS[kind]
     fcfg = config.get(cfg_key, {})
@@ -55,8 +56,10 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         cats[r["category_id"]]["count"] += 1
 
     rows = all_rows
-    if login:
-        rows = [r for r in rows if (r["emp"] or ("id:" + (r["responsible_id"] or ""))) == login]
+    logins = {login} if isinstance(login, str) else set(login or [])  # один ответственный или несколько
+    logins.discard("")
+    if logins:
+        rows = [r for r in rows if (r["emp"] or ("id:" + (r["responsible_id"] or ""))) in logins]
     if category not in (None, ""):
         rows = [r for r in rows if r["category_id"] == str(category)]
 
@@ -118,6 +121,6 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),
             "categories": sorted(cats.values(), key=lambda x: x["name"]),
         },
-        "applied": {"login": login or "", "category": "" if category is None else str(category),
+        "applied": {"login": ",".join(sorted(logins)), "logins": sorted(logins), "category": "" if category is None else str(category),
                     "date_from": date_from or "", "date_to": date_to or "", "date_field": date_field},
     }

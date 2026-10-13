@@ -203,6 +203,9 @@ class EngineTest(unittest.TestCase):
         other = deal_funnel(self.con, EXAMPLE, login="id:25")
         self.assertEqual([s["count"] for s in other["sections"]], [1, 0, 0, 0])
         self.assertEqual(len(other["filters"]["responsibles"]), 2)  # фильтр не сужает список вариантов
+        both = deal_funnel(self.con, EXAMPLE, login=["id:25", "pm"])  # несколько ответственных складываются
+        self.assertEqual([s["count"] for s in both["sections"]], [s["count"] for s in f["sections"]])
+        self.assertEqual(both["applied"]["logins"], ["id:25", "pm"])
         leads = deal_funnel(self.con, EXAMPLE, kind="leads")
         self.assertEqual([(s["title"], s["count"]) for s in leads["sections"]],
                          [("Распределено", 1), ("В работе", 2), ("Запросили ТКП", 0)])

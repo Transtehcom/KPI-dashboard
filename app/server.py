@@ -279,7 +279,8 @@ class Handler(BaseHTTPRequestHandler):
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
                     if date_from and date_to and date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
-                    return self.send_json(deal_funnel(app.con, app.config, q.get("login") or None, q.get("category"), kind,
+                    logins = [x for x in (q.get("login") or "").split(",") if x]  # несколько ответственных через запятую
+                    return self.send_json(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
                                                       date_from, date_to, date_field))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
