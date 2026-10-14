@@ -1,19 +1,19 @@
 <title>KPI-ведомость отдела</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Oswald:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 /* Макет: «ведомость» — слева состав команды, справа лист месяца: итог → матрица пунктов KPI → карточки пунктов. */
 :root {
-  --bg: #f4f6f6;
+  --bg: #f3f4f9;
   --surface: #ffffff;
-  --surface-2: #eef1f1;
-  --line: #dde3e3;
-  --line-strong: #c3cccc;
-  --fg: #142022;
-  --fg-2: #4b5a5c;
-  --fg-3: #7a8789;
-  --accent: #0e6a74;
-  --accent-soft: #dcefef;
+  --surface-2: #eef0f7;
+  --line: #dfe1ee;
+  --line-strong: #c4c7de;
+  --fg: #1c1e33;
+  --fg-2: #5a5d72;
+  --fg-3: #83869c;
+  --accent: #3a4185;
+  --accent-soft: #e6e8f4;
   --accent-ink: #ffffff;
   --good: #128a3a;
   --good-soft: #def3e4;
@@ -24,31 +24,34 @@
   --info: #3657b8;
   --info-soft: #e3e9fa;
   --muted-soft: #eceeee;
-  --bar: #0e6a74;
-  --bar-2: #9cc9cd;
-  --shadow: 0 1px 2px rgba(20, 32, 34, .06), 0 4px 16px rgba(20, 32, 34, .04);
-  --funnel: #2a62cf;
-  --funnel-line: #3d6fd1;
-  --funnel-soft: #e7eefc;
-  --font: "Golos Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --bar: #3a4185;
+  --bar-2: #a9adcb;
+  --shadow: 0 1px 2px rgba(28, 30, 51, .06), 0 6px 18px rgba(28, 30, 51, .05);
+  --funnel: #3a4185;
+  --funnel-line: #c4c7de;
+  --funnel-soft: #eceef8;
+  --font: "Montserrat", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --r: 10px;
+  --r: 4px;
+  --teal: #4bbbb8;
+  --teal-ink: #2f9a97;
+  --head: "Oswald", "Arial Narrow", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f1617; --surface: #172122; --surface-2: #1d2a2b; --line: #2a3839; --line-strong: #3b4c4d;
-    --fg: #e6eeee; --fg-2: #a9b8b9; --fg-3: #7d8d8e; --accent: #4fc1cc; --accent-soft: #173a3d; --accent-ink: #062022;
+    --bg: #14152a; --surface: #1c1e33; --surface-2: #24274a; --line: #2f3256; --line-strong: #444873;
+    --fg: #eceef8; --fg-2: #b4b8d4; --fg-3: #8a8eb0; --accent: #4bbbb8; --accent-soft: #1f3a44; --accent-ink: #10121f;
     --good: #43c66a; --good-soft: #163522; --warn: #f0b429; --warn-soft: #3a2f12; --bad: #f06a5f; --bad-soft: #3d1c1a;
-    --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #222e2f; --bar: #4fc1cc; --bar-2: #24585d;
-    --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #5b8ef0; --funnel-line: #4a74c9; --funnel-soft: #1c2742; color-scheme: dark;
+    --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #262947; --bar: #4bbbb8; --bar-2: #2f5f68;
+    --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #8a91e0; --funnel-line: #444873; --funnel-soft: #272a52; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f1617; --surface: #172122; --surface-2: #1d2a2b; --line: #2a3839; --line-strong: #3b4c4d;
-  --fg: #e6eeee; --fg-2: #a9b8b9; --fg-3: #7d8d8e; --accent: #4fc1cc; --accent-soft: #173a3d; --accent-ink: #062022;
+  --bg: #14152a; --surface: #1c1e33; --surface-2: #24274a; --line: #2f3256; --line-strong: #444873;
+  --fg: #eceef8; --fg-2: #b4b8d4; --fg-3: #8a8eb0; --accent: #4bbbb8; --accent-soft: #1f3a44; --accent-ink: #10121f;
   --good: #43c66a; --good-soft: #163522; --warn: #f0b429; --warn-soft: #3a2f12; --bad: #f06a5f; --bad-soft: #3d1c1a;
-  --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #222e2f; --bar: #4fc1cc; --bar-2: #24585d;
-  --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #5b8ef0; --funnel-line: #4a74c9; --funnel-soft: #1c2742; color-scheme: dark;
+  --info: #8ea8ff; --info-soft: #1f2846; --muted-soft: #262947; --bar: #4bbbb8; --bar-2: #2f5f68;
+  --shadow: 0 1px 2px rgba(0,0,0,.3); --funnel: #8a91e0; --funnel-line: #444873; --funnel-soft: #272a52; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -65,6 +68,22 @@ h2 { font-size: 16px; }
 h3 { font-size: 14px; }
 .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-3); font-weight: 600; }
 
+/* --- фирменный стиль transtehcom.ru: заголовки Oswald прописными, кнопки без скруглений, полоса индиго → бирюза */
+h1 { font-family: var(--head); font-weight: 600; font-size: 26px; text-transform: uppercase; letter-spacing: .01em; line-height: 1.15; }
+.btn { border-radius: 0; font-weight: 600; }
+.btn.primary, #syncBtn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover, #syncBtn:hover { filter: brightness(1.12); color: var(--accent-ink); }
+.top::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; background: linear-gradient(90deg, #3a4185, #4bbbb8); }
+.brand-logo { width: 40px; height: 27px; flex: none; }
+.brand-word { font-weight: 500; letter-spacing: .01em; color: var(--fg); }
+.brand-word b { font-weight: 800; }
+.brand-sep { width: 1px; height: 22px; background: var(--line-strong); }
+.brand-app { font-family: var(--head); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; font-size: 15px; }
+.tabs a.on { box-shadow: inset 0 -2px 0 var(--teal), var(--shadow); }
+.eyebrow { color: var(--teal-ink); }
+:root[data-theme="dark"] .eyebrow { color: var(--teal); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .eyebrow { color: var(--teal); } }
+
 /* --- верхняя панель */
 .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -73,9 +92,9 @@ h3 { font-size: 14px; }
   font: 600 11px var(--mono); }
 .brand small { font-weight: 400; color: var(--fg-3); }
 .ctrl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-select, input[type=text], input[type=password], input[type=number], input[type=date], input[type=month] { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px;
+select, input[type=text], input[type=password], input[type=number], input[type=date], input[type=month] { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 3px;
   padding: 6px 10px; min-height: 34px; }
-.btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 6px 12px; min-height: 34px; font-weight: 500; }
+.btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 3px; padding: 6px 12px; min-height: 34px; font-weight: 500; }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.primary:hover { filter: brightness(1.08); color: var(--accent-ink); }
@@ -90,7 +109,7 @@ select, input[type=text], input[type=password], input[type=number], input[type=d
 .shell.single { grid-template-columns: minmax(0, 1fr); }
 .side { border-right: 1px solid var(--line); background: var(--surface); padding: 16px 12px; display: flex; flex-direction: column; gap: 14px; }
 .side a { text-decoration: none; color: inherit; }
-.nav-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 10px; border-radius: 8px; align-items: center; }
+.nav-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 10px; border-radius: 3px; align-items: center; }
 .nav-item:hover { background: var(--surface-2); }
 .nav-item.active { background: var(--accent-soft); }
 .nav-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -125,7 +144,7 @@ select, input[type=text], input[type=password], input[type=number], input[type=d
 .s-progress::before { background: transparent; border: 1.5px solid currentColor; width: 5px; height: 5px; }
 
 .alerts { display: flex; flex-direction: column; gap: 8px; }
-.alert { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
+.alert { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border-radius: 3px; border: 1px solid var(--line); background: var(--surface); }
 .alert .ic { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--mono); }
 .alert.critical { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: var(--bad-soft); }
 .alert.critical .ic { background: var(--bad); color: var(--surface); }
@@ -202,7 +221,7 @@ table { border-collapse: collapse; width: 100%; }
 .extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 12px; }
 .extra div { color: var(--fg-2); min-width: 0; }
 .extra b { font: 500 12px var(--mono); color: var(--fg); }
-.zero-note { padding: 8px 10px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 12px; font-weight: 500; }
+.zero-note { padding: 8px 10px; border-radius: 3px; background: var(--bad-soft); color: var(--bad); font-size: 12px; font-weight: 500; }
 details.more { border-top: 1px solid var(--line); }
 details.more > summary { list-style: none; padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; display: flex; gap: 8px; }
 details.more > summary::-webkit-details-marker { display: none; }
@@ -214,7 +233,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .dt th, .dt td { padding: 5px 8px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .dt th { color: var(--fg-3); font-weight: 600; border-top: 0; }
 .dt td.n { font-family: var(--mono); text-align: right; }
-.dt-wrap { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.dt-wrap { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 3px; }
 .funnel { display: flex; flex-direction: column; gap: 4px; }
 .funnel .row { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 48px; gap: 8px; align-items: center; font-size: 12px; }
 .funnel .row span:first-child { color: var(--fg-2); }
@@ -222,7 +241,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .funnel .row:last-child .fb { background: var(--bar); }
 .funnel .row b { font: 500 12px var(--mono); text-align: right; }
 
-.manual { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.manual { border: 1px solid var(--line); border-radius: 3px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
 .manual table { font-size: 12px; }
 .manual th, .manual td { padding: 3px 6px; text-align: left; }
 .manual th { color: var(--fg-3); font-weight: 600; }
@@ -246,7 +265,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .err { color: var(--bad); font-size: 13px; min-height: 18px; }
 
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg);
-  padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 50; box-shadow: var(--shadow); }
+  padding: 9px 14px; border-radius: 3px; font-size: 13px; z-index: 50; box-shadow: var(--shadow); }
 .drawer { position: fixed; inset: 0; background: rgba(10, 18, 19, .45); z-index: 40; display: flex; justify-content: flex-end; }
 .drawer > div { width: min(640px, 100%); height: 100%; overflow: auto; background: var(--surface); padding: 20px 22px calc(28px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 16px; }
 .rule { border-top: 1px solid var(--line); padding-top: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 4px 12px; }
@@ -286,15 +305,16 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .fn2 .fn-lab .c { font-size: 26px; }
 .fn-bar { padding: 8px 0 8px 14px; min-height: 66px; display: flex; align-items: center; }
 .fn-bar i { display: block; min-width: 6px; border: 1.5px solid var(--funnel); border-radius: 4px; }
-.fn-legend { padding: 8px 14px 10px; font-size: 12px; color: var(--fg-3); border-top: 1px solid var(--line); }
+.fn-legend { padding: 8px 14px 10px; font-size: 12px; color: var(--fg-3); border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+.fn-scale { flex: none; width: 64px; height: 8px; border: 1px solid var(--funnel); background: linear-gradient(90deg, color-mix(in srgb, var(--funnel) 14%, var(--funnel-soft)), var(--funnel)); }
 .msel-wrap { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--fg-3); }
 .msel { position: relative; }
 .msel summary { list-style: none; cursor: pointer; min-width: 150px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong);
-  border-radius: 8px; background: var(--surface); color: var(--fg); font-size: 14px; }
+  border-radius: 3px; background: var(--surface); color: var(--fg); font-size: 14px; }
 .msel summary::-webkit-details-marker { display: none; }
 .msel summary::after { content: "▾"; float: right; margin-left: 10px; color: var(--fg-3); }
 .msel-pop { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 250px; max-height: 320px; overflow: auto; padding: 8px;
-  display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
+  display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 3px; box-shadow: var(--shadow); }
 .filters .msel-pop label { font-size: 13px; color: var(--fg); padding: 4px; gap: 8px; cursor: pointer; }
 .msel-pop .linkish { margin-top: 6px; padding: 4px; font-size: 13px; }
 .print-only { display: none; }
@@ -340,7 +360,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 @media print {
   :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
     --bg: #fff; --surface: #fff; --surface-2: #f1f3f3; --line: #c9d0d0; --line-strong: #aab4b4; --fg: #000; --fg-2: #2b2b2b; --fg-3: #555;
-    --funnel: #2a62cf; --funnel-line: #9fb6e6; --funnel-soft: #e7eefc; --shadow: none; color-scheme: light; }
+    --funnel: #3a4185; --funnel-line: #c4c7de; --funnel-soft: #eceef8; --shadow: none; color-scheme: light; }
+  .top::after { display: none; }
+  .pr-head h1 { font-family: var(--head); text-transform: uppercase; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { background: #fff; font-size: 11pt; }
   .top, .side, .toast, .no-print { display: none !important; }
@@ -472,7 +494,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   // ---------- вход
   function renderLogin() {
     root.innerHTML = `<div class="login"><form class="panel" id="loginForm">
-      <div class="brand"><span class="brand-mark">KPI</span><span>KPI-ведомость</span></div>
+      <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span></div>
       <p class="muted small" style="margin:0">Войдите под своей учётной записью. Сотрудник видит свой дашборд, руководитель — всю команду.</p>
       <label for="lg">Логин<input id="lg" type="text" autocomplete="username" required></label>
       <label for="pw">Пароль<input id="pw" type="password" autocomplete="current-password" required></label>
@@ -538,7 +560,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
-        <div class="brand"><span class="brand-mark">KPI</span><span>KPI-ведомость <small>· ОП и ОС</small></span></div>
+        <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
         <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a></nav>
         <div class="ctrl">
           ${syncInfo()}
@@ -837,13 +859,17 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }
     return seg.join(" ") + " Z";
   }
-  // насыщенность цвета сегмента по доле от максимума (0..1)
-  const toneColor = (t) => `color-mix(in srgb, var(--funnel) ${Math.round(16 + 84 * Math.max(0, Math.min(1, t || 0)))}%, var(--surface))`;
-  // сегмент воронки: ширина сверху и снизу в долях от самого широкого этапа
-  function funnelShape(top, bottom, tone) {
-    const W = 320, H = 78, cx = W / 2, tw = Math.max(8, top * (W - 4)), bw = Math.max(6, bottom * (W - 4));
-    const pts = [[cx - tw / 2, 1], [cx + tw / 2, 1], [cx + bw / 2, H - 1], [cx - bw / 2, H - 1]];
-    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, 9)}" style="fill:${toneColor(tone)}" stroke="var(--funnel)" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  // цвет этапа: от светло-лавандового (нет суммы) до фирменного индиго (наибольшая сумма); t — 0..1
+  const toneColor = (t) => `color-mix(in srgb, var(--funnel) ${Math.round(14 + 86 * Math.max(0, Math.min(1, t || 0)))}%, var(--funnel-soft))`;
+  // доля по логарифмической шкале: суммы этапов различаются на порядки (сотни тысяч и десятки миллиардов)
+  const logShare = (v, max) => (v > 0 && max > 0 ? Math.log10(1 + v) / Math.log10(1 + max) : 0);
+  function funnelShape(i, n, tone) {
+    // форма как в образце: широкий верх, каждая следующая секция уже, последняя сходится в скруглённое остриё
+    const W = 320, H = 78, cx = W / 2, step = (W - 120) / Math.max(1, n - 1);
+    const top = W - 4 - i * step, last = i === n - 1;
+    const bottom = last ? 8 : top - step * 0.78;
+    const pts = [[cx - top / 2, 1], [cx + top / 2, 1], [cx + bottom / 2, H - 1], [cx - bottom / 2, H - 1]];
+    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${roundedPath(pts, last ? 14 : 11)}" style="fill:${toneColor(tone)}" stroke="var(--funnel)" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
   }
   function hbars(list, valueKey, labelFn, withAmount) {
     const mx = Math.max(1, ...list.map((x) => x[valueKey]));
@@ -915,10 +941,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const panel = (x) => {
       const fx = d[x.kind], amt = hasAmount(fx), ss = fx.sections;
       const maxC = Math.max(1, ...ss.map((s) => s.count)), maxA = Math.max(1, ...ss.map((s) => s.amount || 0));
-      const w = ss.map((s) => s.count / maxC), tone = ss.map((s) => (amt ? (s.amount || 0) / maxA : s.count / maxC));
+      const w = ss.map((s) => s.count / maxC), tone = ss.map((s) => (amt ? logShare(s.amount || 0, maxA) : s.count / maxC));
       const shape = (i) => bars
-        ? `<div class="fn-bar"><i style="width:${Math.max(1.5, w[i] * 100)}%;height:${amt ? Math.round(12 + 34 * tone[i]) : 28}px;background:${toneColor(tone[i])}"></i></div>`
-        : `<div class="fn-shape">${funnelShape(w[i], i < ss.length - 1 ? w[i + 1] : w[i] * 0.35, tone[i])}</div>`;
+        ? `<div class="fn-bar"><i style="width:${Math.max(1.5, w[i] * 100)}%;height:${amt ? Math.round(12 + 30 * tone[i]) : 28}px;background:${toneColor(tone[i])}"></i></div>`
+        : `<div class="fn-shape">${funnelShape(i, ss.length, tone[i])}</div>`;
       return `<section class="panel"><div class="panel-h"><h2>${x.title}</h2><span class="muted small">${nf(fx.total)} ${x.gen} в воронке</span></div>
         <div class="fn" role="list">
         ${ss.map((s, i) => `<div class="fn-row ${x.kind === K.kind && i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-kind="${x.kind}" data-sec="${i}" aria-label="${x.title}, ${esc(s.title)}: ${s.count}">
@@ -928,7 +954,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <span class="h">${s.share_of_total != null ? `${pct(s.share_of_total, 1)} воронки` : ""}${s.avg_days_on_stage != null ? ` · в среднем ${nf(s.avg_days_on_stage)} дн. на стадии` : ""}</span></div>
         </div>`).join("")}
         </div>
-        <div class="fn-legend">${bars ? "Длина полосы" : "Ширина сегмента"} — количество; ${amt ? `${bars ? "толщина и " : ""}насыщенность цвета — сумма` : "насыщенность цвета — количество"}.</div></section>`;
+        <div class="fn-legend"><span class="fn-scale"></span><span>${bars ? "Длина полосы — количество. " : ""}${amt ? `Цвет${bars ? " и толщина" : ""} — сумма: чем темнее, тем больше. Шкала логарифмическая: видна разница и между тысячами, и между миллиардами` : "Цвет — количество: чем темнее, тем больше"}.</span></div></section>`;
     };
 
     // --- документ для печати: параметры отчёта, затем по каждой воронке графика и таблицы
