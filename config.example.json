@@ -1,6 +1,8 @@
 {
   "_comment": "Скопируйте этот файл в config.json и заполните. mode: demo — демо-данные, live — данные из Битрикс24 и 1С.",
   "mode": "demo",
+  "_timezone_comment": "Часовой пояс дашборда (время обновления данных, границы дней в периодах). Пермь, Екатеринбург — Asia/Yekaterinburg (UTC+5).",
+  "timezone": "Asia/Yekaterinburg",
 
   "server": {
     "host": "0.0.0.0",

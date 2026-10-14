@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
@@ -23,7 +24,17 @@ def load_config():
     if not os.path.exists(path):
         path = os.path.join(ROOT, "config.example.json")
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+    apply_timezone(config.get("timezone"))
+    return config
+
+
+def apply_timezone(name):
+    """Часовой пояс процесса: от него зависят отметки времени синхронизации, «сегодня» в периодах и сроки сессий.
+    Нужен, когда сервер работает в UTC. На Windows не применяется — там берётся пояс системы."""
+    if name and hasattr(time, "tzset") and os.environ.get("TZ") != name:
+        os.environ["TZ"] = name
+        time.tzset()
 
 
 def load_rules():
