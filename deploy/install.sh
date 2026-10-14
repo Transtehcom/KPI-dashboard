@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Установка дашборда KPI на Ubuntu: служба systemd, Caddy с HTTPS, ежедневная копия базы.
-# Запуск от root:  sudo bash /opt/kpi-dashboard/deploy/install.sh kpi.transtehcom.ru
+# Запуск от root:  sudo bash /opt/kpi-dashboard/deploy/install.sh kpi.transtehcom.ru [порт HTTPS]
+# Порт HTTPS по умолчанию 443; если 443 занят (например, VPN-сервером), укажите другой, например 8443.
 # Повторный запуск безопасен: обновляет код из GitHub и перезапускает службу.
 set -euo pipefail
 
-DOMAIN="${1:?Укажите домен: sudo bash deploy/install.sh kpi.transtehcom.ru}"
+DOMAIN="${1:?Укажите домен: sudo bash deploy/install.sh kpi.transtehcom.ru [порт HTTPS]}"
+HTTPS_PORT="${2:-443}"
 APP_DIR=/opt/kpi-dashboard
 APP_USER=kpi
 REPO=https://github.com/Transtehcom/KPI-dashboard.git
@@ -74,7 +76,9 @@ if grep -q "^# kpi-dashboard" /etc/caddy/Caddyfile 2>/dev/null; then
   echo "/etc/caddy/Caddyfile уже настроен ранее, не перезаписываю"
 else
   [ -f /etc/caddy/Caddyfile ] && cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-kpi
-  sed -e "s/^DOMAIN {/$DOMAIN {/" -e "s/127.0.0.1:PORT/127.0.0.1:$PORT/" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
+  SITE="$DOMAIN"
+  [ "$HTTPS_PORT" = "443" ] || SITE="$DOMAIN:$HTTPS_PORT"
+  sed -e "s/^DOMAIN {/$SITE {/" -e "s/127.0.0.1:PORT/127.0.0.1:$PORT/" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
 fi
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 systemctl enable caddy >/dev/null
@@ -93,9 +97,9 @@ EOF
 chmod 755 /etc/cron.daily/kpi-dashboard-backup
 
 if ufw status 2>/dev/null | grep -q "Status: active"; then
-  echo "== Брандмауэр: открываю 80 и 443"
+  echo "== Брандмауэр: открываю 80 (выпуск сертификата) и $HTTPS_PORT"
   ufw allow 80/tcp >/dev/null
-  ufw allow 443/tcp >/dev/null
+  ufw allow "$HTTPS_PORT/tcp" >/dev/null
 fi
 
 sleep 3
@@ -117,7 +121,7 @@ if [ -n "$WEAK" ]; then
 fi
 cat <<EOF
 
-Готово. Дашборд: https://$DOMAIN (сертификат появится в течение минуты, если DNS уже указывает на этот сервер).
+Готово. Дашборд: https://$DOMAIN$([ "$HTTPS_PORT" = "443" ] || echo ":$HTTPS_PORT") (сертификат появится в течение минуты, если DNS уже указывает на этот сервер).
 Задайте пароли (у всех, кому нужен вход):
   cd $APP_DIR && sudo -u $APP_USER python3 manage.py password <логин>
 Журнал службы:  journalctl -u kpi-dashboard -f
