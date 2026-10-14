@@ -1,0 +1,23 @@
+[Unit]
+Description=KPI-ведомость ОП и ОС (дашборд KPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kpi
+Group=kpi
+WorkingDirectory=/opt/kpi-dashboard
+ExecStart=/usr/bin/python3 manage.py run
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# код и настройки только для чтения, писать можно лишь в базу
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/kpi-dashboard/data
+
+[Install]
+WantedBy=multi-user.target

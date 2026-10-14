@@ -7,7 +7,9 @@
     "port": 8080,
     "session_hours": 12,
     "_secure_cookie_comment": "true — если дашборд открывают по HTTPS через обратный прокси",
-    "secure_cookie": false
+    "secure_cookie": false,
+    "_trust_proxy_comment": "true — дашборд стоит за обратным прокси на этом же сервере (Caddy, nginx): адрес клиента берётся из X-Forwarded-For",
+    "trust_proxy": false
   },
 
   "sync": {

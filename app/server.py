@@ -155,6 +155,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def client_ip(self):
+        """Адрес клиента. За обратным прокси (server.trust_proxy) все запросы приходят с 127.0.0.1,
+        поэтому адрес берётся из последнего элемента X-Forwarded-For — его дописывает сам прокси."""
+        ip = self.client_address[0]
+        if self.app.config.get("server", {}).get("trust_proxy") and ip in ("127.0.0.1", "::1"):
+            return (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip() or ip
+        return ip
+
     def token(self):
         c = SimpleCookie(self.headers.get("Cookie", ""))
         return c["kpi_session"].value if "kpi_session" in c else None
@@ -237,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/login" and method == "POST":
                 b = self.body()
                 login = str(b.get("login") or "").strip().lower()
-                key = (self.client_address[0], login)
+                key = (self.client_ip(), login)
                 with app.lock:
                     if app.login_blocked(key):
                         return self.send_json({"error": "Слишком много неудачных попыток входа. Попробуйте через 15 минут"}, 429)

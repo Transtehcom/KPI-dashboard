@@ -1,0 +1,21 @@
+# kpi-dashboard: дашборд KPI за HTTPS. Сертификат Let's Encrypt Caddy получает и продлевает сам.
+# DOMAIN и PORT подставляет deploy/install.sh. Файл на сервере: /etc/caddy/Caddyfile
+DOMAIN {
+	encode gzip
+
+	# Доступ только с перечисленных адресов (например, внешний IP офиса).
+	# Раскомментируйте, впишите адреса через пробел и выполните: sudo systemctl reload caddy
+	# @outside {
+	# 	not remote_ip 203.0.113.10
+	# }
+	# respond @outside "Доступ ограничен" 403
+
+	reverse_proxy 127.0.0.1:PORT
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}

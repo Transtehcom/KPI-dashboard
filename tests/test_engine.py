@@ -243,5 +243,24 @@ class EngineTest(unittest.TestCase):
                 self.assertEqual(o["totals"]["employees"], 8)
 
 
+class ProxyTest(unittest.TestCase):
+    def handler(self, peer, xff, trust):
+        from types import SimpleNamespace
+        from app.server import Handler
+        h = Handler.__new__(Handler)
+        h.client_address = (peer, 50000)
+        h.headers = {"X-Forwarded-For": xff} if xff else {}
+        h.app = SimpleNamespace(config={"server": {"trust_proxy": trust}})
+        return h
+
+    def test_client_ip_behind_proxy(self):
+        # адрес, дописанный прокси, — последний; первые клиент может подставить сам
+        self.assertEqual(self.handler("127.0.0.1", "6.6.6.6, 203.0.113.5", True).client_ip(), "203.0.113.5")
+        self.assertEqual(self.handler("127.0.0.1", None, True).client_ip(), "127.0.0.1")
+        # без trust_proxy или не с локального адреса заголовку не верим
+        self.assertEqual(self.handler("127.0.0.1", "203.0.113.5", False).client_ip(), "127.0.0.1")
+        self.assertEqual(self.handler("198.51.100.7", "203.0.113.5", True).client_ip(), "198.51.100.7")
+
+
 if __name__ == "__main__":
     unittest.main()
