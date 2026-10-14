@@ -208,7 +208,9 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(both["applied"]["logins"], ["id:25", "pm"])
         leads = deal_funnel(self.con, EXAMPLE, kind="leads")
         self.assertEqual([(s["title"], s["count"]) for s in leads["sections"]],
-                         [("Распределено", 1), ("В работе", 2), ("Запросили ТКП", 0)])
+                         [("Поступило", 3), ("Распределено", 1), ("В работе", 2), ("Запросили ТКП", 0)])
+        self.assertEqual(leads["sections"][0]["share_of_total"], 1.0)  # «Поступило» — сумма трёх этапов ниже
+        self.assertEqual(leads["total_amount"], 300)
         self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
 
     def test_funnel_period_filters_by_created_or_stage_date(self):

@@ -960,7 +960,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     // --- документ для печати: параметры отчёта, затем по каждой воронке графика и таблицы
     const printFunnel = (x) => {
       const fx = d[x.kind], amt = hasAmount(fx), ss = fx.sections, many = fx.filters.categories.length > 1;
-      const total = ss.some((s) => s.all_open) ? Math.max(...ss.map((s) => s.amount)) : ss.reduce((a, s) => a + (s.amount || 0), 0);
+      const total = fx.total_amount ?? ss.reduce((a, s) => a + (s.amount || 0), 0);
       const people = new Map();
       ss.forEach((s, i) => s.by_responsible.forEach((r) => {
         const o = people.get(r.value) || { name: r.name, cells: ss.map(() => null), count: 0, amount: 0 };

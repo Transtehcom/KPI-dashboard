@@ -65,15 +65,25 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
 
     now = dt.datetime.now()
     sections, matched_any, in_funnel = [], set(), set()
-    for sc in sections_cfg:
+    # записи каждой секции; секция с sum_of — сумма перечисленных секций (например, «Поступило» над этапами лидов)
+    picked = {}
+    for n, sc in enumerate(sections_cfg):
+        if sc.get("sum_of"):
+            continue
         ids = set(sc.get("stages") or [])
-        names = {n.strip().lower() for n in sc.get("stage_names") or []}
+        names = {x.strip().lower() for x in sc.get("stage_names") or []}
         only_cats = {str(c) for c in sc.get("category_ids") or []}  # секция только по этим воронкам Б24
         sel = [r for r in rows if not only_cats or r["category_id"] in only_cats]
         if not sc.get("all_open"):
             sel = [r for r in sel if r["stage_id"] in ids or (r["stage"] or "").strip().lower() in names]
             matched_any |= {r["id"] for r in sel}
         in_funnel |= {r["id"] for r in sel}
+        picked[sc.get("key") or n] = sel
+    for n, sc in enumerate(sections_cfg):
+        if sc.get("sum_of"):
+            sel = list({r["id"]: r for key in sc["sum_of"] for r in picked.get(key, [])}.values())
+        else:
+            sel = picked[sc.get("key") or n]
         by_stage, by_resp = {}, {}
         for r in sel:
             k = (r["category"], r["stage"])
@@ -88,8 +98,10 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         ages = [a for a in (_days(r["stage_since"], now) for r in sel) if a is not None]
         deals = sorted(sel, key=lambda r: -(r["amount"] or 0))
         sections.append({
-            "key": sc.get("key"), "title": sc.get("title"), "all_open": bool(sc.get("all_open")),
+            "key": sc.get("key"), "title": sc.get("title"), "all_open": bool(sc.get("all_open")), "sum_of": sc.get("sum_of"),
             "rule": "все открытые" if sc.get("all_open") else
+                    "сумма этапов: " + ", ".join(next((x.get("title") or k for x in sections_cfg if x.get("key") == k), k)
+                                                 for k in sc["sum_of"]) if sc.get("sum_of") else
                     "стадии: " + ", ".join(list(sc.get("stage_names") or []) + list(sc.get("stages") or [])),
             "count": len(sel), "amount": sum(r["amount"] or 0 for r in sel),
             "avg_days_on_stage": round(sum(ages) / len(ages)) if ages else None,
@@ -116,6 +128,7 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         "snapshot": snap,
         "sections": sections,
         "total": len(in_funnel),
+        "total_amount": sum(r["amount"] or 0 for r in rows if r["id"] in in_funnel),
         "other_stages": [{"category": c, "stage": s, "count": n} for (c, s), n in sorted(other.items(), key=lambda x: -x[1])],
         "filters": {
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),
