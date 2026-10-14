@@ -114,6 +114,7 @@ class App:
             "payout_mode": self.rules.get("payout", {}).get("mode", "binary"),
             "criteria_titles": CRITERIA_TITLES,
             "last_sync": last,
+            "sync_running": sync.is_running(),
         }
 
     def employee(self, login, month):
@@ -331,8 +332,11 @@ class Handler(BaseHTTPRequestHandler):
                         app.con.commit()
                     return self.send_json({"ok": True})
             if path == "/api/sync" and method == "POST":
-                res = sync.run(app.con, app.config)
-                return self.send_json(res)
+                return self.send_json(sync.start_background(app.con, app.config))
+            if path == "/api/sync":  # ход синхронизации; когда закончилась — итог последней
+                with app.lock:
+                    last = sync.last_sync(app.con)
+                return self.send_json({**sync.progress(), "last_sync": last})
             return self.send_json({"error": "Не найдено"}, 404)
         except BadRequest as e:
             return self.send_json({"error": str(e)}, 400)

@@ -12,13 +12,38 @@ B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "dea
                    "leads": "qualified_date", "clients": None, "tasks": "deadline"}
 
 _running = threading.Lock()
+# ход текущей синхронизации: когда началась и какой шаг выполняется (для кнопки «Обновить данные»)
+_progress = {"started": None, "step": ""}
+
+
+def is_running():
+    return _running.locked()
+
+
+def progress():
+    return dict(_progress, running=is_running())
+
+
+def start_background(con, config):
+    """Запустить синхронизацию в фоне. Возвращает started или busy, не дожидаясь окончания (выгрузка идёт минуты)."""
+    if is_running():
+        return {"status": "busy", **progress()}
+    threading.Thread(target=run, args=(con, config), daemon=True).start()
+    return {"status": "started"}
 
 
 def run(con, config, force_demo=False):
     if not _running.acquire(blocking=False):
         return {"status": "busy", "message": "Синхронизация уже выполняется"}
     started = dt.datetime.now().isoformat(timespec="seconds")
-    log = []
+    _progress.update(started=started, step="Подготовка")
+
+    class Log(list):  # журнал синхронизации; последняя строка — текущий шаг
+        def append(self, line):
+            super().append(line)
+            _progress["step"] = line
+
+    log = Log()
     status = "ok"
     try:
         if config.get("mode", "demo") == "demo" or force_demo:

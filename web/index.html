@@ -509,6 +509,27 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     return `<span class="sync" title="${esc(s.message)}"><span class="dot ${s.status === "ok" ? "ok" : "err"}"></span>Б24 и 1С: ${esc(t)}</span>`;
   }
 
+  // синхронизация идёт в фоне несколько минут: кнопка показывает текущий шаг, по окончании данные перечитываются
+  let syncTimer = null;
+  function watchSync() {
+    const show = (step) => {
+      const sb = document.getElementById("syncBtn");
+      if (sb) { sb.disabled = true; sb.textContent = "Обновляю…"; sb.title = step || ""; }
+    };
+    show("");
+    clearTimeout(syncTimer);
+    const tick = async () => {
+      let st;
+      try { st = await api("/api/sync"); } catch (e) { if (e.message !== "auth") syncTimer = setTimeout(tick, 5000); return; }
+      if (st.running) { show(st.step); syncTimer = setTimeout(tick, 3000); return; }
+      const last = st.last_sync || {};
+      const errs = (last.message || "").split("\n").filter((x) => x.startsWith("Ошибка"));
+      toast(last.status === "ok" ? "Данные обновлены" : "Обновлено с ошибками: " + (errs.join("; ") || last.message || "подробности в журнале"));
+      state.boot = await api("/api/bootstrap"); renderShell(); load();
+    };
+    syncTimer = setTimeout(tick, 2000);
+  }
+
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
@@ -540,10 +561,13 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }));
     const sb = document.getElementById("syncBtn");
     if (sb) sb.addEventListener("click", async () => {
-      sb.disabled = true; sb.textContent = "Загружаю…";
-      try { const r = await api("/api/sync", {}); toast(r.status === "ok" ? "Данные обновлены" : "Обновлено с ошибками: " + r.message.split("\n").filter((x) => x.startsWith("Ошибка")).join("; ")); state.boot = await api("/api/bootstrap"); renderShell(); load(); }
-      catch (e) { toast(e.message); sb.disabled = false; sb.textContent = "Обновить данные"; }
+      try {
+        const r = await api("/api/sync", {});
+        toast(r.status === "busy" ? "Обновление уже идёт — дождитесь его окончания" : "Обновление запущено. Оно занимает несколько минут, страницей можно пользоваться");
+        watchSync();
+      } catch (e) { if (e.message !== "auth") toast(e.message); }
     });
+    if (state.boot.sync_running) watchSync();
     const lo = document.getElementById("logoutBtn");
     if (lo) lo.addEventListener("click", async () => { await api("/api/logout", {}); renderLogin(); });
     const pr = document.getElementById("pvRole");
