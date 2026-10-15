@@ -376,11 +376,14 @@ class Engine:
             # регламент: КП загружено в 1С, а скан исходящего письма прикреплён к карточке сделки в Б24
             letters = self.q("SELECT * FROM kp_letters WHERE emp=? AND dt>=? AND dt<=?", emp, first, last + "T23:59:59")
             kp_fact = min(len(kp_all), len(letters))
-            kp_comp = comp(f"КП в 1С, подтверждённые письмом в сделке Б24 ({p['kp_per_day']} в день × {ctx['wd']} раб. дн.)",
-                           kp_fact, kp_target, "шт", source=f"{SRC_1C} + {SRC_B24}", pace=self._pace(ctx, kp_target))
+            # письма берутся из журнала исходящих (Google-таблица), если он подключён, иначе из сделок Б24
+            sheet = bool(self.config.get("letters_sheet", {}).get("url"))
+            where, src = ("в журнале исходящих", "журнал исходящих писем") if sheet else ("в сделке Б24", SRC_B24)
+            kp_comp = comp(f"КП в 1С, подтверждённые письмом {where} ({p['kp_per_day']} в день × {ctx['wd']} раб. дн.)",
+                           kp_fact, kp_target, "шт", source=f"{SRC_1C} + {src}", pace=self._pace(ctx, kp_target))
             extra += [{"label": "КП загружено в 1С", "value": len(kp_all)},
-                      {"label": "Исходящих писем с КП и вложением в сделках Б24", "value": len(letters),
-                       "hint": "засчитывается меньшее из двух чисел"}]
+                      {"label": "Исходящих писем в журнале" if sheet else "Исходящих писем с КП и вложением в сделках Б24",
+                       "value": len(letters), "hint": "засчитывается меньшее из двух чисел"}]
         else:
             kp_ok = [k for k in kp_all if k["confirmed"]]
             kp_comp = comp(f"КП в 1С со сканом письма ({p['kp_per_day']} в день × {ctx['wd']} раб. дн.)", len(kp_ok),

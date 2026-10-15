@@ -6,6 +6,7 @@ import traceback
 from . import demo
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, month_add, month_bounds, replace_rows, today
+from .letters import fetch_letters
 from .onec import DATASETS, OneC
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -73,6 +74,8 @@ def run(con, config, force_demo=False):
                     traceback.print_exc()
                 try:
                     data = b24.fetch(by_uid, date_from)
+                    if config.get("letters_sheet", {}).get("url"):
+                        data.pop("kp_letters", None)  # письма с КП берутся из журнала исходящих (ниже)
                     for table, rows in data.items():
                         writes.append(("Б24", table, rows, B24_DATE_FIELDS.get(table)))
                 except Exception as e:  # noqa
@@ -81,6 +84,15 @@ def run(con, config, force_demo=False):
                     traceback.print_exc()
             else:
                 log.append("Битрикс24 не настроен (bitrix24.webhook)")
+
+            if config.get("letters_sheet", {}).get("url"):
+                try:
+                    writes.append(("Журнал писем", "kp_letters",
+                                   fetch_letters(config["letters_sheet"], emps, date_from, log=log.append), "dt"))
+                except Exception as e:  # noqa
+                    status = "error"
+                    log.append(f"Ошибка журнала исходящих писем: {e}")
+                    traceback.print_exc()
 
             if config.get("onec", {}).get("base_url") and "СЕРВЕР-1С" not in config["onec"]["base_url"]:
                 try:
