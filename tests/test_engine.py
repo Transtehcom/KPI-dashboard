@@ -57,9 +57,9 @@ class EngineTest(unittest.TestCase):
     def params(self, position, code):
         return next(i["params"] for i in self.rules["positions"][position]["items"] if i["code"] == code)
 
-    def calc(self, login, code, month):
+    def calc(self, login, code, month, **params):
         e = self.engine.employee(login)
-        return getattr(self.engine, "calc_" + code)(e, self.engine._ctx(month), self.params(e["position"], code))
+        return getattr(self.engine, "calc_" + code)(e, self.engine._ctx(month), {**self.params(e["position"], code), **params})
 
     def item(self, login, code, month):
         return next(i for i in self.engine.compute(login, month)["items"] if i["code"] == code)
@@ -108,16 +108,18 @@ class EngineTest(unittest.TestCase):
              "signed_date": "2026-09-08"},
             {"id": "s3", "emp": "pm", "dt": "2026-09-06", "doc": "УПД-3", "revenue": 900, "cost": 100, "signed": 0},
         ])
-        sep = self.calc("pm", "gross_profit", "2026-09")
+        sep = self.calc("pm", "gross_profit", "2026-09", metric="gross_profit")
         self.assertEqual(sep["components"][0]["fact"], 100)
         self.assertEqual(len(sep["details"]["rows"]), 3)  # 1 засчитан + 2 ждут подписи на конец сентября
-        self.assertEqual(self.calc("pm", "gross_profit", "2026-10")["components"][0]["fact"], 400)
+        self.assertEqual(self.calc("pm", "gross_profit", "2026-10", metric="gross_profit")["components"][0]["fact"], 400)
+        # по регламенту сейчас считается выручка без НДС: в октябре подписан УПД-1 на 1000
+        self.assertEqual(self.calc("pm", "gross_profit", "2026-10")["components"][0]["fact"], 1000)
 
     def test_gross_profit_without_cost_is_no_data(self):
         # себестоимость в 1С не рассчитана: ВП не должна совпасть с выручкой
         insert(self.con, "sales", [{"id": "s1", "emp": "pm", "dt": "2026-09-05", "doc": "УПД-1", "revenue": 1000,
                                     "cost": None, "signed": 1}])
-        r = self.calc("pm", "gross_profit", "2026-09")
+        r = self.calc("pm", "gross_profit", "2026-09", metric="gross_profit")
         self.assertIsNone(r["components"][0]["fact"])
         self.assertIsNone(r["components"][0]["pct"])
 
