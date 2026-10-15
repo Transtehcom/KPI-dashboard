@@ -111,6 +111,40 @@ def set_value(con, tbl, ref, field, raw, author):
     return row["emp"]
 
 
+def penalties_block(con, emp, month):
+    """Штрафы сотрудника за месяц и отметка «штрафов нет» — для карточки KPI тендерного отдела."""
+    rows = con.execute("SELECT id, dt, amount, reason FROM manual_penalties WHERE emp=? AND substr(dt, 1, 7)=? ORDER BY dt",
+                       (emp, month)).fetchall()
+    checked = con.execute("SELECT 1 FROM penalty_checks WHERE emp=? AND month=?", (emp, month)).fetchone()
+    return {"month": month, "rows": [dict(r) for r in rows], "checked": bool(checked)}
+
+
+def add_penalty(con, emp, date, amount, reason, author):
+    d = parse("sales", "due_date", date)  # та же проверка даты
+    if not d:
+        raise ValueError("укажите дату")
+    try:
+        amount = float(str(amount or 0).replace(",", ".").replace(" ", ""))
+    except ValueError:
+        raise ValueError("неверная сумма") from None
+    if amount < 0:
+        raise ValueError("сумма не может быть отрицательной")
+    con.execute("INSERT INTO manual_penalties (emp, dt, amount, reason, author, updated) VALUES (?,?,?,?,?,datetime('now'))",
+                (emp, d, amount, str(reason or "").strip()[:300], author))
+
+
+def delete_penalty(con, emp, pid):
+    if not con.execute("DELETE FROM manual_penalties WHERE id=? AND emp=?", (pid, emp)).rowcount:
+        raise ValueError("штраф не найден, обновите страницу")
+
+
+def set_penalty_check(con, emp, month, checked, author):
+    if checked:
+        con.execute("INSERT OR REPLACE INTO penalty_checks VALUES (?,?,?,datetime('now'))", (emp, month, author))
+    else:
+        con.execute("DELETE FROM penalty_checks WHERE emp=? AND month=?", (emp, month))
+
+
 def entry(con, code, emp, month_first, month_last):
     """Таблица для ввода в карточке пункта KPI: записи сотрудника за месяц и поля, которые можно заполнить."""
     tbl, fields = ENTRY[code]

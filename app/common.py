@@ -117,6 +117,12 @@ CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (tbl, ref, field));
 
+-- штрафы за нарушение финансовой дисциплины, которые вносит руководитель, и отметка «за месяц штрафов нет»
+CREATE TABLE IF NOT EXISTS manual_penalties (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, emp TEXT, dt TEXT, amount REAL, reason TEXT, author TEXT, updated TEXT);
+CREATE TABLE IF NOT EXISTS penalty_checks (
+  emp TEXT, month TEXT, author TEXT, updated TEXT, PRIMARY KEY (emp, month));
+
 CREATE TABLE IF NOT EXISTS manual_scores (
   emp TEXT, week TEXT, criterion TEXT, score REAL, comment TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (emp, week, criterion));

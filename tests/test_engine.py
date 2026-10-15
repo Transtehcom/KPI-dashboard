@@ -142,6 +142,22 @@ class EngineTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             manual.set_value(self.con, "sales", "s1", "due_date", "2026-13-01", "boss")
 
+    def test_manual_penalties(self):
+        def fact():
+            comps = self.calc("lead", "tender_receivables", "2026-09")["components"]
+            return next(c["fact"] for c in comps if "Штрафы" in c["name"])
+        self.assertIsNone(fact())  # ничего не внесено — ждёт ввода
+        manual.set_penalty_check(self.con, "lead", "2026-09", True, "boss")
+        self.assertEqual(fact(), 0)
+        manual.add_penalty(self.con, "lead", "2026-09-12", "5000", "просрочка оплаты", "boss")
+        self.assertEqual(fact(), 1)
+        pid = self.con.execute("SELECT id FROM manual_penalties").fetchone()["id"]
+        with self.assertRaises(ValueError):
+            manual.delete_penalty(self.con, "tender", pid)  # чужой штраф
+        manual.delete_penalty(self.con, "lead", pid)
+        manual.set_penalty_check(self.con, "lead", "2026-09", False, "boss")
+        self.assertIsNone(fact())
+
     def test_supply_kpi_awaits_manual_flags(self):
         insert(self.con, "supplier_orders", [order(1, "2026-09-03", 600000, deferred_share=None, deferral_days=None,
                                                    relevant=None, evidence=None, kp_count=3)])

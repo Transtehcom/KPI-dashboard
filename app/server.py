@@ -124,6 +124,8 @@ class App:
         for it in r["items"]:
             if it["code"] in manual.ENTRY:
                 it["entry"] = manual.entry(self.con, it["code"], login, first, last)
+            if it["code"] == "tender_receivables":
+                it["penalties"] = manual.penalties_block(self.con, login, month)
         r["trend"] = self.engine.trend(login, month)
         r["weeks"] = weeks_of_month(month)
         return r
@@ -332,6 +334,24 @@ class Handler(BaseHTTPRequestHandler):
                                                    b.get("value"), me["login"])
                             self.employee_param(emp)  # запись должна относиться к сотруднику из дашборда
                         except (ValueError, KeyError, BadRequest) as e:
+                            app.con.rollback()
+                            raise BadRequest(f"Не сохранено: {e}")
+                        app.con.commit()
+                    return self.send_json({"ok": True})
+                if path == "/api/penalty" and method == "POST":
+                    b = self.body()
+                    emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
+                    with db_lock():
+                        try:
+                            if b.get("action") == "add":
+                                manual.add_penalty(app.con, emp, b.get("dt"), b.get("amount"), b.get("reason"), me["login"])
+                            elif b.get("action") == "delete":
+                                manual.delete_penalty(app.con, emp, int(b.get("id") or 0))
+                            elif b.get("action") == "check":
+                                manual.set_penalty_check(app.con, emp, month, bool(b.get("checked")), me["login"])
+                            else:
+                                raise ValueError("неизвестное действие")
+                        except ValueError as e:
                             app.con.rollback()
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()

@@ -6,6 +6,7 @@ from .common import (business_days_between, month_add, month_bounds, parse_date,
 
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
+SRC_HAND = "Ввод руководителя"  # записи, которые руководитель вносит в дашборде (штрафы)
 CRITERIA_TITLES = {"docs": "Документооборот", "tasks": "Задачи в Битрикс24", "quality": "Качество документации"}
 EPS = 1e-9
 
@@ -260,7 +261,14 @@ class Engine:
               business_days_between(parse_date(r["unblock_date"]), parse_date(r["return_date"]),
                                     self.holidays, self.workdays) <= 1]
         share = len(ok) / len(apps) if apps else None
-        pen = self.q("SELECT * FROM penalties WHERE emp=? AND dt>=? AND dt<=?", emp, ctx["first"].isoformat(), ctx["last"].isoformat())
+        first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
+        pen = self.q("SELECT dt, amount, reason FROM penalties WHERE emp=? AND dt>=? AND dt<=? UNION ALL "
+                     "SELECT dt, amount, reason FROM manual_penalties WHERE emp=? AND dt>=? AND dt<=?",
+                     emp, first, last, emp, first, last)
+        # штрафы вносит руководитель: пока за месяц нет ни штрафа, ни отметки «штрафов нет», пункт ждёт ввода
+        from_1c = bool(self.q("SELECT 1 FROM penalties LIMIT 1"))
+        checked = bool(self.q("SELECT 1 FROM penalty_checks WHERE emp=? AND month=?", emp, ctx["month"]))
+        pen_fact = len(pen) if (pen or checked or from_1c) else None
         rows = [["Обеспечение контракта", r["ref"], r["amount"], r["acts_date"], r["return_date"],
                  f"{(parse_date(r['return_date']) - parse_date(r['acts_date'])).days} дн."] for r in contract if r["acts_date"]]
         rows += [["Обеспечение заявки", r["ref"], r["amount"], r["unblock_date"], r["return_date"] or "не возвращено",
@@ -270,10 +278,8 @@ class Engine:
             "components": [
                 comp("Среднее время возврата обеспечения контракта", avg_days, p["contract_return_days_max"], "дн", op="<=", source=SRC_1C),
                 comp("Обеспечения заявок возвращены за 1 рабочий день", share, p["unblock_share_min"], "%", source=SRC_1C),
-                # учёт штрафов может не вестись: без данных «0 штрафов» было бы ложным выполнением
-                comp("Штрафы за нарушение фин. дисциплины",
-                     len(pen) if self.q("SELECT 1 FROM penalties LIMIT 1") else None,
-                     p["penalties_max"], "шт", op="<=", source=SRC_1C),
+                comp("Штрафы за нарушение фин. дисциплины", pen_fact, p["penalties_max"], "шт", op="<=",
+                     source=SRC_1C if from_1c else SRC_HAND),
             ],
             "details": {"columns": ["Тип", "Основание", "Сумма, ₽", "Дата события", "Возврат", "Итог"], "rows": rows},
         }
@@ -641,7 +647,7 @@ class Engine:
             missing = [c for c in scored if c["pct"] is None]
             pct = min(pcts) if pcts else None
             amount = round(bonus * it["weight"])
-            awaiting_manual = any(c["source"] in (SRC_MAN, SRC_INPUT) for c in missing)
+            awaiting_manual = any(c["source"] in (SRC_MAN, SRC_INPUT, SRC_HAND) for c in missing)
             proportional = payout_cfg.get("mode") == "proportional"
             close_pct = payout_cfg.get("min_pct", 0.8) if proportional else 0.8
             if pct is None:

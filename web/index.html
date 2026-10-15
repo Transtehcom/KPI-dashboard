@@ -794,6 +794,24 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       </tbody></table></div>${isMgr ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
   }
 
+  // штрафы за нарушение финансовой дисциплины: вносит руководитель; «штрафов нет» — явная отметка за месяц
+  function penaltyBlock(d, it) {
+    const pb = it.penalties, isMgr = state.boot.me.role === "manager";
+    const mon = MONTHS[+d.month.slice(5) - 1].toLowerCase();
+    const list = pb.rows.length ? `<div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма, ₽</th><th>Основание</th>${isMgr ? "<th></th>" : ""}</tr></thead><tbody>
+      ${pb.rows.map((r) => `<tr><td class="nw">${esc(r.dt)}</td><td class="num nw">${nf(r.amount)}</td><td>${esc(r.reason || "—")}</td>${isMgr ? `<td><button class="btn" type="button" data-pen-del="${r.id}">Удалить</button></td>` : ""}</tr>`).join("")}
+      </tbody></table></div>` : `<div class="small">${pb.checked ? `За ${mon} штрафов нет (отмечено руководителем).` : `За ${mon} штрафы не внесены.`}</div>`;
+    if (!isMgr) return `<div class="manual"><div class="eyebrow">Штрафы за нарушение финансовой дисциплины</div>${list}</div>`;
+    const day = d.month === state.boot.current_month ? new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : d.month + "-01";
+    return `<div class="manual"><div class="eyebrow">Штрафы за нарушение финансовой дисциплины</div>${list}
+      <form class="inline-form" data-pen-add><label for="pen-dt">Дата</label><input id="pen-dt" type="date" value="${day}" min="${d.month}-01" max="${d.month}-31" required>
+        <label for="pen-sum">Сумма, ₽</label><input id="pen-sum" type="number" min="0" step="1" style="width:110px">
+        <label for="pen-why">Основание</label><input id="pen-why" type="text" maxlength="300" placeholder="за что">
+        <button class="btn" type="submit">Добавить штраф</button></form>
+      ${pb.rows.length ? "" : `<label class="small"><input type="checkbox" data-pen-check ${pb.checked ? "checked" : ""}> За ${mon} штрафов нет</label>`}
+      <div class="small muted">Пока за месяц не внесён штраф или не отмечено «штрафов нет», пункт ждёт ввода.</div></div>`;
+  }
+
   function renderEmp(d) {
     const main = document.getElementById("main");
     const b = state.boot, isMgr = b.me.role === "manager", inProg = d.in_progress;
@@ -824,6 +842,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             ${i.code === "conversion_sales" && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}
             ${i.manual ? manualBlock(d, i) : ""}
             ${i.entry ? entryBlock(d, i) : ""}
+            ${i.penalties ? penaltyBlock(d, i) : ""}
             ${ex.length ? `<div class="extra">${ex.map((x) => `<div>${esc(x.label)}: <b>${fmtExtra(x)}</b>${x.hint ? ` <span class="muted">(${esc(x.hint)})</span>` : ""}</div>`).join("")}</div>` : ""}
           </div>
           <details class="more"><summary>Как считается и из чего${i.details && i.details.rows.length ? ` · ${i.details.rows.length} записей` : ""}</summary><div class="more-b">
@@ -851,6 +870,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         if (!PREVIEW) toast("Комментарий сохранён");
       } catch (e) { toast(e.message); }
     }));
+    const penalty = async (body, msg) => {
+      try { await api("/api/penalty", { emp: d.login, month: d.month, ...body }); if (!PREVIEW) { toast(msg); sideCache = {}; load(); } }
+      catch (e) { toast(e.message); }
+    };
+    main.querySelectorAll("form[data-pen-add]").forEach((f) => f.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      penalty({ action: "add", dt: f.querySelector("#pen-dt").value, amount: f.querySelector("#pen-sum").value,
+                reason: f.querySelector("#pen-why").value }, "Штраф добавлен, KPI пересчитан");
+    }));
+    main.querySelectorAll("[data-pen-del]").forEach((b) => b.addEventListener("click", () => {
+      if (confirm("Удалить штраф?")) penalty({ action: "delete", id: b.dataset.penDel }, "Штраф удалён, KPI пересчитан");
+    }));
+    main.querySelectorAll("[data-pen-check]").forEach((c) => c.addEventListener("change", () =>
+      penalty({ action: "check", checked: c.checked }, c.checked ? "Отмечено: штрафов нет" : "Отметка снята")));
     main.querySelectorAll("[data-entry]").forEach((el) => el.addEventListener("change", async () => {
       try {
         await api("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value: el.value });
