@@ -171,7 +171,44 @@
 
 Обновление кода — повторный запуск того же скрипта. Ограничить доступ адресами офиса можно в `/etc/caddy/Caddyfile` (пример там закомментирован), после правки — `sudo systemctl reload caddy`.
 
-1С с сервера в интернете недоступна, если она стоит в офисной сети: для подключения нужна публикация HTTP-сервиса 1С наружу (с доступом только с IP сервера), VPN до офиса или выгрузка CSV на сервер.
+1С с сервера в интернете недоступна, если она стоит в офисной сети: для подключения нужна публикация HTTP-сервиса 1С наружу (с доступом только с IP сервера), VPN до офиса или выгрузка CSV на сервер. Удобнее схема ниже.
+
+## Дашборд в офисе, вход через VPS
+
+Дашборд работает на компьютере в офисе и сам ходит в 1С и Битрикс24 по офисной сети. Наружу его отдаёт тот же VPS с Caddy: офисный компьютер держит SSH-туннель до VPS, входящие порты в офисе открывать не нужно.
+
+```
+Сотрудник ──HTTPS──► VPS: Caddy (kpi.transtehcom.ru:8443) ──► 127.0.0.1:18081
+                                  ▲ SSH-туннель (открывает офис)
+Офис: дашборд 127.0.0.1:8081 ─────┘    ──► 1С, Битрикс24
+```
+
+На VPS:
+1. Пользователь только для туннеля: `useradd --system --create-home --home-dir /var/lib/kpitunnel --shell /usr/sbin/nologin kpitunnel`, в `/var/lib/kpitunnel/.ssh/authorized_keys` — открытый ключ офисного компьютера.
+2. В конец `/etc/ssh/sshd_config` блок, который разрешает этому пользователю только открыть порт 127.0.0.1:18081, затем `sshd -t && systemctl reload ssh`:
+   ```
+   Match User kpitunnel
+   	PasswordAuthentication no
+   	AllowTcpForwarding remote
+   	PermitListen 127.0.0.1:18081
+   	X11Forwarding no
+   	AllowAgentForwarding no
+   	PermitTTY no
+   	ForceCommand /usr/sbin/nologin
+   	ClientAliveInterval 20
+   	ClientAliveCountMax 3
+   ```
+3. В `/etc/caddy/Caddyfile` — `reverse_proxy 127.0.0.1:18081` и `handle_errors` со страницей «временно недоступен» (её видят, когда офисный компьютер выключен). Служба `kpi-dashboard` на VPS отключается: `systemctl disable --now kpi-dashboard`.
+
+На офисном компьютере (Windows):
+1. Ключ туннеля: `ssh-keygen -t ed25519 -N "" -f %USERPROFILE%\.ssh\kpi_tunnel_ed25519`. Ключ сервера VPS должен быть в `%USERPROFILE%\.ssh\known_hosts` (один раз подключитесь `ssh kpitunnel@IP` и подтвердите отпечаток).
+2. В `config.json`: `"host": "127.0.0.1"`, `"secure_cookie": true`, `"trust_proxy": true`, `"open_browser": false`. Сотрудники и в офисе открывают дашборд по адресу домена.
+3. Автозапуск: в папку «Автозагрузка» (`shell:startup`) файл `KPI-dashboard.cmd`:
+   ```
+   start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "ПУТЬ\deploy\windows\office-autostart.ps1"
+   ```
+   Скрипт держит запущенными дашборд и туннель и перезапускает их при сбое; журнал — `data\office-autostart.log`. Компьютер не должен уходить в сон, а после перезагрузки в Windows нужно войти, иначе автозапуск не сработает.
+4. Копии базы делайте сами: `data\kpi.sqlite` (пароли, оценки руководителя, планы).
 
 ## Тесты
 
