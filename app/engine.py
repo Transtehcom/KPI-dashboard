@@ -148,8 +148,11 @@ class Engine:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                               pace=self._pace(ctx, p["meetings_min"])))
         if "kp_out_of_tender" in p:
-            n = self.q("SELECT COUNT(*) c FROM kp WHERE emp=? AND out_of_tender=1 AND dt>=? AND dt<=?",
-                       emp, ctx["first"].isoformat(), ctx["last"].isoformat())[0]["c"]
+            r = self.q("SELECT COUNT(*) c FROM kp WHERE emp=? AND out_of_tender=1 AND dt>=? AND dt<=?",
+                       emp, ctx["first"].isoformat(), ctx["last"].isoformat())[0]
+            # признак «вне тендера» в 1С может не вестись: тогда «нет данных», а не 0
+            known = self.q("SELECT 1 FROM kp WHERE out_of_tender IS NOT NULL LIMIT 1")
+            n = r["c"] if known else None
             comps.append(comp("КП вне тендера", n, p["kp_out_of_tender"], "шт", source=SRC_1C,
                               pace=self._pace(ctx, p["kp_out_of_tender"])))
         if "active_clients" in p:
@@ -260,7 +263,10 @@ class Engine:
             "components": [
                 comp("Среднее время возврата обеспечения контракта", avg_days, p["contract_return_days_max"], "дн", op="<=", source=SRC_1C),
                 comp("Обеспечения заявок возвращены за 1 рабочий день", share, p["unblock_share_min"], "%", source=SRC_1C),
-                comp("Штрафы за нарушение фин. дисциплины", len(pen), p["penalties_max"], "шт", op="<=", source=SRC_1C),
+                # учёт штрафов может не вестись: без данных «0 штрафов» было бы ложным выполнением
+                comp("Штрафы за нарушение фин. дисциплины",
+                     len(pen) if self.q("SELECT 1 FROM penalties LIMIT 1") else None,
+                     p["penalties_max"], "шт", op="<=", source=SRC_1C),
             ],
             "details": {"columns": ["Тип", "Основание", "Сумма, ₽", "Дата события", "Возврат", "Итог"], "rows": rows},
         }
@@ -300,9 +306,13 @@ class Engine:
                          "(signed=0 OR signed IS NULL OR COALESCE(signed_date, dt)>?)", emp, first, last, last)
 
         def gp(r):
-            return (r["revenue"] or 0) - (r["cost"] or 0)
+            return None if r["cost"] is None else (r["revenue"] or 0) - r["cost"]
 
-        value = sum((r["revenue"] or 0) if metric == "revenue" else gp(r) for r in counted)
+        value = sum((r["revenue"] or 0) if metric == "revenue" else (gp(r) or 0) for r in counted)
+        # себестоимость из 1С не пришла: ВП была бы равна выручке, поэтому «нет данных»
+        no_cost = metric == "gross_profit" and any(r["cost"] is None for r in counted + pending)
+        if no_cost:
+            value = None
         plan_row = self.q("SELECT value FROM plans WHERE emp=? AND month=? AND metric=?", emp, ctx["month"], metric)
         plan = plan_row[0]["value"] if plan_row else p.get("default_plan")
         name = "Выручка без НДС" if metric == "revenue" else "Валовая прибыль"
@@ -311,17 +321,23 @@ class Engine:
         rows += [[r["doc"], r["client"], r["dt"], r["revenue"], r["cost"], gp(r),
                   f"{r['signed_date']} — засчитано в месяце подписания" if r["signed"] and r["signed_date"]
                   else "не подписан"] for r in pending]
-        return {
+        res = {
             "components": [comp(f"{name} по УПД/актам, подписанным в месяце", value, plan, "₽", source=SRC_1C,
                                 pace=self._pace(ctx, plan))],
             "plan": {"metric": metric, "value": plan, "is_default": not plan_row},
             "extra": [{"label": "Выручка (подписано в месяце)", "value": sum(r["revenue"] or 0 for r in counted), "fmt": "rub"},
-                      {"label": "ВП (подписано в месяце)", "value": sum(gp(r) for r in counted), "fmt": "rub"},
-                      {"label": "Документы месяца без подписи на конец месяца (ВП)", "value": sum(gp(r) for r in pending),
+                      {"label": "ВП (подписано в месяце)", "value": sum(gp(r) or 0 for r in counted), "fmt": "rub"},
+                      {"label": "Документы месяца без подписи на конец месяца (ВП)", "value": sum(gp(r) or 0 for r in pending),
                        "fmt": "rub", "hint": "засчитываются в месяце подписания обеими сторонами"}],
             "details": {"columns": ["Документ", "Клиент", "Дата документа", "Выручка, ₽", "Себестоимость, ₽", "ВП, ₽",
                                     "Подписан обеими сторонами"], "rows": rows},
         }
+        if no_cost:
+            for x in res["extra"][1:]:
+                x["value"] = None
+            res["extra"].append({"label": "Себестоимость", "value": "нет данных",
+                                 "hint": "в 1С не рассчитана: валовая прибыль появится, когда будет источник себестоимости"})
+        return res
 
     def calc_qualified_leads(self, e, ctx, p):
         rows = self.q("SELECT * FROM leads WHERE emp=? AND qualified_date>=? AND qualified_date<=?",
@@ -397,6 +413,10 @@ class Engine:
 
     def calc_receivables_pm(self, e, ctx, p):
         rows = self.q("SELECT * FROM receivables WHERE emp=?", e["login"])
+        if not self.q("SELECT 1 FROM receivables LIMIT 1"):
+            # данных о сроках оплаты из 1С нет: без них «просрочки 0 дн.» было бы ложным выполнением
+            return {"components": [comp("Оплачено в срок (по отгрузкам со сроком в месяце)", None, 1.0, "%", source=SRC_1C),
+                                   comp("Максимальная просрочка", None, p["overdue_days_max"], "дн", op="<=", source=SRC_1C)]}
         due_in = [r for r in rows if _in(r["due_date"], ctx["first"], min(ctx["last"], ctx["asof"]))]
         on_time = [r for r in due_in if r["paid_date"] and parse_date(r["paid_date"]) <= parse_date(r["due_date"])]
         share = len(on_time) / len(due_in) if due_in else None

@@ -79,6 +79,25 @@ class OneC:
         with urllib.request.urlopen(req, timeout=120, context=self.ctx) as r:
             return json.loads(r.read().decode("utf-8-sig"))
 
+    def _odata(self, entity, params):
+        url = self.base + "odata/standard.odata/" + urllib.parse.quote(entity) + "?" + \
+            urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        return self._get(url).get("value", [])
+
+    def _sum_from(self, rows, cfg, date_from, date_to):
+        """Суммы из другого объекта OData (обычно регистра) по ссылке на документ: например, выручка без НДС
+        из регистра ВыручкаИСебестоимостьПродаж по полю Recorder = Ref_Key реализации."""
+        params = {"$format": "json", "$select": ",".join([cfg["key"]] + list(cfg["fields"].values()))}
+        if cfg.get("filter"):
+            params["$filter"] = cfg["filter"].format(date_from=date_from.isoformat(), date_to=date_to.isoformat())
+        totals = {}
+        for r in self._odata(cfg["entity"], params):
+            acc = totals.setdefault(r.get(cfg["key"]), dict.fromkeys(cfg["fields"], 0.0))
+            for k, v in cfg["fields"].items():
+                acc[k] += _to_num(r.get(v)) or 0.0
+        for row in rows:
+            row.update(totals.get(row.get("id"), {}))
+
     def _load(self, ds, date_from, date_to):
         src = ds.get("source", "http")
         if src == "http":
@@ -91,11 +110,14 @@ class OneC:
                 params["$filter"] = ds["filter"].format(date_from=date_from.isoformat(), date_to=date_to.isoformat())
             if ds.get("expand"):
                 params["$expand"] = ds["expand"]
-            url = self.base + "odata/standard.odata/" + urllib.parse.quote(ds["entity"]) + "?" + \
-                urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-            rows = self._get(url).get("value", [])
+            if ds.get("select"):
+                params["$select"] = ds["select"]
+            rows = self._odata(ds["entity"], params)
             m = ds.get("map", {})
-            return [{k: _get_path(r, v) for k, v in m.items()} for r in rows]
+            out = [{k: _get_path(r, v) for k, v in m.items()} for r in rows]
+            if ds.get("sum_from"):
+                self._sum_from(out, ds["sum_from"], date_from, date_to)
+            return out
         if src == "csv":
             path = ds["file"] if os.path.isabs(ds["file"]) else os.path.join(ROOT, ds["file"])
             with open(path, encoding=ds.get("encoding", "utf-8-sig"), newline="") as f:

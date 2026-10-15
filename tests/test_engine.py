@@ -113,6 +113,20 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(sep["details"]["rows"]), 3)  # 1 засчитан + 2 ждут подписи на конец сентября
         self.assertEqual(self.calc("pm", "gross_profit", "2026-10")["components"][0]["fact"], 400)
 
+    def test_gross_profit_without_cost_is_no_data(self):
+        # себестоимость в 1С не рассчитана: ВП не должна совпасть с выручкой
+        insert(self.con, "sales", [{"id": "s1", "emp": "pm", "dt": "2026-09-05", "doc": "УПД-1", "revenue": 1000,
+                                    "cost": None, "signed": 1}])
+        r = self.calc("pm", "gross_profit", "2026-09")
+        self.assertIsNone(r["components"][0]["fact"])
+        self.assertIsNone(r["components"][0]["pct"])
+
+    def test_receivables_without_1c_data_is_no_data(self):
+        r = self.calc("pm", "receivables_pm", "2026-09")
+        self.assertEqual([c["fact"] for c in r["components"]], [None, None])
+        pen = next(c for c in self.calc("lead", "tender_receivables", "2026-09")["components"] if "Штрафы" in c["name"])
+        self.assertIsNone(pen["fact"])
+
     # ---------------------------------------------------------------- активные клиенты
     def test_active_clients_past_month_uses_snapshot(self):
         insert(self.con, "clients", [{"id": f"cl{i}", "emp": "lead", "name": f"К{i}", "need": 1, "strategy": 1,
