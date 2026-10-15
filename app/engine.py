@@ -149,12 +149,18 @@ class Engine:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                               pace=self._pace(ctx, p["meetings_min"])))
         if "kp_out_of_tender" in p:
-            r = self.q("SELECT COUNT(*) c FROM kp WHERE emp=? AND out_of_tender=1 AND dt>=? AND dt<=?",
-                       emp, ctx["first"].isoformat(), ctx["last"].isoformat())[0]
-            # признак «вне тендера» в 1С может не вестись: тогда «нет данных», а не 0
-            known = self.q("SELECT 1 FROM kp WHERE out_of_tender IS NOT NULL LIMIT 1")
-            n = r["c"] if known else None
-            comps.append(comp("КП вне тендера", n, p["kp_out_of_tender"], "шт", source=SRC_1C,
+            if self.config.get("letters_sheet", {}).get("url"):
+                # КП вне тендера — письма тем из letters_sheet.topics в журнале исходящих
+                n = self.q("SELECT COUNT(*) c FROM kp_letters WHERE emp=? AND dt>=? AND dt<=?",
+                           emp, ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")[0]["c"]
+                src = "журнал исходящих писем"
+            else:
+                r = self.q("SELECT COUNT(*) c FROM kp WHERE emp=? AND out_of_tender=1 AND dt>=? AND dt<=?",
+                           emp, ctx["first"].isoformat(), ctx["last"].isoformat())[0]
+                # признак «вне тендера» в 1С может не вестись: тогда «нет данных», а не 0
+                known = self.q("SELECT 1 FROM kp WHERE out_of_tender IS NOT NULL LIMIT 1")
+                n, src = (r["c"] if known else None), SRC_1C
+            comps.append(comp("КП вне тендера", n, p["kp_out_of_tender"], "шт", source=src,
                               pace=self._pace(ctx, p["kp_out_of_tender"])))
         if "active_clients" in p:
             # прошлые месяцы — по снимку на конец месяца, текущий — по текущему состоянию CRM
