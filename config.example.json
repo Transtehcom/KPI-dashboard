@@ -78,7 +78,7 @@
     "include_closed": false,
     "sections": [
       { "key": "received",    "title": "Поступило",     "sum_of": ["distributed", "work", "tkp"] },
-      { "key": "distributed", "title": "Не распределено", "stage_names": ["Распределённые"] },
+      { "key": "distributed", "title": "Не обработано", "stage_names": ["Распределённые"] },
       { "key": "work",        "title": "В работе",      "stage_names": ["В работе", "Поиск контактов", "Ожидают звонка", "Поиск подрядчиков", "Поиск тендеров", "Переговоры о встрече"] },
       { "key": "tkp",         "title": "Запросили ТКП", "stage_names": ["Запросили ТКП"] }
     ]
