@@ -247,6 +247,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .manual th { color: var(--fg-3); font-weight: 600; }
 .manual select { min-height: 28px; padding: 2px 6px; }
 .manual input[type=text] { min-height: 28px; padding: 2px 8px; width: 100%; min-width: 140px; }
+.manual input[type=date], .manual input[type=number] { min-height: 28px; padding: 2px 6px; }
+.manual td.nw { white-space: nowrap; }
+.manual td.manual-set input, .manual td.manual-set select { border-bottom: 2px solid var(--accent); }
 .inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .inline-form input { width: 140px; min-height: 30px; }
 
@@ -770,6 +773,27 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       </tbody></table></div>${isMgr ? `<div class="small muted">100 — без замечаний. Пункт выполнен, если средняя оценка за месяц 100.</div>` : ""}</div>`;
   }
 
+  // ручной ввод к записям из 1С: срок и дата оплаты реализаций, брак, отсрочка, признаки конкурентной закупки
+  function entryBlock(d, it) {
+    const en = it.entry, isMgr = state.boot.me.role === "manager";
+    if (!en.rows.length) return `<div class="manual"><div class="eyebrow">Данные для ввода</div><div class="small muted">За ${MONTHS[+d.month.slice(5) - 1].toLowerCase()} записей из 1С нет.</div></div>`;
+    const show = (f, v) => v == null ? "—" : f.type === "bool" ? (v ? "да" : "нет") : f.type === "pct" ? nf(v * 100, 0) + "%" : f.type === "date" ? v : nf(v);
+    const input = (r, f) => {
+      const v = r.values[f.key], lbl = `${esc(f.title)}, ${esc(r.cells[0])}`;
+      const data = `data-entry data-table="${en.table}" data-ref="${esc(r.ref)}" data-field="${f.key}" aria-label="${lbl}"`;
+      if (f.type === "bool") return `<select ${data}><option value="" ${v == null ? "selected" : ""}>—</option><option value="1" ${v === 1 ? "selected" : ""}>да</option><option value="0" ${v === 0 ? "selected" : ""}>нет</option></select>`;
+      if (f.type === "date") return `<input type="date" ${data} value="${esc(v || "")}">`;
+      if (f.type === "text") return `<input type="text" ${data} value="${esc(v ?? "")}" style="min-width:90px">`;
+      const shown = v == null ? "" : f.type === "pct" ? Math.round(v * 1000) / 10 : v;
+      return `<input type="number" min="0" ${f.type === "pct" ? 'max="100" step="1"' : 'step="1"'} ${data} value="${shown}" style="width:80px">`;
+    };
+    return `<div class="manual"><div class="eyebrow">${isMgr ? "Ввод руководителя к данным 1С" : "Данные, введённые руководителем"}</div>
+      <div class="scroll"><table><thead><tr>${en.columns.map((c) => `<th>${esc(c)}</th>`).join("")}${en.fields.map((f) => `<th>${esc(f.title)}</th>`).join("")}</tr></thead><tbody>
+      ${en.rows.map((r) => `<tr>${r.cells.map((c, ci) => `<td class="${typeof c === "number" ? "num nw" : ci < 2 ? "nw" : ""}">${typeof c === "number" ? nf(Math.round(c)) : esc(c ?? "—")}</td>`).join("")}${en.fields.map((f) =>
+        `<td${r.manual.includes(f.key) ? ' class="manual-set" title="Введено вручную"' : ""}>${isMgr ? input(r, f) : show(f, r.values[f.key])}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div>${isMgr ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
+  }
+
   function renderEmp(d) {
     const main = document.getElementById("main");
     const b = state.boot, isMgr = b.me.role === "manager", inProg = d.in_progress;
@@ -799,6 +823,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             ${i.plan && isMgr ? `<form class="inline-form" data-plan="${i.plan.metric}"><label for="plan-${i.n}">План на ${MONTHS[+d.month.slice(5) - 1].toLowerCase()}, ₽</label><input id="plan-${i.n}" type="number" min="0" step="10000" value="${i.plan.value ?? ""}"><button class="btn" type="submit">Сохранить план</button>${i.plan.is_default ? `<span class="muted">сейчас — план по умолчанию</span>` : ""}</form>` : ""}
             ${i.code === "conversion_sales" && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}
             ${i.manual ? manualBlock(d, i) : ""}
+            ${i.entry ? entryBlock(d, i) : ""}
             ${ex.length ? `<div class="extra">${ex.map((x) => `<div>${esc(x.label)}: <b>${fmtExtra(x)}</b>${x.hint ? ` <span class="muted">(${esc(x.hint)})</span>` : ""}</div>`).join("")}</div>` : ""}
           </div>
           <details class="more"><summary>Как считается и из чего${i.details && i.details.rows.length ? ` · ${i.details.rows.length} записей` : ""}</summary><div class="more-b">
@@ -824,6 +849,12 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       try {
         for (const s of sels) if (s.value !== "") await api("/api/score", { emp: d.login, week: s.dataset.week, criterion: s.dataset.crit, score: +s.value, comment: inp.value });
         if (!PREVIEW) toast("Комментарий сохранён");
+      } catch (e) { toast(e.message); }
+    }));
+    main.querySelectorAll("[data-entry]").forEach((el) => el.addEventListener("change", async () => {
+      try {
+        await api("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value: el.value });
+        if (!PREVIEW) { toast("Сохранено, KPI пересчитан"); sideCache = {}; load(); }
       } catch (e) { toast(e.message); }
     }));
     main.querySelectorAll("form[data-plan]").forEach((f) => f.addEventListener("submit", async (ev) => {

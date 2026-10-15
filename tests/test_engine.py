@@ -7,7 +7,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import demo, sync  # noqa: E402
+from app import demo, manual, sync  # noqa: E402
 from app.common import (connect, load_json, load_rules, month_add, month_bounds, replace_rows,  # noqa: E402
                         weeks_of_month, working_days)
 from app.engine import Engine  # noqa: E402
@@ -128,6 +128,29 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([c["fact"] for c in r["components"]], [None, None])
         pen = next(c for c in self.calc("lead", "tender_receivables", "2026-09")["components"] if "Штрафы" in c["name"])
         self.assertIsNone(pen["fact"])
+
+    def test_manual_payment_dates_feed_receivables_and_survive_sync(self):
+        insert(self.con, "sales", [{"id": "s1", "emp": "pm", "dt": "2026-08-20", "doc": "УПД-1", "revenue": 1000, "signed": 1}])
+        manual.set_value(self.con, "sales", "s1", "due_date", "2026-09-05", "boss")
+        manual.set_value(self.con, "sales", "s1", "paid_date", "2026-09-10", "boss")
+        # синхронизация заменяет таблицу, ручные значения накладываются заново
+        replace_rows(self.con, "sales", [{"id": "s1", "emp": "pm", "dt": "2026-08-20", "doc": "УПД-1", "revenue": 1000,
+                                          "signed": 1}], emps=["pm"])
+        manual.apply(self.con)
+        r = self.calc("pm", "receivables_pm", "2026-09")
+        self.assertEqual([c["fact"] for c in r["components"]], [0.0, 5])
+        with self.assertRaises(ValueError):
+            manual.set_value(self.con, "sales", "s1", "due_date", "2026-13-01", "boss")
+
+    def test_supply_kpi_awaits_manual_flags(self):
+        insert(self.con, "supplier_orders", [order(1, "2026-09-03", 600000, deferred_share=None, deferral_days=None,
+                                                   relevant=None, evidence=None, kp_count=3)])
+        self.assertEqual(self.item("supply", "deferred_payment", "2026-09")["status"], "awaiting")
+        self.assertEqual(self.item("supply", "competitive_purchases", "2026-09")["status"], "awaiting")
+        for f, v in (("deferred_share", "30"), ("deferral_days", "14"), ("relevant", "1"), ("evidence", "1")):
+            manual.set_value(self.con, "supplier_orders", "o1", f, v, "boss")
+        self.assertEqual(self.calc("supply", "deferred_payment", "2026-09")["components"][0]["fact"], 1.0)
+        self.assertEqual(self.calc("supply", "competitive_purchases", "2026-09")["components"][0]["fact"], 1.0)
 
     # ---------------------------------------------------------------- активные клиенты
     def test_active_clients_past_month_uses_snapshot(self):

@@ -3,7 +3,7 @@ import datetime as dt
 import threading
 import traceback
 
-from . import demo
+from . import demo, manual
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
@@ -116,6 +116,7 @@ def run(con, config, force_demo=False):
                             # воронки сделок и лидов — срез по всем ответственным, заменяется целиком
                             replace_rows(con, table, rows, emps=None if table == "crm_deals" else logins, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
+                        manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
                         if any(table == "clients" for _, table, _, _ in writes):
                             snapshot_clients(con, current_month())
                         con.commit()

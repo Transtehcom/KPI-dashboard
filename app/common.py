@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, revenue REAL, cost REAL, signed INTEGER,
-  signed_date TEXT);
+  signed_date TEXT, due_date TEXT, paid_date TEXT);
 
 CREATE TABLE IF NOT EXISTS receivables (
   id TEXT PRIMARY KEY, emp TEXT, doc TEXT, client TEXT, ship_date TEXT, due_date TEXT,
@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
 
 CREATE TABLE IF NOT EXISTS supply_funnel (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, customer_order TEXT, client TEXT, stage TEXT);
+
+-- значения, которые руководитель вводит вручную к записям из 1С (срок и дата оплаты реализации, брак, отсрочка…);
+-- после каждой синхронизации заново накладываются на таблицу (app/manual.py)
+CREATE TABLE IF NOT EXISTS manual_fields (
+  tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
+  PRIMARY KEY (tbl, ref, field));
 
 CREATE TABLE IF NOT EXISTS manual_scores (
   emp TEXT, week TEXT, criterion TEXT, score REAL, comment TEXT, author TEXT, updated TEXT,
@@ -136,7 +142,8 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
-ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")], "sales": [("signed_date", "TEXT")],
+ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")],
+                 "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")]}
 
 

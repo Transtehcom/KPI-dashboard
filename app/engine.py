@@ -5,6 +5,7 @@ from .common import (business_days_between, month_add, month_bounds, parse_date,
                      quarter_months, today, weeks_of_month, working_days)
 
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
+SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
 CRITERIA_TITLES = {"docs": "Документооборот", "tasks": "Задачи в Битрикс24", "quality": "Качество документации"}
 EPS = 1e-9
 
@@ -415,11 +416,17 @@ class Engine:
         }
 
     def calc_receivables_pm(self, e, ctx, p):
-        rows = self.q("SELECT * FROM receivables WHERE emp=?", e["login"])
-        if not self.q("SELECT 1 FROM receivables LIMIT 1"):
-            # данных о сроках оплаты из 1С нет: без них «просрочки 0 дн.» было бы ложным выполнением
-            return {"components": [comp("Оплачено в срок (по отгрузкам со сроком в месяце)", None, 1.0, "%", source=SRC_1C),
-                                   comp("Максимальная просрочка", None, p["overdue_days_max"], "дн", op="<=", source=SRC_1C)]}
+        if self.q("SELECT 1 FROM receivables LIMIT 1"):
+            rows, src = self.q("SELECT * FROM receivables WHERE emp=?", e["login"]), SRC_1C
+        else:
+            # в 1С сроки оплаты не ведутся: срок и дату оплаты реализаций вводит руководитель
+            rows = self.q("SELECT id, doc, client, dt AS ship_date, due_date, paid_date, revenue AS amount FROM sales "
+                          "WHERE emp=? AND due_date IS NOT NULL", e["login"])
+            src = SRC_INPUT
+        if not rows:
+            # сроков оплаты нет: «просрочки 0 дн.» было бы ложным выполнением
+            return {"components": [comp("Оплачено в срок (по отгрузкам со сроком в месяце)", None, 1.0, "%", source=src),
+                                   comp("Максимальная просрочка", None, p["overdue_days_max"], "дн", op="<=", source=src)]}
         due_in = [r for r in rows if _in(r["due_date"], ctx["first"], min(ctx["last"], ctx["asof"]))]
         on_time = [r for r in due_in if r["paid_date"] and parse_date(r["paid_date"]) <= parse_date(r["due_date"])]
         share = len(on_time) / len(due_in) if due_in else None
@@ -440,8 +447,8 @@ class Engine:
         det.sort(key=lambda x: -x[5])
         res = {
             "components": [
-                comp("Оплачено в срок (по отгрузкам со сроком в месяце)", share, 1.0, "%", source=SRC_1C),
-                comp("Максимальная просрочка", worst, p["overdue_days_max"], "дн", op="<=", source=SRC_1C),
+                comp("Оплачено в срок (по отгрузкам со сроком в месяце)", share, 1.0, "%", source=src),
+                comp("Максимальная просрочка", worst, p["overdue_days_max"], "дн", op="<=", source=src),
             ],
             "details": {"columns": ["Документ", "Клиент", "Сумма, ₽", "Срок оплаты", "Оплачено", "Просрочка, дн"], "rows": det},
         }
@@ -472,7 +479,7 @@ class Engine:
                 det.append([r["doc"], r["supplier"], r["planned_date"], r["actual_date"] or "—", ", ".join(reasons)])
         late_share = (len(rows) - ok) / len(rows) if rows else None
         return {
-            "components": [comp("Доля просроченных поставок", late_share, p["late_share_max"], "%", op="<=", source=SRC_1C)],
+            "components": [comp("Доля просроченных поставок", late_share, p["late_share_max"], "%", op="<=", source=SRC_INPUT)],
             "extra": [{"label": "Поставок с плановой датой в месяце", "value": len(rows)},
                       {"label": "Вовремя и в полном объёме", "value": ok}],
             "details": {"columns": ["Заказ поставщику", "Поставщик", "План", "Факт (УПД/ТН)", "Нарушение"], "rows": det},
@@ -488,16 +495,21 @@ class Engine:
             share = sum(r["amount_novat"] for r in good) / tot if tot else None
         else:
             share = len(good) / len(rows) if rows else None
+        # условия отсрочки вводит руководитель: пока они не введены по всем заказам, пункт ждёт ввода
+        pending = [r for r in rows if r["deferred_share"] is None or r["deferral_days"] is None]
+        if pending:
+            share = None
         splits = self._split_orders(e["login"], ctx, p["threshold"])
         res = {
-            "components": [comp("Доля заказов с отсрочкой", share, p["target"], "%", source=SRC_1C)],
+            "components": [comp("Доля заказов с отсрочкой", share, p["target"], "%", source=SRC_INPUT)],
             "extra": [{"label": f"Заказов от {p['threshold']:,.0f} ₽ без НДС".replace(",", " "), "value": len(rows)},
                       {"label": "С отсрочкой ≥ 30% суммы на ≥ 14 дней", "value": len(good)},
                       {"label": "Возможное дробление заказов", "value": len(splits),
-                       "hint": "мелкие заказы одного лота или заказа клиента у одного поставщика в сумме выше порога"}],
+                       "hint": "мелкие заказы одного лота или заказа клиента у одного поставщика в сумме выше порога"},
+                      {"label": "Ждут ввода условий отсрочки", "value": len(pending)}],
             "details": {"columns": ["Заказ", "Поставщик", "Сумма без НДС, ₽", "Доля отсрочки", "Дней отсрочки", "Засчитан"],
                         "rows": [[r["doc"], r["supplier"], r["amount_novat"], r["deferred_share"], r["deferral_days"],
-                                  "да" if r in good else "нет"] for r in rows] +
+                                  "ждёт ввода" if r in pending else "да" if r in good else "нет"] for r in rows] +
                                 [[", ".join(x["doc"] for x in items), items[0]["supplier"], total, None, None,
                                   "возможное дробление"] for _, items, total in splits],
                         "pct_cols": [3]},
@@ -543,7 +555,7 @@ class Engine:
         for r in rows:
             if not r["lot"]:
                 lots.setdefault(r["doc"] or r["id"], []).append(r)
-        det, base, good, excluded = [], 0, 0, 0
+        det, base, good, excluded, pending = [], 0, 0, 0, 0
         for lot, items in lots.items():
             total = sum(i["amount_novat"] or 0 for i in items)
             if total < p["threshold"]:
@@ -556,6 +568,11 @@ class Engine:
                     "монополия" if any(i["single_source"] for i in items) else "аварийная")])
                 continue
             base += 1
+            # соответствие КП техзаданию и наличие сканов отмечает руководитель: без отметки лот ждёт ввода
+            if any(i["relevant"] is None or i["evidence"] is None for i in items):
+                pending += 1
+                det.append([lot, suppliers, total, kp_count, "ждёт ввода: КП по ТЗ, сканы"])
+                continue
             # отсутствие конкуренции можно обосновать служебной запиской, аффилированность — нет
             no_contest = []
             if kp_count < p["kp_min"]:
@@ -577,11 +594,12 @@ class Engine:
             else:
                 status = "; ".join(no_contest)
             det.append([lot, suppliers, total, kp_count, status])
-        share = good / base if base else None
+        share = good / base if base and not pending else None
         return {
-            "components": [comp("Доля конкурентных закупок", share, p["target"], "%", source=SRC_1C)],
+            "components": [comp("Доля конкурентных закупок", share, p["target"], "%", source=SRC_INPUT)],
             "extra": [{"label": f"Лотов от {p['threshold']:,.0f} ₽ в базе расчёта".replace(",", " "), "value": base},
-                      {"label": "Засчитано", "value": good}, {"label": "Исключено (монополия, авария)", "value": excluded}],
+                      {"label": "Засчитано", "value": good}, {"label": "Исключено (монополия, авария)", "value": excluded},
+                      {"label": "Ждут ввода", "value": pending}],
             "details": {"columns": ["Лот / заказ", "Поставщик", "Сумма без НДС, ₽", "КП", "Итог"], "rows": det},
         }
 
@@ -617,7 +635,7 @@ class Engine:
             missing = [c for c in scored if c["pct"] is None]
             pct = min(pcts) if pcts else None
             amount = round(bonus * it["weight"])
-            awaiting_manual = any(c["source"] == SRC_MAN for c in missing)
+            awaiting_manual = any(c["source"] in (SRC_MAN, SRC_INPUT) for c in missing)
             proportional = payout_cfg.get("mode") == "proportional"
             close_pct = payout_cfg.get("min_pct", 0.8) if proportional else 0.8
             if pct is None:

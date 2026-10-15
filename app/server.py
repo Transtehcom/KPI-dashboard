@@ -14,8 +14,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import sync
-from .common import ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, weeks_of_month
+from . import manual, sync
+from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
+                     weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
 from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, deal_funnel
 
@@ -119,6 +120,10 @@ class App:
 
     def employee(self, login, month):
         r = self.engine.compute(login, month)
+        first, last = month_bounds(month)
+        for it in r["items"]:
+            if it["code"] in manual.ENTRY:
+                it["entry"] = manual.entry(self.con, it["code"], login, first, last)
         r["trend"] = self.engine.trend(login, month)
         r["weeks"] = weeks_of_month(month)
         return r
@@ -317,6 +322,18 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.execute("INSERT OR REPLACE INTO manual_scores VALUES (?,?,?,?,?,?,datetime('now'))",
                                             (b["emp"], b["week"], b["criterion"], score, str(b.get("comment") or "")[:500],
                                              me["login"]))
+                        app.con.commit()
+                    return self.send_json({"ok": True})
+                if path == "/api/manual" and method == "POST":
+                    b = self.body()
+                    with db_lock():
+                        try:
+                            emp = manual.set_value(app.con, b.get("table"), str(b.get("ref") or ""), b.get("field"),
+                                                   b.get("value"), me["login"])
+                            self.employee_param(emp)  # запись должна относиться к сотруднику из дашборда
+                        except (ValueError, KeyError, BadRequest) as e:
+                            app.con.rollback()
+                            raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
                     return self.send_json({"ok": True})
                 if path == "/api/plan" and method == "POST":
