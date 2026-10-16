@@ -1,6 +1,7 @@
 """Загрузка данных из Битрикс24 через входящий вебхук (REST API) и нормализация в таблицы дашборда."""
 import datetime as dt
 import json
+import re
 import time
 import urllib.request
 
@@ -11,6 +12,12 @@ OWNER_TYPES = {"LEAD": 1, "DEAL": 2, "CONTACT": 3, "COMPANY": 4}
 
 class B24Error(Exception):
     pass
+
+
+def order_key(num):
+    """Номер заказа клиента 1С для сопоставления: «00ЦБ-000067», «ЦБ-67» и «67» дают одно и то же — 67."""
+    m = re.search(r"(\d+)\s*$", str(num or "").strip())
+    return str(int(m.group(1))) if m else None
 
 
 class Bitrix24:
@@ -389,6 +396,19 @@ class Bitrix24:
                 "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
+
+    def order_owners(self, field):
+        """Номер заказа клиента 1С, записанный в сделке (поле field) → [(ID ответственного, дата создания сделки)].
+        В поле можно указать несколько номеров через запятую или пробел. Номера в 1С каждый год начинаются заново,
+        поэтому вместе с ответственным отдаётся дата сделки — по ней выбирается заказ нужного года."""
+        out = {}
+        for d in self.list_all("crm.deal.list", {"filter": {"!" + field: ""},
+                                                  "select": ["ID", "ASSIGNED_BY_ID", "DATE_CREATE", field]}):
+            for num in re.split(r"[,;\s]+", str(d.get(field) or "")):
+                key = order_key(num)
+                if key:
+                    out.setdefault(key, []).append((int(d["ASSIGNED_BY_ID"]), str(d.get("DATE_CREATE"))[:10]))
+        return out
 
     def _stages(self, entity_id):
         # фильтр по ENTITY_ID принимает только строку, поэтому справочники запрашиваются по одному

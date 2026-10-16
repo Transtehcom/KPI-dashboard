@@ -212,6 +212,11 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(any(a["level"] == "warning" and a["login"] == "supply" for a in alerts))
 
     # ---------------------------------------------------------------- обнуление и выплата
+    def test_order_number_matching(self):
+        from app.bitrix24 import order_key
+        self.assertEqual({order_key(x) for x in ("00ЦБ-000067", "ЦБ-67", "67", " 00ЦБ-000067 ")}, {"67"})
+        self.assertIsNone(order_key("без номера"))
+
     def test_rejected_tenders_norm_zero(self):
         self.assertEqual(self.item("tender", "tender_operations", "2026-09")["status"], "met")
         insert(self.con, "tenders", [{"id": "t1", "emp": "tender", "title": "Т", "result": "lost", "result_date": "2026-09-10",

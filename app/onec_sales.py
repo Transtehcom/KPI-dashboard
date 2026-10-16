@@ -1,9 +1,13 @@
 """Реализации из 1С (УТ 11) с сотрудником, который ведёт сделку.
 
-Реализации часто оформлены на одного менеджера (поле «Менеджер»), а ведёт сделку другой. Если реализация выросла
-из тендера (реализация → заказ клиента → его основание ТТК_Тендер), она относится к «Ведущему менеджеру» тендера.
-Иначе — к менеджеру реализации. Выручка без НДС — сумма регистра ВыручкаИСебестоимостьПродаж по документу.
+Реализации часто оформлены на одного менеджера (поле «Менеджер»), а ведёт сделку другой. Кому засчитать реализацию:
+1) ответственному за сделку Битрикс24, в которой указан номер заказа клиента этой реализации (ds["order_managers"]);
+2) если такой сделки нет и заказ клиента вырос из тендера (основание ТТК_Тендер) — «Ведущему менеджеру» тендера;
+3) иначе — менеджеру реализации. Выручка без НДС — сумма регистра ВыручкаИСебестоимостьПродаж по документу.
 """
+import datetime as dt
+
+from .bitrix24 import order_key
 
 
 def _when(d):
@@ -21,15 +25,27 @@ def fetch_sales(onec, ds, date_from, date_to):
     for r in onec._odata("AccumulationRegister_ВыручкаИСебестоимостьПродаж_RecordType", {
             "$format": "json", "$select": "Recorder,СуммаВыручкиБезНДС", "$filter": "Period " + period % "Period"}):
         revenue[r["Recorder"]] = revenue.get(r["Recorder"], 0.0) + (r.get("СуммаВыручкиБезНДС") or 0)
-    orders = {c["Ref_Key"]: c.get("ДокументОснование") for c in onec._odata("Document_ЗаказКлиента", {
-        "$format": "json", "$select": "Ref_Key,ДокументОснование,ДокументОснование_Type",
-        "$filter": "ДокументОснование_Type eq 'StandardODATA.Document_ТТК_Тендер'"})}
+    lookback = date_from - dt.timedelta(days=ds.get("lookback_days", 365))
+    orders = {c["Ref_Key"]: c for c in onec._odata("Document_ЗаказКлиента", {
+        "$format": "json", "$select": "Ref_Key,Number,Date,ДокументОснование",
+        "$filter": f"Date ge datetime'{_when(lookback)}'"})}
+    by_deal = ds.get("order_managers") or {}  # номер заказа (order_key) → [(ФИО ответственного за сделку Б24, дата сделки)]
+
+    def deal_owner(order):
+        # номера заказов каждый год начинаются заново: заказ должен быть создан не раньше чем за 60 дней до сделки
+        if not order.get("Number") or not order.get("Date"):
+            return None
+        od = dt.date.fromisoformat(order["Date"][:10])
+        fit = [(d, who) for who, d in by_deal.get(order_key(order["Number"]), [])
+               if od >= dt.date.fromisoformat(d) - dt.timedelta(days=60)]
+        return max(fit)[1] if fit else None
     tenders = {t["Ref_Key"]: (t.get("ВедущийМенеджер") or {}).get("Description") for t in onec._odata(
         "Document_ТТК_Тендер", {"$format": "json", "$expand": "ВедущийМенеджер",
                                 "$select": "Ref_Key,ВедущийМенеджер/Description"})}
     out = []
     for s in sales:
-        lead = tenders.get(orders.get(s.get("ЗаказКлиента")))
+        order = orders.get(s.get("ЗаказКлиента")) or {}
+        lead = deal_owner(order) or tenders.get(order.get("ДокументОснование"))
         out.append({
             "id": s["Ref_Key"], "manager": lead or (s.get("Менеджер") or {}).get("Description"),
             "dt": s["Date"][:10], "doc": s["Number"].strip(), "client": (s.get("Контрагент") or {}).get("Description"),

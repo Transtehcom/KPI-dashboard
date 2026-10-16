@@ -59,6 +59,7 @@ def run(con, config, force_demo=False):
             # сначала всё выгружаем (это долго), потом пишем одной транзакцией под db_lock,
             # чтобы дашборд никогда не видел наполовину обновлённые таблицы
             writes = []  # (источник, таблица, строки, поле даты)
+            b24 = None
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
                 b24 = Bitrix24(config["bitrix24"], log=log.append)
@@ -96,7 +97,19 @@ def run(con, config, force_demo=False):
 
             if config.get("onec", {}).get("base_url") and "СЕРВЕР-1С" not in config["onec"]["base_url"]:
                 try:
-                    onec = OneC(config["onec"], log=log.append)
+                    onec_cfg = config["onec"]
+                    field = config.get("bitrix24", {}).get("fields", {}).get("deal_order_1c")
+                    sales_ds = onec_cfg.get("datasets", {}).get("sales", {})
+                    if field and b24 and sales_ds.get("source") == "sales_by_lead":
+                        # выручка по заказу клиента, указанному в сделке Б24, — ответственному за сделку
+                        by_uid = {int(e["b24_user_id"]): e["onec_manager"] for e in emps
+                                  if e.get("b24_user_id") and e.get("onec_manager")}
+                        owners = {k: [(by_uid[u], d) for u, d in v if u in by_uid] for k, v in b24.order_owners(field).items()}
+                        owners = {k: v for k, v in owners.items() if v}
+                        log.append(f"Б24: сделок с номером заказа 1С — {len(owners)}")
+                        onec_cfg = {**onec_cfg, "datasets": {**onec_cfg["datasets"],
+                                                              "sales": {**sales_ds, "order_managers": owners}}}
+                    onec = OneC(onec_cfg, log=log.append)
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)
                     for table, rows in data.items():
