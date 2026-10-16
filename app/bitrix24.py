@@ -132,9 +132,11 @@ class Bitrix24:
             if t in bound and a.get("OWNER_ID"):
                 bound[t].add(str(a["OWNER_ID"]))
 
-        lpr_field = self.f.get("contact_is_lpr")
+        # информация о ЛПР у контакта: одно поле или список (галочка «ЛПР» и/или строка «ЛПР (ФИО)») — достаточно любого
+        lpr_fields = self.f.get("contact_is_lpr") or []
+        lpr_fields = [lpr_fields] if isinstance(lpr_fields, str) else list(lpr_fields)
         lead_lpr_field = self.f.get("lead_lpr")
-        contact_select = ["ID", "NAME", "LAST_NAME", "POST", "COMPANY_ID"] + ([lpr_field] if lpr_field else [])
+        contact_select = ["ID", "NAME", "LAST_NAME", "POST", "COMPANY_ID"] + lpr_fields
         contacts = self.by_ids("crm.contact.list", bound["CONTACT"], contact_select)
         companies_of_calls = self.by_ids("crm.company.list",
                                          bound["COMPANY"] | {str(c["COMPANY_ID"]) for c in contacts.values() if c.get("COMPANY_ID")},
@@ -147,7 +149,7 @@ class Bitrix24:
                 return 0, 0
             post = (c.get("POST") or "").lower()
             is_secr = int(any(s in post for s in secr))
-            is_lpr = self.flag(c.get(lpr_field)) if lpr_field else int(bool(post) and not is_secr)
+            is_lpr = int(any(self.flag(c.get(f)) for f in lpr_fields)) if lpr_fields else int(bool(post) and not is_secr)
             return is_lpr, is_secr
 
         # компании, у которых в CRM уже есть контакт-ЛПР: звонок по такой компании даёт «информацию об ЛПР»
