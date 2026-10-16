@@ -41,6 +41,9 @@
       "submitted": ["C1:PREPAYMENT_INVOICE"]
     },
 
+    "_legacy_tenders_comment": "Необязательно: торги, которые раньше велись в другой воронке. category_id — та воронка; won_stages — стадии исполнения договора (победа); reviewed_lost_stages — проигрыш после рассмотрения заявки. Копии выигранных тендеров (то же название, что в воронке тендеров) пропускаются.",
+    "_legacy_tenders_example": { "category_id": 2, "won_stages": ["C2:WON"], "reviewed_lost_stages": ["C2:LOSE"] },
+
     "_fields_comment": "Коды пользовательских полей (UF_CRM_...). Их видно в настройках полей карточки или через crm.deal.fields / crm.lead.fields / crm.contact.fields / crm.company.fields.",
     "fields": {
       "deal_planned_cost": "UF_CRM_PLANNED_COST",

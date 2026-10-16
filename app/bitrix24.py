@@ -268,7 +268,7 @@ class Bitrix24:
                 "result": result, "result_date": result_date, "price": float(d.get("OPPORTUNITY") or 0),
                 "planned_cost": self.num(d.get(uf[0])) if uf[0] else None,
                 "actual_cost": self.num(d.get(uf[1])) if uf[1] else None})
-        out["tenders"] = rows
+        out["tenders"] = rows + self._legacy_tenders(emp, df_long, deals)
 
         # сделки воронки продаж (конверсия проектного менеджера)
         self.log("Б24: сделки продаж")
@@ -339,6 +339,53 @@ class Bitrix24:
         """Смысл стадии: S — успех, F — провал, P — в работе."""
         sem = str((st.get("EXTRA") or {}).get("SEMANTICS") or st.get("SEMANTICS") or "").lower()
         return "S" if sem in ("s", "success") else "F" if sem in ("f", "failure", "apology") else "P"
+
+    def _legacy_tenders(self, emp, df_long, current):
+        """Торги, которые до появления воронки тендеров велись в другой воронке (bitrix24.legacy_tenders).
+
+        Прежние стадии той воронки удалены, поэтому дошли ли торги до рассмотрения заявки, видно только по итогу:
+        победа — сделка перешла на стадии исполнения договора (won_stages), рассмотрены и проиграны — reviewed_lost_stages.
+        Копии выигранных тендеров, которые создаются в этой воронке после победы, пропускаются (совпадение названия)."""
+        lc = self.cfg.get("legacy_tenders")
+        if not lc:
+            return []
+        self.log("Б24: торги до воронки тендеров")
+        won_st, lost_st = set(lc.get("won_stages", [])), set(lc.get("reviewed_lost_stages", []))
+        titles = {d.get("TITLE") for d in self.list_all("crm.deal.list", {
+            "filter": {"CATEGORY_ID": self.cfg.get("tender_category_id")}, "select": ["TITLE"]})}
+        deals = [d for d in self.list_all("crm.deal.list", {
+            "filter": {"CATEGORY_ID": lc["category_id"], ">=DATE_MODIFY": df_long},
+            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "COMPANY_ID", "DATE_CREATE", "CLOSEDATE", "STAGE_ID",
+                       "STAGE_SEMANTIC_ID", "OPPORTUNITY"]}) if d.get("TITLE") not in titles and emp(d.get("ASSIGNED_BY_ID"))]
+        hist = {}
+        ids = [d["ID"] for d in deals]
+        for i in range(0, len(ids), 50):
+            for h in self.list_all("crm.stagehistory.list", {
+                    "entityTypeId": 2, "filter": {"OWNER_ID": ids[i:i + 50]},
+                    "select": ["OWNER_ID", "STAGE_ID", "STAGE_SEMANTIC_ID", "CREATED_TIME"], "order": {"ID": "ASC"}}, key="items"):
+                hist.setdefault(str(h["OWNER_ID"]), []).append(h)
+        companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
+        rows = []
+        for d in deals:
+            hs = hist.get(str(d["ID"]), [])
+            won_ts = [str(h["CREATED_TIME"]) for h in hs if h["STAGE_ID"] in won_st]
+            if d.get("STAGE_ID") in won_st and not won_ts:
+                won_ts = [str(d.get("CLOSEDATE") or d.get("DATE_CREATE"))]
+            if won_ts:
+                result, result_date = "won", min(won_ts)[:10]
+            elif d.get("STAGE_SEMANTIC_ID") == "F":
+                final = [str(h["CREATED_TIME"]) for h in hs if h.get("STAGE_SEMANTIC_ID") == "F"]
+                result, result_date = "lost", (max(final) if final else str(d.get("CLOSEDATE") or ""))[:10]
+            else:
+                result, result_date = "open", None
+            rows.append({
+                "id": "deal" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "created": str(d.get("DATE_CREATE"))[:10], "in_work": 1,
+                "price_review": int(result == "won" or d.get("STAGE_ID") in lost_st),
+                "submitted_date": None, "result": result, "result_date": result_date,
+                "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
+        return rows
 
     def _stages(self, entity_id):
         # фильтр по ENTITY_ID принимает только строку, поэтому справочники запрашиваются по одному

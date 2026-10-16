@@ -106,7 +106,8 @@ class Engine:
 
     # ------------------------------------------------------------------ calculators
     def calc_conversion_tender(self, e, ctx, p):
-        rows = self.q("SELECT * FROM tenders WHERE emp=? AND in_work=1 AND price_review=1 AND result IN ('won','lost')", e["login"])
+        # в расчёт — торги с итогом, дошедшие хотя бы до рассмотрения заявки заказчиком (tender_stages.price_review)
+        rows = self.q("SELECT * FROM tenders WHERE emp=? AND price_review=1 AND result IN ('won','lost')", e["login"])
 
         def conv(first, last):
             sel = [r for r in rows if _in(r["result_date"], first, last)]
@@ -121,7 +122,7 @@ class Engine:
         return {
             "components": [comp("Конверсия в победу", val, p["target"], "%", source=SRC_B24)],
             "extra": [
-                {"label": "Торгов с итогом (прошли «В работе» и рассмотрение ЦП)", "value": len(sel)},
+                {"label": "Торгов с итогом, дошедших до рассмотрения заявки", "value": len(sel)},
                 {"label": "Выиграно", "value": len(won)},
                 {"label": "Конверсия за квартал", "value": qv, "fmt": "pct",
                  "hint": f"{len(qwon)} из {len(qsel)}"},
