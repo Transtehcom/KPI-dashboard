@@ -74,6 +74,23 @@ class EmployeesTest(unittest.TestCase):
         self.assertEqual(boot["new"]["department_title"], self.rules["departments"]["ОС"])
         self.assertNotIn("boss", boot)  # закрытый
 
+    def test_absences_saved_validated_and_kept_when_not_sent(self):
+        periods = [{"from": "2026-11-10", "to": "2026-11-12", "kind": "sick", "reason": "  ОРВИ "},
+                   {"from": "2026-11-02", "to": "", "kind": "leave"}]
+        self.save(absences=periods)
+        row = next(e for e in employees.listing(self.con, self.rules)["employees"] if e["login"] == "new")
+        self.assertEqual(row["absences"], [{"from": "2026-11-02", "to": "2026-11-02", "kind": "leave"},
+                                           {"from": "2026-11-10", "to": "2026-11-12", "kind": "sick", "reason": "ОРВИ"}])
+        data = form(is_new=False, password="")
+        data.pop("absences", None)
+        employees.save(self.con, self.rules, data, "boss", False, hash_password)  # форма без отсутствий — не трогать
+        row = next(e for e in employees.listing(self.con, self.rules)["employees"] if e["login"] == "new")
+        self.assertEqual(len(row["absences"]), 2)
+        for bad in ([{"from": "2026-11-10", "to": "2026-11-01", "kind": "sick"}], [{"from": "", "kind": "sick"}],
+                    [{"from": "2026-11-10", "to": "2026-11-11", "kind": "other"}], "не список"):
+            with self.subTest(bad=bad), self.assertRaises(employees.EmployeeError):
+                self.save(is_new=False, password="", absences=bad)
+
     def test_update_keeps_password_when_empty_and_protects_last_admin(self):
         self.save()
         before = self.con.execute("SELECT pwd_hash FROM users WHERE login='new'").fetchone()[0]

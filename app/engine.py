@@ -3,6 +3,7 @@ import datetime as dt
 
 from .common import (business_days_between, month_add, month_bounds, parse_date,
                      quarter_months, today, weeks_of_month, working_days)
+from .employees import ABSENCE_KINDS
 
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
@@ -66,17 +67,37 @@ class Engine:
         return {"month": month, "first": first, "last": last, "asof": asof, "wd": wd_total,
                 "wd_elapsed": wd_elapsed, "in_progress": in_progress, "future": first > t}
 
-    def _absence(self, e, ctx):
-        """Рабочие дни месяца, когда сотрудник не работал (absences в config.json: [{"from", "to", "reason"}]),
-        и описание периодов для показа в дашборде."""
-        days, notes = 0, []
+    def _absent_dates(self, e, ctx, excused=True):
+        """Рабочие дни месяца, попавшие в периоды отсутствия сотрудника (absences: [{"from", "to", "kind", "reason"}]).
+        excused=True — уважительные (всё, кроме прогула), False — прогулы. Возвращает {дата: период}."""
+        out = {}
         for a in e.get("absences") or []:
-            a_from = max(ctx["first"], dt.date.fromisoformat(a["from"]))
-            a_to = min(ctx["last"], dt.date.fromisoformat(a["to"])) if a.get("to") else ctx["last"]
-            if a_from <= a_to:
-                days += working_days(a_from, a_to, self.holidays, self.workdays)
-                notes.append(f"{a_from:%d.%m}–{a_to:%d.%m}" + (f" ({a['reason']})" if a.get("reason") else ""))
-        return min(days, ctx["wd"]), notes
+            if (a.get("kind") != "truancy") != excused:
+                continue
+            d = max(ctx["first"], dt.date.fromisoformat(a["from"]))
+            end = min(ctx["last"], dt.date.fromisoformat(a["to"])) if a.get("to") else ctx["last"]
+            while d <= end:
+                if working_days(d, d, self.holidays, self.workdays):
+                    out.setdefault(d.isoformat(), a)
+                d += dt.timedelta(days=1)
+        return out
+
+    def _absence(self, e, ctx):
+        """Отсутствия в месяце для показа: уважительные (освобождают от норм) и прогулы (не освобождают)."""
+        def periods(dates):
+            seen, notes = [], []
+            for a in dates.values():
+                if any(a is x for x in seen):
+                    continue
+                seen.append(a)
+                f = max(ctx["first"], dt.date.fromisoformat(a["from"]))
+                t = min(ctx["last"], dt.date.fromisoformat(a["to"])) if a.get("to") else ctx["last"]
+                label = ABSENCE_KINDS.get(a.get("kind"), "Отсутствие")
+                notes.append(f"{label} {f:%d.%m}–{t:%d.%m}" + (f" ({a['reason']})" if a.get("reason") else ""))
+            return notes
+        excused, truancy = self._absent_dates(e, ctx), self._absent_dates(e, ctx, excused=False)
+        return {"days": min(len(excused), ctx["wd"]), "periods": periods(excused),
+                "truancy_days": len(truancy), "truancy": periods(truancy)}
 
     def _pace(self, ctx, target):
         if not ctx["in_progress"] or target is None or not ctx["wd"]:
@@ -84,12 +105,11 @@ class Engine:
         return round(target * ctx["wd_elapsed"] / ctx["wd"], 1)
 
     def _work_dates(self, e, ctx, upto=None):
-        """Рабочие дни месяца (по upto включительно), кроме дней отсутствия сотрудника."""
-        away = [(dt.date.fromisoformat(a["from"]), dt.date.fromisoformat(a["to"]) if a.get("to") else ctx["last"])
-                for a in e.get("absences") or []]
+        """Рабочие дни месяца (по upto включительно), кроме дней уважительного отсутствия сотрудника."""
+        away = self._absent_dates(e, ctx)  # прогул от нормы не освобождает
         out, d = [], ctx["first"]
         while d <= (upto or ctx["last"]):
-            if working_days(d, d, self.holidays, self.workdays) and not any(f <= d <= t for f, t in away):
+            if working_days(d, d, self.holidays, self.workdays) and d.isoformat() not in away:
                 out.append(d.isoformat())
             d += dt.timedelta(days=1)
         return out
@@ -683,8 +703,8 @@ class Engine:
         payout_cfg = self.rules.get("payout", {})
         bonus = pos["kpi_bonus"]
         items, zero_all, warnings = [], [], []
-        away, away_notes = self._absence(e, ctx)
-        absent = ctx["wd"] > 0 and away >= ctx["wd"]  # весь месяц не работал: KPI не считается
+        absence = self._absence(e, ctx)
+        absent = ctx["wd"] > 0 and absence["days"] >= ctx["wd"]  # весь месяц не работал: KPI не считается
         for it in pos["items"]:
             if absent:
                 items.append({**{k: it[k] for k in ("code", "n", "title", "weight", "period", "target_text", "description")},
@@ -732,7 +752,7 @@ class Engine:
             "items": items, "zero_all": zero_all, "warnings": warnings, "payout": total, "payout_before_zero": sum(i["payout"] for i in items),
             "share": total / bonus if bonus else 0,
             "met_count": len([i for i in items if i["status"] == "met"]), "item_count": len(items),
-            "absent": absent, "absence": {"days": away, "periods": away_notes} if away else None,
+            "absent": absent, "absence": absence if absence["days"] or absence["truancy_days"] else None,
         }
 
     def summary(self, login, month):

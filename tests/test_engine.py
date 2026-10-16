@@ -126,6 +126,17 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(comp["target"], 15 * wd)
         self.assertLess(comp["target"], 320)
 
+    def test_truancy_does_not_excuse_from_daily_norm(self):
+        emp = next(e for e in CONFIG["employees"] if e["login"] == "tender")
+        self.addCleanup(emp.pop, "absences", None)
+        emp["absences"] = [{"from": "2026-09-21", "to": "2026-09-30", "kind": "vacation"},
+                           {"from": "2026-09-01", "to": "2026-09-02", "kind": "truancy"}]
+        c = self.calc("tender", "base_development", "2026-09")["components"][0]
+        self.assertEqual(c["target"], 14)  # отпуск (8 дней) вычтен, прогул (2 дня) — нет
+        r = self.engine.compute("tender", "2026-09")
+        self.assertEqual((r["absence"]["days"], r["absence"]["truancy_days"]), (8, 2))
+        self.assertTrue(r["absence"]["periods"][0].startswith("Отпуск 21.09"))
+
     def test_kp_needs_letter_in_b24(self):
         insert(self.con, "kp", [{"id": f"k{i}", "emp": "pm", "dt": "2026-09-10", "confirmed": 1} for i in range(5)])
         insert(self.con, "kp_letters", [{"id": f"m{i}", "emp": "pm", "dt": "2026-09-10T12:00:00"} for i in range(3)])

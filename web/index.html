@@ -258,6 +258,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .staff-form .opts label { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
 .staff-form input[type=text], .staff-form input[type=password], .staff-form select { width: 100%; }
 .staff-form input[readonly] { background: var(--surface-2); color: var(--fg-3); }
+.absences { border: 0; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.absences legend { font-size: 13px; font-weight: 600; padding: 0; margin-bottom: 2px; }
+.absences .hint { font-size: 12px; color: var(--fg-3); }
+.abs-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; padding: 8px 10px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2); }
+.abs-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 500; min-width: 0; }
+.abs-row label.grow { flex: 1 1 200px; }
+.abs-row input[type=text] { width: 100%; }
+.staff-list .away { color: var(--warn); }
 .staff-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
 .staff-actions .err { color: var(--bad); font-size: 13px; }
 .btn.danger { color: var(--bad); border-color: var(--bad); }
@@ -858,7 +866,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <div class="weights" role="img" aria-label="Структура KPI по пунктам">${d.items.map((i) => `<div class="seg ${zeroed && i.payout ? "zeroed" : i.payout ? "met" : ""}" style="flex:${i.weight}" title="KPI ${i.n}. ${esc(i.title)} — ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</div>`).join("")}</div>
           <div class="legend"><span><i style="background:var(--good)"></i>начислено</span><span><i style="border:1.5px solid var(--line-strong)"></i>не начислено</span>${zeroed ? `<span><i style="background:repeating-linear-gradient(135deg,var(--bad-soft) 0 3px,var(--surface) 3px 6px);border:1.5px solid var(--bad)"></i>обнулено</span>` : ""}<span>ширина — вес пункта</span></div>
           ${zeroed ? d.zero_all.map((z) => `<div class="zero-note" style="margin-top:10px">${esc(z)}</div>`).join("") : ""}
-          ${d.absence ? `<div class="muted small" style="margin-top:10px">${d.absent ? "Весь месяц не работал(а), KPI не считается" : `Не работал(а) ${d.absence.days} из ${d.working_days} рабочих дней`}: ${esc(d.absence.periods.join(", "))}</div>` : ""}
+          ${d.absence && d.absence.days ? `<div class="muted small" style="margin-top:10px">${d.absent ? "Весь месяц не работал(а), KPI не считается" : `Не работал(а) ${d.absence.days} из ${d.working_days} рабочих дней`}: ${esc(d.absence.periods.join(", "))}</div>` : ""}
+          ${d.absence && d.absence.truancy_days ? `<div class="small" style="margin-top:6px;color:var(--bad)">Прогулы: ${d.absence.truancy_days} раб. дн. — от норм не освобождают (${esc(d.absence.truancy.join(", "))})</div>` : ""}
           <div class="kv"><div><span class="eyebrow">Оклад</span><b>${rub(d.salary)}</b></div><div><span class="eyebrow">Пунктов выполнено</span><b>${d.met_count} из ${d.item_count}</b></div><div><span class="eyebrow">Итого с окладом</span><b>${rub(d.salary + d.payout)}</b></div></div>
         </div>
         <div><div class="eyebrow">Выплата KPI за 6 месяцев, ₽</div><div class="chart" id="payChart">${payoutChart(d.trend, d.kpi_bonus, b.current_month)}</div></div>
@@ -1204,7 +1213,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="scroll"><table class="staff-list"><thead><tr><th>Имя и фамилия</th><th>Отдел</th><th>Должность</th><th>KPI</th>
           <th>Б24 ID</th><th>Видимость</th><th>Администратор</th><th>Логин</th><th>Пароль</th></tr></thead><tbody>
           ${d.employees.map((e) => `<tr tabindex="0" data-edit="${esc(e.login)}" class="${editing && editing.login === e.login ? "sel" : ""}">
-            <td>${esc(e.name)}${e.onec_manager && surname(e.onec_manager)[0] !== surname(e.name).slice(-1)[0] ? `<div class="muted small">в 1С: ${esc(e.onec_manager)}</div>` : ""}</td>
+            <td>${esc(e.name)}${e.onec_manager && surname(e.onec_manager)[0] !== surname(e.name).slice(-1)[0] ? `<div class="muted small">в 1С: ${esc(e.onec_manager)}</div>` : ""}${awayNow(d, e)}</td>
             <td>${esc(depTitle(e.department))}</td><td>${esc(e.title || "—")}</td><td>${esc(e.position ? posTitle(e.position) : "—")}</td>
             <td class="nw">${e.b24_user_id || "—"}</td>
             <td><span class="chip ${e.visible ? "s-met" : "s-nodata"}">${e.visible ? "Открытый" : "Закрытый"}</span></td>
@@ -1244,14 +1253,46 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <span class="hint">${isNew ? "Латинские буквы, цифры, точка, дефис" : "Логин после создания не меняется"}</span></label>
       <label for="f_pwd">Пароль<input id="f_pwd" type="password" autocomplete="new-password" placeholder="${isNew ? "не короче 6 символов" : "оставьте пустым, чтобы не менять"}"></label>
     </div>
+    <fieldset class="absences"><legend>Отсутствия</legend>
+      <div class="hint">Больничный, отпуск, декрет и «отпросился(-лась)» освобождают от норм на эти дни; месяц, где сотрудник не работал ни дня, не оценивается. Прогул от норм не освобождает.</div>
+      <div id="absRows">${(e.absences || []).map((a, i) => absRow(d, a, i)).join("")}</div>
+      <div><button class="btn" type="button" id="absAdd">+ Добавить период</button></div></fieldset>
     <div class="staff-actions"><button class="btn primary" type="submit">${isNew ? "Добавить" : "Сохранить"}</button>
       <button class="btn" type="button" id="empCancel">Отмена</button>
       ${isNew || e.login === state.boot.me.login ? "" : `<button class="btn danger" type="button" id="empDelete">Удалить</button>`}
       <span class="err" id="empErr" role="alert"></span></div></form>`;
   }
 
+  function awayNow(d, e) {  // «Сейчас: Отпуск до 20.10» в списке сотрудников
+    const t = new Date(), iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    const a = (e.absences || []).find((x) => x.from <= iso && iso <= (x.to || x.from));
+    if (!a) return "";
+    const kind = (d.absence_kinds.find((k) => k.key === a.kind) || {}).title || "Отсутствие";
+    return `<div class="small away">Сейчас: ${esc(kind)} до ${a.to.slice(8, 10)}.${a.to.slice(5, 7)}</div>`;
+  }
+
+  let absSeq = 0;
+  function absRow(d, a, i) {  // строка периода отсутствия в форме сотрудника
+    const n = "a" + absSeq++;
+    return `<div class="abs-row" data-abs>
+      <label for="${n}f">С<input id="${n}f" type="date" data-k="from" value="${esc(a.from || "")}"></label>
+      <label for="${n}t">По<input id="${n}t" type="date" data-k="to" value="${esc(a.to || "")}"></label>
+      <label for="${n}k">Категория<select id="${n}k" data-k="kind"><option value="">— выберите —</option>
+        ${d.absence_kinds.map((k) => `<option value="${k.key}" ${k.key === a.kind ? "selected" : ""}>${esc(k.title)}</option>`).join("")}</select></label>
+      <label for="${n}r" class="grow">Комментарий<input id="${n}r" type="text" maxlength="200" data-k="reason" value="${esc(a.reason || "")}"></label>
+      <button class="btn ghost" type="button" data-abs-del aria-label="Убрать период">Убрать</button></div>`;
+  }
+
   function bindStaffForm(d, e) {
     const isNew = !e.login, $ = (id) => document.getElementById(id);
+    const rows = $("absRows");
+    $("absAdd").addEventListener("click", () => {
+      rows.insertAdjacentHTML("beforeend", absRow(d, {}, rows.children.length));
+      rows.lastElementChild.querySelector("input").focus();
+    });
+    rows.addEventListener("click", (ev) => { const b = ev.target.closest("[data-abs-del]"); if (b) b.closest("[data-abs]").remove(); });
+    const absences = () => [...rows.querySelectorAll("[data-abs]")].map((r) =>
+      Object.fromEntries([...r.querySelectorAll("[data-k]")].map((x) => [x.dataset.k, x.value])));
     const dep = $("f_dep");
     dep.addEventListener("change", () => { $("f_dep_new_l").hidden = dep.value !== "__new"; if (dep.value === "__new") $("f_dep_new").focus(); });
     $("f_pos").addEventListener("change", () => {  // подсказать должность и отдел по выбранному KPI
@@ -1273,7 +1314,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         action: isNew ? "create" : "update", login: $("f_login").value.trim().toLowerCase(), name: $("f_name").value,
         department: dep.value === "__new" ? $("f_dep_new").value : dep.value, title: $("f_title").value,
         b24_user_id: $("f_b24").value, onec_manager: $("f_onec").value, position: $("f_pos").value,
-        visible: $("f_vis1").checked, admin: $("f_admin").checked, password: $("f_pwd").value,
+        visible: $("f_vis1").checked, admin: $("f_admin").checked, password: $("f_pwd").value, absences: absences(),
       };
       try {
         renderStaff(await api("/api/staff", body));

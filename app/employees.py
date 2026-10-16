@@ -5,12 +5,16 @@
 login, name, role (manager — администратор), position (ключ KPI из kpi_rules.json), b24_user_id,
 onec_manager, absences, а также department, title и visible (показывать ли в KPI команды).
 """
+import datetime as dt
 import json
 import re
 
 from .common import db_lock
 
 LOGIN_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
+# категории отсутствия; прогул от норм не освобождает, остальные — освобождают (app/engine.py)
+ABSENCE_KINDS = {"vacation": "Отпуск", "sick": "Больничный", "maternity": "Декрет",
+                 "leave": "Отпросился(-лась)", "truancy": "Прогул"}
 
 
 class EmployeeError(ValueError):
@@ -76,6 +80,31 @@ def parse_b24_id(value):
     return int(m.group(1) if m.lastindex else m.group(0))
 
 
+def parse_absences(items):
+    """Периоды отсутствия из формы: [{from, to, kind, reason}] → проверенный список, отсортированный по дате начала."""
+    if not isinstance(items, list) or len(items) > 200:
+        raise EmployeeError("Некорректный список отсутствий")
+    out = []
+    for n, a in enumerate(items, 1):
+        if not isinstance(a, dict):
+            raise EmployeeError("Некорректный список отсутствий")
+        try:
+            d_from = dt.date.fromisoformat(str(a.get("from") or ""))
+            d_to = dt.date.fromisoformat(str(a.get("to") or a.get("from")))
+        except ValueError:
+            raise EmployeeError(f"Отсутствие {n}: укажите даты «с» и «по»")
+        if d_to < d_from:
+            raise EmployeeError(f"Отсутствие {n}: дата «по» раньше даты «с»")
+        if a.get("kind") not in ABSENCE_KINDS:
+            raise EmployeeError(f"Отсутствие {n}: выберите категорию")
+        row = {"from": d_from.isoformat(), "to": d_to.isoformat(), "kind": a["kind"]}
+        reason = " ".join(str(a.get("reason") or "").split())[:200]
+        if reason:
+            row["reason"] = reason
+        out.append(row)
+    return sorted(out, key=lambda x: (x["from"], x["to"]))
+
+
 def listing(con, rules):
     """Сотрудники для раздела «Сотрудники» (без паролей) и варианты для выпадающих списков."""
     with db_lock():
@@ -84,7 +113,7 @@ def listing(con, rules):
     for r in rows:
         r["visible"], r["admin"] = bool(r["visible"]), bool(r["admin"])
         r["has_password"] = r["login"] in has_pwd
-        r.pop("absences", None)
+        r["absences"] = json.loads(r["absences"] or "[]")
         r.pop("sort", None)
     departments = sorted({p["department"] for p in rules["positions"].values()} | {r["department"] for r in rows if r["department"]})
     return {
@@ -92,6 +121,7 @@ def listing(con, rules):
         "departments": [{"key": d, "title": rules.get("departments", {}).get(d, d)} for d in departments],
         "positions": [{"key": k, "title": p["title"], "department": p["department"], "doc": p.get("doc")}
                       for k, p in rules["positions"].items()],
+        "absence_kinds": [{"key": k, "title": t} for k, t in ABSENCE_KINDS.items()],
     }
 
 
@@ -116,6 +146,8 @@ def save(con, rules, data, me, is_new, hash_password):
     password = str(data.get("password") or "")
     if (is_new or password) and len(password) < 6:
         raise EmployeeError("Пароль должен быть не короче 6 символов")
+    # отсутствия меняются, только если форма их прислала
+    absences = json.dumps(parse_absences(data["absences"]), ensure_ascii=False) if "absences" in data else None
 
     with db_lock():
         exists = con.execute("SELECT * FROM employees WHERE login=?", (login,)).fetchone()
@@ -130,12 +162,12 @@ def save(con, rules, data, me, is_new, hash_password):
         if is_new:
             sort = (con.execute("SELECT MAX(sort) FROM employees").fetchone()[0] or 0) + 1
             con.execute("INSERT INTO employees (login, name, department, title, position, b24_user_id, onec_manager, "
-                        "visible, admin, absences, sort) VALUES (?,?,?,?,?,?,?,?,?,'[]',?)",
-                        (login, name, department, title, position, b24, onec, int(visible), int(admin), sort))
+                        "visible, admin, absences, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (login, name, department, title, position, b24, onec, int(visible), int(admin), absences or "[]", sort))
         else:
             con.execute("UPDATE employees SET name=?, department=?, title=?, position=?, b24_user_id=?, onec_manager=?, "
-                        "visible=?, admin=? WHERE login=?",
-                        (name, department, title, position, b24, onec, int(visible), int(admin), login))
+                        "visible=?, admin=?, absences=COALESCE(?, absences) WHERE login=?",
+                        (name, department, title, position, b24, onec, int(visible), int(admin), absences, login))
         if password:
             h, salt = hash_password(password)
             con.execute("INSERT OR REPLACE INTO users (login, pwd_hash, salt) VALUES (?,?,?)", (login, h, salt))
