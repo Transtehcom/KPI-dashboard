@@ -5,6 +5,9 @@
 заявка с тем же основанием → ОтветственныйСнабжение. Отменённые заявки не учитываются, если есть другие.
 Если по основанию несколько заявок с разными ответственными, заказ ни на кого не относится.
 
+Плановая дата поставки — «Конечная дата поставки» (ТТК_КонечнаяДатаПоставки) в связанном заказе клиента;
+если она не заполнена, заказ в KPI 1 не попадает, пока руководитель не введёт дату в дашборде.
+
 Поля без источника в 1С (брак, пересорт, лот, отсрочка, признаки конкурентности) вводит руководитель в дашборде.
 """
 import datetime as dt
@@ -28,11 +31,11 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
     orders = onec._odata("Document_ЗаказПоставщику", {
         "$format": "json", "$expand": "Контрагент",
         "$filter": f"{posted} and Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
-        "$select": "Ref_Key,Number,Date,ДатаПоступления,ТТК_ЗаказКлиента_Key,Контрагент/Description,"
+        "$select": "Ref_Key,Number,Date,ТТК_ЗаказКлиента_Key,Контрагент/Description,"
                    "Товары/СуммаСНДС,Товары/СуммаНДС,Товары/Отменено"})
     customer_orders = onec._odata("Document_ЗаказКлиента", {
         "$format": "json", "$filter": f"Date ge datetime'{_when(lookback)}'",
-        "$select": "Ref_Key,Number,ДокументОснование"})
+        "$select": "Ref_Key,Number,ДокументОснование,ТТК_КонечнаяДатаПоставки"})
     requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
         "$format": "json", "$expand": "ОтветственныйСнабжение",
         "$filter": f"DeletionMark eq false and Date ge datetime'{_when(lookback)}'",
@@ -71,7 +74,7 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
             "id": o["Ref_Key"], "manager": manager, "doc": o["Number"].strip(), "dt": o["Date"][:10],
             "supplier": (o.get("Контрагент") or {}).get("Description"),
             "amount_novat": round(sum((x.get("СуммаСНДС") or 0) - (x.get("СуммаНДС") or 0) for x in lines), 2),
-            "planned_date": _date(o.get("ДатаПоступления")),
+            "planned_date": _date(c.get("ТТК_КонечнаяДатаПоставки")) if c else None,
             "actual_date": last_receipt.get(o["Ref_Key"]),
             "complete": to_receive.get(o["Ref_Key"], 0) <= 0,
             "customer_order": c["Number"].strip() if c else None,

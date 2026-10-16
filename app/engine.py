@@ -490,7 +490,7 @@ class Engine:
             "components": [comp("Доля просроченных поставок", late_share, p["late_share_max"], "%", op="<=", source=SRC_INPUT)],
             "extra": [{"label": "Поставок с плановой датой в месяце", "value": len(rows)},
                       {"label": "Вовремя и в полном объёме", "value": ok}],
-            "details": {"columns": ["Заказ поставщику", "Поставщик", "План", "Факт (УПД/ТН)", "Нарушение"], "rows": det},
+            "details": {"columns": ["Заказ поставщику", "Поставщик", "План (конечная дата в заказе клиента)", "Факт (УПД/ТН)", "Нарушение"], "rows": det},
         }
 
     def calc_deferred_payment(self, e, ctx, p):
