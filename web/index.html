@@ -407,7 +407,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const MSHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
   const STATUS = {
     met: ["Выполнен", "s-met"], close: ["Почти: 80–99%", "s-close"], fail: ["Не выполнен", "s-fail"],
-    nodata: ["Нет данных", "s-nodata"], awaiting: ["Ждёт оценки", "s-awaiting"],
+    nodata: ["Нет данных", "s-nodata"], awaiting: ["Ждёт оценки", "s-awaiting"], absent: ["Не работал(а)", "s-nodata"],
     progress_fail: ["Месяц идёт", "s-progress"], progress_close: ["Месяц идёт", "s-progress"], progress_nodata: ["Месяц идёт", "s-progress"],
   };
   const state = { boot: null, month: null, view: "team", login: null, data: null, loading: false, previewRole: "manager" };
@@ -420,7 +420,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const mLabel = (m) => { const [y, mm] = m.split("-"); return MONTHS[+mm - 1] + " " + y; };
   const mShort = (m) => { const [y, mm] = m.split("-"); return MSHORT[+mm - 1] + (mm === "01" ? " " + y.slice(2) : ""); };
   const dLabel = (iso) => { const d = new Date(iso + "T00:00:00"); return d.getDate() + " " + MONTHS_GEN[d.getMonth()]; };
-  const statusKey = (s) => (s || "nodata").startsWith("progress") ? "progress" : s;
+  const statusKey = (s) => (s || "nodata").startsWith("progress") ? "progress" : s === "absent" ? "nodata" : s;
   function fmtVal(v, unit) {
     if (v == null) return "—";
     if (unit === "%") return nf(v * 100, 1) + "%";
@@ -723,7 +723,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
               <span class="p">${i.pct == null ? (i.status === "awaiting" ? "оценка" : "—") : pct(i.pct)}</span>
               <span class="bar"><i style="width:${i.pct == null ? 0 : Math.min(100, i.pct * 100)}%"></i></span>
               <span class="r">${i.payout ? rub(i.payout) : "0 ₽"} / ${nf(i.amount)}</span></div></td>`; }).join("")}
-            <td><span class="total ${e.zero_all.length ? "zero" : ""}">${rub(e.payout)}</span><div class="muted small">${e.zero_all.length ? "обнулено" : pct(e.share) + " фонда"}</div></td>
+            <td><span class="total ${e.zero_all.length ? "zero" : ""}">${rub(e.payout)}</span><div class="muted small">${e.absent ? "не работал(а)" : e.zero_all.length ? "обнулено" : pct(e.share) + " фонда"}</div></td>
             <td>${sparkline(e.trend)}</td></tr>`).join("")}
         </tbody></table></div></section>`).join("")}
       <p class="muted small">Ячейка: процент выполнения норматива пункта (100% — норма выполнена), под ним начислено / максимум по пункту. Выплата: ${state.boot.payout_mode === "binary" ? "пункт оплачивается полностью при выполнении нормы" : "пропорционально выполнению"}. Нажмите на строку, чтобы открыть дашборд сотрудника.</p>`;
@@ -826,6 +826,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <div class="weights" role="img" aria-label="Структура KPI по пунктам">${d.items.map((i) => `<div class="seg ${zeroed && i.payout ? "zeroed" : i.payout ? "met" : ""}" style="flex:${i.weight}" title="KPI ${i.n}. ${esc(i.title)} — ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</div>`).join("")}</div>
           <div class="legend"><span><i style="background:var(--good)"></i>начислено</span><span><i style="border:1.5px solid var(--line-strong)"></i>не начислено</span>${zeroed ? `<span><i style="background:repeating-linear-gradient(135deg,var(--bad-soft) 0 3px,var(--surface) 3px 6px);border:1.5px solid var(--bad)"></i>обнулено</span>` : ""}<span>ширина — вес пункта</span></div>
           ${zeroed ? d.zero_all.map((z) => `<div class="zero-note" style="margin-top:10px">${esc(z)}</div>`).join("") : ""}
+          ${d.absence ? `<div class="muted small" style="margin-top:10px">${d.absent ? "Весь месяц не работал(а), KPI не считается" : `Не работал(а) ${d.absence.days} из ${d.working_days} рабочих дней`}: ${esc(d.absence.periods.join(", "))}</div>` : ""}
           <div class="kv"><div><span class="eyebrow">Оклад</span><b>${rub(d.salary)}</b></div><div><span class="eyebrow">Пунктов выполнено</span><b>${d.met_count} из ${d.item_count}</b></div><div><span class="eyebrow">Итого с окладом</span><b>${rub(d.salary + d.payout)}</b></div></div>
         </div>
         <div><div class="eyebrow">Выплата KPI за 6 месяцев, ₽</div><div class="chart" id="payChart">${payoutChart(d.trend, d.kpi_bonus, b.current_month)}</div></div>

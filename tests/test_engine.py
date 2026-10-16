@@ -261,11 +261,27 @@ class EngineTest(unittest.TestCase):
                                             "customer_order": "12" if s == "ordered" else None, "stage": s}
                                            for i, s in enumerate(stages)] +
                [{"id": "old", "emp": "supply", "dt": "2026-08-31", "doc": "ЗС-0", "stage": "ordered"}])
-        r = self.calc("supply", "supply_funnel", "2026-09", target=0.5)
+        r = self.calc("supply", "supply_funnel", "2026-09")
         c = r["components"][0]
         self.assertAlmostEqual(c["fact"], 2 / 5)  # 2 заявки с заказом из 5 отработанных
+        self.assertAlmostEqual(c["target"], 0.10)  # конверсия 10% — 100% плана
         self.assertEqual([n for _, n in r["funnel"]["steps"]], [7, 5, 2])
-        self.assertEqual(self.item("supply", "supply_funnel", "2026-09")["status"], "nodata")  # норма не задана
+        self.assertEqual(self.item("supply", "supply_funnel", "2026-09")["status"], "met")
+
+    def test_absence_whole_month_not_counted(self):
+        sup = next(e for e in CONFIG["employees"] if e["login"] == "supply")
+        self.addCleanup(sup.pop, "absences", None)
+        sup["absences"] = [{"from": "2026-06-01", "to": "2026-09-15", "reason": "не работала"}]
+        r = self.engine.compute("supply", "2026-07")
+        self.assertTrue(r["absent"])
+        self.assertEqual({i["status"] for i in r["items"]}, {"absent"})
+        self.assertEqual(r["payout"], 0)
+        part = self.engine.compute("supply", "2026-09")  # часть месяца — KPI считается как обычно
+        self.assertFalse(part["absent"])
+        self.assertEqual(part["absence"]["days"], 11)
+        ov = self.engine.overview("2026-07")
+        self.assertNotIn("supply", [a["login"] for a in ov["alerts"]])
+        self.assertEqual(ov["totals"]["employees"], 3)  # отсутствовавший весь месяц — вне итогов
 
     # ---------------------------------------------------------------- воронка сделок
     def test_deal_funnel_sections_and_filters(self):

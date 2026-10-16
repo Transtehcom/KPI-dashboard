@@ -65,6 +65,18 @@ class Engine:
         return {"month": month, "first": first, "last": last, "asof": asof, "wd": wd_total,
                 "wd_elapsed": wd_elapsed, "in_progress": in_progress, "future": first > t}
 
+    def _absence(self, e, ctx):
+        """Рабочие дни месяца, когда сотрудник не работал (absences в config.json: [{"from", "to", "reason"}]),
+        и описание периодов для показа в дашборде."""
+        days, notes = 0, []
+        for a in e.get("absences") or []:
+            a_from = max(ctx["first"], dt.date.fromisoformat(a["from"]))
+            a_to = min(ctx["last"], dt.date.fromisoformat(a["to"])) if a.get("to") else ctx["last"]
+            if a_from <= a_to:
+                days += working_days(a_from, a_to, self.holidays, self.workdays)
+                notes.append(f"{a_from:%d.%m}–{a_to:%d.%m}" + (f" ({a['reason']})" if a.get("reason") else ""))
+        return min(days, ctx["wd"]), notes
+
     def _pace(self, ctx, target):
         if not ctx["in_progress"] or target is None or not ctx["wd"]:
             return None
@@ -624,7 +636,13 @@ class Engine:
         payout_cfg = self.rules.get("payout", {})
         bonus = pos["kpi_bonus"]
         items, zero_all, warnings = [], [], []
+        away, away_notes = self._absence(e, ctx)
+        absent = ctx["wd"] > 0 and away >= ctx["wd"]  # весь месяц не работал: KPI не считается
         for it in pos["items"]:
+            if absent:
+                items.append({**{k: it[k] for k in ("code", "n", "title", "weight", "period", "target_text", "description")},
+                              "amount": round(bonus * it["weight"]), "pct": None, "status": "absent", "payout": 0, "components": []})
+                continue
             fn = getattr(self, "calc_" + it["code"])
             r = fn(e, ctx, it.get("params", {}))
             comps = r["components"]
@@ -667,6 +685,7 @@ class Engine:
             "items": items, "zero_all": zero_all, "warnings": warnings, "payout": total, "payout_before_zero": sum(i["payout"] for i in items),
             "share": total / bonus if bonus else 0,
             "met_count": len([i for i in items if i["status"] == "met"]), "item_count": len(items),
+            "absent": absent, "absence": {"days": away, "periods": away_notes} if away else None,
         }
 
     def summary(self, login, month):
@@ -701,7 +720,7 @@ class Engine:
                 out.append({"position": key, "title": pos["title"], "department": pos["department"],
                             "columns": [{"n": i["n"], "title": i["title"], "weight": i["weight"]} for i in pos["items"]],
                             "employees": groups[key]})
-        all_emps = [x for g in out for x in g["employees"]]
+        all_emps = [x for g in out for x in g["employees"] if not x["absent"]]  # не работавшие весь месяц — вне итогов
         return {
             "month": month,
             "groups": out,
