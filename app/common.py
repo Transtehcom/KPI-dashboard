@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS ix_act ON activities(emp, dt);
 CREATE TABLE IF NOT EXISTS tenders (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, client TEXT, created TEXT,
   in_work INTEGER, price_review INTEGER, submitted_date TEXT,
-  result TEXT, result_date TEXT, price REAL, planned_cost REAL, actual_cost REAL);
+  result TEXT, result_date TEXT, price REAL, planned_cost REAL, actual_cost REAL, rejected INTEGER);
 
 CREATE TABLE IF NOT EXISTS deals (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, client TEXT, created TEXT,
@@ -150,7 +150,7 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
-                 "crm_deals": [("entity", "TEXT")]}
+                 "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")]}
 
 
 def migrate(con):

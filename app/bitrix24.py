@@ -266,6 +266,8 @@ class Bitrix24:
                 "price_review": int(bool(visited & set(st.get("price_review", [])))),
                 "submitted_date": first_time(set(st.get("submitted", []))),
                 "result": result, "result_date": result_date, "price": float(d.get("OPPORTUNITY") or 0),
+                # проигрыш по ошибке тендерного отдела (KPI «Операционная дисциплина и качество подачи»)
+                "rejected": int(result == "lost" and d.get("STAGE_ID") in set(st.get("rejected", []))),
                 "planned_cost": self.num(d.get(uf[0])) if uf[0] else None,
                 "actual_cost": self.num(d.get(uf[1])) if uf[1] else None})
         out["tenders"] = rows + self._legacy_tenders(emp, df_long, deals)
@@ -384,6 +386,7 @@ class Bitrix24:
                 "created": str(d.get("DATE_CREATE"))[:10], "in_work": 1,
                 "price_review": int(result == "won" or d.get("STAGE_ID") in lost_st),
                 "submitted_date": None, "result": result, "result_date": result_date,
+                "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
 

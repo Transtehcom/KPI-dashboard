@@ -104,6 +104,14 @@ class Engine:
         return avg, [{"week": w, "score": by_week.get(w, {}).get("score"), "comment": by_week.get(w, {}).get("comment")}
                      for w in weeks]
 
+    def _default_plan(self, p):
+        """План по умолчанию: доля общего плана отдела (sales_team_plan) или default_plan пункта."""
+        team = self.rules.get("sales_team_plan")
+        if p.get("team_plan") and team:
+            n = len([x for x in self.config["employees"] if x.get("position") in team["positions"]])
+            return round(team["monthly_total"] / n) if n else None
+        return p.get("default_plan")
+
     # ------------------------------------------------------------------ calculators
     def calc_conversion_tender(self, e, ctx, p):
         # в расчёт — торги с итогом, дошедшие хотя бы до рассмотрения заявки заказчиком (tender_stages.price_review)
@@ -188,45 +196,15 @@ class Engine:
         }
 
     def calc_tender_operations(self, e, ctx, p):
-        emp = e["login"]
-        rows = self.q("SELECT * FROM tenders WHERE emp=? AND submitted_date>=? AND submitted_date<=?",
-                      emp, ctx["first"].isoformat(), ctx["last"].isoformat())
-        quality, weeks = self._manual(emp, ctx["month"], "quality")
-        return {
-            "components": [
-                comp("Подано заявок", len(rows), p["applications_norm"], "шт", source=SRC_B24,
-                     pace=self._pace(ctx, p["applications_norm"])),
-                comp("Качество документации", quality, p.get("quality_min", 100), "балл", source=SRC_MAN),
-            ],
-            "manual": {"criteria": ["quality"], "weeks": {"quality": weeks}},
-            "details": {"columns": ["Торги", "Заказчик", "Заявка подана", "Цена, ₽"],
-                        "rows": [[r["title"], r["client"], r["submitted_date"], r["price"]] for r in rows]},
-        }
-
-    def calc_tender_economics(self, e, ctx, p):
-        rows = self.q("SELECT * FROM tenders WHERE emp=? AND result='won' AND result_date>=? AND result_date<=?",
+        """Тендеры, проигранные по ошибке тендерного отдела (bitrix24.tender_stages.rejected), с итогом в месяце."""
+        rows = self.q("SELECT * FROM tenders WHERE emp=? AND rejected=1 AND result_date>=? AND result_date<=?",
                       e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
-        margins, det, below = [], [], []
-        for r in rows:
-            cost = r["actual_cost"] or r["planned_cost"]
-            m = (r["price"] - cost) / r["price"] if r["price"] and cost is not None else None
-            if m is not None:
-                margins.append(m)
-            if r["planned_cost"] and r["price"] is not None and r["price"] < r["planned_cost"]:
-                below.append(r)
-            det.append([r["title"], r["client"], r["result_date"], r["price"], cost, m])
-        avg = sum(margins) / len(margins) if margins else None
-        res = {
-            "components": [comp("Средняя маржинальность выигранных проектов", avg, p["min_margin"], "%", source=SRC_B24)],
-            "extra": [{"label": "Выиграно проектов", "value": len(rows)},
-                      {"label": "Ниже плановой себестоимости", "value": len(below)}],
-            "details": {"columns": ["Проект", "Заказчик", "Дата победы", "Цена, ₽", "Себестоимость, ₽", "Маржа"],
-                        "rows": det, "pct_cols": [5]},
+        return {
+            "components": [comp("Отклонённые тендеры (ошибка тендерного отдела)", len(rows), p.get("rejected_max", 0),
+                                "шт", op="<=", source=SRC_B24)],
+            "details": {"columns": ["Торги", "Заказчик", "Дата итога", "Цена, ₽"],
+                        "rows": [[r["title"], r["client"], r["result_date"], r["price"]] for r in rows]},
         }
-        if below and p.get("zero_all_if_below_cost"):
-            res["zero_all"] = "Сделка выиграна ниже плановой себестоимости: " + ", ".join(r["title"] for r in below) + \
-                              ". По регламенту — коэффициент 0 ко всему KPI."
-        return res
 
     def calc_exec_discipline(self, e, ctx, p):
         emp = e["login"]
@@ -328,7 +306,7 @@ class Engine:
         if no_cost:
             value = None
         plan_row = self.q("SELECT value FROM plans WHERE emp=? AND month=? AND metric=?", emp, ctx["month"], metric)
-        plan = plan_row[0]["value"] if plan_row else p.get("default_plan")
+        plan = plan_row[0]["value"] if plan_row else self._default_plan(p)
         name = "Выручка без НДС" if metric == "revenue" else "Валовая прибыль"
         rows = [[r["doc"], r["client"], r["dt"], r["revenue"], r["cost"], gp(r),
                  (r["signed_date"] or r["dt"]) if r["signed"] else "нет"] for r in counted]

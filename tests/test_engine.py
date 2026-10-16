@@ -212,12 +212,19 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(any(a["level"] == "warning" and a["login"] == "supply" for a in alerts))
 
     # ---------------------------------------------------------------- обнуление и выплата
-    def test_win_below_planned_cost_zeroes_all_kpi(self):
-        insert(self.con, "tenders", [{"id": "t1", "emp": "tender", "title": "Т", "result": "won", "result_date": "2026-09-10",
-                                      "price": 100, "planned_cost": 105, "actual_cost": 104, "in_work": 1, "price_review": 1}])
-        r = self.engine.compute("tender", "2026-09")
-        self.assertTrue(r["zero_all"])
-        self.assertEqual(r["payout"], 0)
+    def test_rejected_tenders_norm_zero(self):
+        self.assertEqual(self.item("tender", "tender_operations", "2026-09")["status"], "met")
+        insert(self.con, "tenders", [{"id": "t1", "emp": "tender", "title": "Т", "result": "lost", "result_date": "2026-09-10",
+                                      "rejected": 1}])
+        it = self.item("tender", "tender_operations", "2026-09")
+        self.assertEqual((it["components"][0]["fact"], it["status"]), (1, "fail"))
+
+    def test_team_revenue_plan_split_between_sales_and_tender_staff(self):
+        # 150 млн на месяц делятся на pm, lead, tender из CONFIG; свой план руководителя важнее
+        for login in ("pm", "lead", "tender"):
+            self.assertEqual(self.calc(login, "gross_profit", "2026-09")["plan"]["value"], 50_000_000)
+        self.con.execute("INSERT INTO plans VALUES ('tender', '2026-09', 'revenue', 7000000)")
+        self.assertEqual(self.calc("tender", "gross_profit", "2026-09")["plan"]["value"], 7_000_000)
 
     def test_pm_overdue_over_14_days_zeroes_all_kpi(self):
         insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "УПД", "due_date": "2026-09-01",
