@@ -45,7 +45,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, kind TEXT, direction TEXT, duration INTEGER,
   is_lpr INTEGER, secretary INTEGER, next_step INTEGER, status TEXT,
-  has_protocol INTEGER, has_summary INTEGER, subject TEXT, client TEXT, closed_dt TEXT);
+  has_protocol INTEGER, has_summary INTEGER, subject TEXT, client TEXT, closed_dt TEXT, contact TEXT);
 CREATE INDEX IF NOT EXISTS ix_act ON activities(emp, dt);
 
 CREATE TABLE IF NOT EXISTS tenders (
@@ -152,7 +152,7 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
-ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT")],
+ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT")]}

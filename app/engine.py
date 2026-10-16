@@ -82,17 +82,39 @@ class Engine:
             return None
         return round(target * ctx["wd_elapsed"] / ctx["wd"], 1)
 
-    def _result_calls(self, emp, ctx, require_lpr=True):
+    def _work_dates(self, e, ctx, upto=None):
+        """Рабочие дни месяца (по upto включительно), кроме дней отсутствия сотрудника."""
+        away = [(dt.date.fromisoformat(a["from"]), dt.date.fromisoformat(a["to"]) if a.get("to") else ctx["last"])
+                for a in e.get("absences") or []]
+        out, d = [], ctx["first"]
+        while d <= (upto or ctx["last"]):
+            if working_days(d, d, self.holidays, self.workdays) and not any(f <= d <= t for f, t in away):
+                out.append(d.isoformat())
+            d += dt.timedelta(days=1)
+        return out
+
+    def _result_calls(self, emp, ctx, require_lpr=True, one_per_contact_day=False):
         """Результативные звонки. require_lpr — нужна информация о ЛПР (тендерные регламенты);
         у ПМ регламент требует только ответ на квалифицирующий вопрос и следующий шаг.
         Возвращает (результативные звонки, воронку отбора, звонки от min_call не секретарю)."""
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=?",
                       emp, ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")
+        def uniq(rs):  # не больше одного звонка в день на один контакт
+            if not one_per_contact_day:
+                return rs
+            seen, out_ = set(), []
+            for r in rs:
+                key = (r["dt"][:10], r.get("contact") or r["id"])
+                if key not in seen:
+                    seen.add(key)
+                    out_.append(r)
+            return out_
         out = [r for r in rows if r["direction"] == "out"]
         long_ = [r for r in out if (r["duration"] or 0) >= self.min_call]
         not_secr = [r for r in long_ if not r["secretary"]]
         lpr = [r for r in not_secr if r["is_lpr"]] if require_lpr else not_secr
         result = [r for r in lpr if r["next_step"]]
+        out, long_, not_secr, lpr, result = map(uniq, (out, long_, not_secr, lpr, result))
         funnel = [("Исходящие звонки", len(out)), (f"От {self.min_call // 60} мин", len(long_)),
                   ("Не секретарь", len(not_secr))]
         if require_lpr:
@@ -157,14 +179,33 @@ class Engine:
 
     def calc_base_development(self, e, ctx, p):
         emp = e["login"]
-        result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True))
+        result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True),
+                                                                    p.get("one_call_per_contact_day", False))
         meetings, _ = self._meetings(emp, ctx)
         comps, extra = [], []
         if "touches" in p:
             t = p["touches"].get(ctx["month"], p["touches"]["default"])
             touches = len(result_calls) + len([m for m in meetings if m["is_lpr"]])
             comps.append(comp("Результативные касания", touches, t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
-        if "result_calls_per_day" in p:
+        if "result_calls_per_day" in p and p.get("calls_every_day"):
+            # норма — не меньше N звонков в каждый рабочий день (дни отсутствия не в счёт)
+            n = p["result_calls_per_day"]
+            counted = plain_calls if p.get("calls_plain") else result_calls
+            per_day = {}
+            for r in counted:
+                per_day[r["dt"][:10]] = per_day.get(r["dt"][:10], 0) + 1
+            month_days = self._work_dates(e, ctx)
+            days_so_far = self._work_dates(e, ctx, upto=ctx["asof"])
+            ok_days = [d for d in days_so_far if per_day.get(d, 0) >= n]
+            what = f"звонками от {self.min_call // 60} мин, не секретарю" if p.get("calls_plain") else "результативными звонками"
+            comps.append(comp(f"Рабочие дни с {n}+ {what}", len(ok_days), len(month_days), "раб. дн", source=SRC_B24,
+                              pace=len(days_so_far) if ctx["in_progress"] else None))
+            extra.append({"label": "Звонков засчитано за месяц", "value": len(counted)})
+            short = [f"{d[8:10]}.{d[5:7]} — {per_day.get(d, 0)}" for d in days_so_far
+                     if per_day.get(d, 0) < n and not (ctx["in_progress"] and d == ctx["asof"].isoformat())]  # сегодня ещё не кончилось
+            if short:
+                extra.append({"label": "Дни без нормы", "value": ", ".join(short)})
+        elif "result_calls_per_day" in p:
             t = p["result_calls_per_day"] * ctx["wd"]
             if p.get("calls_plain"):  # звонок: от 2 минут, не секретарю; ЛПР и следующий шаг — уже для касаний
                 comps.append(comp(f"Звонки от {self.min_call // 60} мин, не секретарю ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",

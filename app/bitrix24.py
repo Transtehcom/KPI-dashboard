@@ -197,7 +197,10 @@ class Bitrix24:
                     break
             rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": "out",
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
-                         "next_step": nxt, "status": "done", "subject": "", "client": client})
+                         "next_step": nxt, "status": "done", "subject": "", "client": client,
+                         # с кем разговор: сущность CRM, а если звонок не привязан — номер телефона
+                         "contact": f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID")
+                         else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])})
         for a in acts:
             if str(a.get("TYPE_ID")) != "1":  # 1 — встреча
                 continue

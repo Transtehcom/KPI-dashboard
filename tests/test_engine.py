@@ -31,9 +31,10 @@ def insert(con, table, rows):
     replace_rows(con, table, rows, emps=["__none__"])
 
 
-def call(i, emp, day, lpr=1, secretary=0, next_step=1, duration=180):
+def call(i, emp, day, lpr=1, secretary=0, next_step=1, duration=180, contact=None):
     return {"id": f"c{emp}{i}", "emp": emp, "dt": f"{day}T10:00:00", "kind": "call", "direction": "out",
-            "duration": duration, "is_lpr": lpr, "secretary": secretary, "next_step": next_step, "status": "done"}
+            "duration": duration, "is_lpr": lpr, "secretary": secretary, "next_step": next_step, "status": "done",
+            "contact": contact or f"CONTACT:{emp}{i}"}
 
 
 def order(i, dt_, amount, **kw):
@@ -84,15 +85,40 @@ class EngineTest(unittest.TestCase):
                                         call(4, "tender", "2026-09-10", lpr=0), call(5, "tender", "2026-09-11", lpr=1)])
         pm = self.calc("pm", "operational_activity", "2026-09")["components"][0]
         self.assertEqual(pm["fact"], 2)
-        tender = self.calc("tender", "base_development", "2026-09")["components"][0]
+        tender = self.calc("tender", "base_development", "2026-09", calls_every_day=False)["components"][0]
         self.assertEqual(tender["fact"], 1)
 
     def test_lead_calls_plain_touches_need_lpr_and_next_step(self):
         insert(self.con, "activities", [call(1, "lead", "2026-09-10", lpr=0, next_step=0), call(2, "lead", "2026-09-11"),
                                         call(3, "lead", "2026-09-11", secretary=1), call(4, "lead", "2026-09-12", duration=60)])
-        comps = {c["name"].split(" (")[0]: c["fact"] for c in self.calc("lead", "base_development", "2026-09")["components"]}
+        r = self.calc("lead", "base_development", "2026-09")
+        comps = {c["name"]: c["fact"] for c in r["components"]}
         self.assertEqual(comps["Результативные касания"], 1)  # только звонок с ЛПР и следующим шагом
-        self.assertEqual(comps["Звонки от 2 мин, не секретарю"], 2)  # ЛПР и следующий шаг для звонков не нужны
+        calls = {x["label"]: x["value"] for x in r["extra"]}["Звонков засчитано за месяц"]
+        self.assertEqual(calls, 2)  # ЛПР и следующий шаг для звонков не нужны
+
+    def test_calls_one_per_contact_per_day(self):
+        insert(self.con, "activities", [call(1, "tender", "2026-09-10", contact="CONTACT:7"),
+                                        call(2, "tender", "2026-09-10", contact="CONTACT:7"),
+                                        call(3, "tender", "2026-09-11", contact="CONTACT:7"),
+                                        call(4, "tender", "2026-09-10", contact="CONTACT:8")])
+        r = self.calc("tender", "base_development", "2026-09", calls_every_day=False)
+        self.assertEqual(r["components"][0]["fact"], 3)  # повторный звонок тому же контакту в тот же день не в счёт
+
+    def test_calls_norm_every_working_day(self):
+        sup = next(e for e in CONFIG["employees"] if e["login"] == "tender")
+        self.addCleanup(sup.pop, "absences", None)
+        sup["absences"] = [{"from": "2026-09-21", "to": "2026-09-30"}]
+        days = ["2026-09-01", "2026-09-02", "2026-09-03"]
+        insert(self.con, "activities", [call(f"{d}{k}", "tender", d) for d in days for k in range(3)] +
+               [call(f"x{k}", "tender", "2026-09-04") for k in range(2)] +  # 2 звонка — норма дня не выполнена
+               [call(f"s{k}", "tender", "2026-09-05") for k in range(5)])   # суббота — не рабочий день
+        r = self.calc("tender", "base_development", "2026-09")
+        c = r["components"][0]
+        self.assertEqual(c["fact"], 3)
+        self.assertEqual(c["target"], 14)  # 22 рабочих дня минус 8 дней отсутствия
+        short = {x["label"]: x["value"] for x in r["extra"]}["Дни без нормы"]
+        self.assertTrue(short.startswith("04.09 — 2"))
 
     def test_pm_calls_target_is_per_working_day(self):
         comp = self.calc("pm", "operational_activity", "2026-01")["components"][0]
