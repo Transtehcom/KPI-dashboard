@@ -87,6 +87,13 @@ class EngineTest(unittest.TestCase):
         tender = self.calc("tender", "base_development", "2026-09")["components"][0]
         self.assertEqual(tender["fact"], 1)
 
+    def test_lead_calls_plain_touches_need_lpr_and_next_step(self):
+        insert(self.con, "activities", [call(1, "lead", "2026-09-10", lpr=0, next_step=0), call(2, "lead", "2026-09-11"),
+                                        call(3, "lead", "2026-09-11", secretary=1), call(4, "lead", "2026-09-12", duration=60)])
+        comps = {c["name"].split(" (")[0]: c["fact"] for c in self.calc("lead", "base_development", "2026-09")["components"]}
+        self.assertEqual(comps["Результативные касания"], 1)  # только звонок с ЛПР и следующим шагом
+        self.assertEqual(comps["Звонки от 2 мин, не секретарю"], 2)  # ЛПР и следующий шаг для звонков не нужны
+
     def test_pm_calls_target_is_per_working_day(self):
         comp = self.calc("pm", "operational_activity", "2026-01")["components"][0]
         wd = self.engine._ctx("2026-01")["wd"]

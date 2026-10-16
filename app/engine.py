@@ -84,7 +84,8 @@ class Engine:
 
     def _result_calls(self, emp, ctx, require_lpr=True):
         """Результативные звонки. require_lpr — нужна информация о ЛПР (тендерные регламенты);
-        у ПМ регламент требует только ответ на квалифицирующий вопрос и следующий шаг."""
+        у ПМ регламент требует только ответ на квалифицирующий вопрос и следующий шаг.
+        Возвращает (результативные звонки, воронку отбора, звонки от min_call не секретарю)."""
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=?",
                       emp, ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")
         out = [r for r in rows if r["direction"] == "out"]
@@ -97,7 +98,7 @@ class Engine:
         if require_lpr:
             funnel.append(("Есть информация о ЛПР", len(lpr)))
         funnel.append(("Зафиксирован след. шаг", len(result)))
-        return result, funnel
+        return result, funnel, not_secr
 
     def _meetings(self, emp, ctx, need_protocol=False):
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='meeting' AND status='done' AND dt>=? AND dt<=?",
@@ -156,7 +157,7 @@ class Engine:
 
     def calc_base_development(self, e, ctx, p):
         emp = e["login"]
-        result_calls, call_funnel = self._result_calls(emp, ctx, p.get("require_lpr", True))
+        result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True))
         meetings, _ = self._meetings(emp, ctx)
         comps, extra = [], []
         if "touches" in p:
@@ -165,8 +166,12 @@ class Engine:
             comps.append(comp("Результативные касания", touches, t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
         if "result_calls_per_day" in p:
             t = p["result_calls_per_day"] * ctx["wd"]
-            comps.append(comp(f"Результативные звонки ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",
-                              len(result_calls), t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
+            if p.get("calls_plain"):  # звонок: от 2 минут, не секретарю; ЛПР и следующий шаг — уже для касаний
+                comps.append(comp(f"Звонки от {self.min_call // 60} мин, не секретарю ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",
+                                  len(plain_calls), t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
+            else:
+                comps.append(comp(f"Результативные звонки ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",
+                                  len(result_calls), t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
         if "meetings_min" in p:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                               pace=self._pace(ctx, p["meetings_min"])))
@@ -370,7 +375,7 @@ class Engine:
     def calc_operational_activity(self, e, ctx, p):
         emp = e["login"]
         first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
-        result_calls, call_funnel = self._result_calls(emp, ctx, p.get("require_lpr", False))
+        result_calls, call_funnel, _ = self._result_calls(emp, ctx, p.get("require_lpr", False))
         if "result_calls_per_day" in p:
             calls_target = p["result_calls_per_day"] * ctx["wd"]
             calls_name = f"Результативные исходящие звонки ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)"
