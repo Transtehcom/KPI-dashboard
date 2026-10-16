@@ -118,6 +118,9 @@ class OneC:
             if ds.get("sum_from"):
                 self._sum_from(out, ds["sum_from"], date_from, date_to)
             return out
+        if src == "sales_by_lead":  # реализации с ведущим менеджером тендера (УТ 11, ТТК)
+            from .onec_sales import fetch_sales
+            return fetch_sales(self, ds, date_from, date_to)
         if src == "supply_requests":  # заказы поставщикам с ответственным из заявок в снабжение (УТ 11, ТТК)
             from .onec_supply import fetch_supplier_orders
             return fetch_supplier_orders(self, ds, date_from, date_to)
