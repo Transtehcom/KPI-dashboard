@@ -23,11 +23,12 @@ def main():
         from app.common import connect, load_config
         print(sync.run(connect(), load_config())["message"])
     elif cmd == "password":
-        from app.common import connect, load_config
+        from app import employees
+        from app.common import connect, load_config, load_rules
         from app.server import set_password
         login = sys.argv[2] if len(sys.argv) > 2 else input("Логин: ")
-        if not any(e["login"] == login for e in load_config()["employees"]):
-            sys.exit(f"Пользователя {login} нет в config.json → employees")
+        if not any(e["login"] == login for e in employees.load(connect(), load_config(), load_rules())):
+            sys.exit(f"Пользователя {login} нет в разделе «Сотрудники»")
         pwd = getpass.getpass("Новый пароль: ")
         if len(pwd) < 6:
             sys.exit("Пароль должен быть не короче 6 символов")

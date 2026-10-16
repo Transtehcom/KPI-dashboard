@@ -47,7 +47,8 @@ class Engine:
         return [dict(r) for r in self.con.execute(sql, args)]
 
     def employees(self):
-        return [e for e in self.config["employees"] if e.get("role") != "manager" and e.get("position")]
+        # открытые сотрудники с KPI; без признака visible (старый config.json) — все, кроме руководителей
+        return [e for e in self.config["employees"] if e.get("position") and e.get("visible", e.get("role") != "manager")]
 
     def employee(self, login):
         for e in self.config["employees"]:
@@ -143,7 +144,7 @@ class Engine:
         """План по умолчанию: доля общего плана отдела (sales_team_plan) или default_plan пункта."""
         team = self.rules.get("sales_team_plan")
         if p.get("team_plan") and team:
-            n = len([x for x in self.config["employees"] if x.get("position") in team["positions"]])
+            n = len([x for x in self.employees() if x.get("position") in team["positions"]])
             return round(team["monthly_total"] / n) if n else None
         return p.get("default_plan")
 

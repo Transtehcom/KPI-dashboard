@@ -14,7 +14,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import manual, sync
+from . import employees, manual, sync
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -52,6 +52,7 @@ class App:
         self.config = load_config()
         self.rules = load_rules()
         self.con = connect()
+        employees.apply(self.con, self.config, self.rules)  # сотрудники — из базы (раздел «Сотрудники»)
         self.engine = Engine(self.con, self.rules, self.config)
         # та же блокировка, под которой синхронизация пишет в базу: расчёт не увидит недописанные таблицы
         self.lock = db_lock()
@@ -103,7 +104,8 @@ class App:
         return {
             "me": {"login": me["login"], "name": me["name"], "role": me.get("role", "employee")},
             "employees": [{"login": e["login"], "name": e["name"], "position": e["position"],
-                           "position_title": self.rules["positions"][e["position"]]["title"]} for e in emps],
+                           "position_title": e.get("title") or self.rules["positions"][e["position"]]["title"]}
+                          for e in emps if e.get("position")],
             "positions": {k: {"title": v["title"], "department": v["department"], "salary": v["salary"],
                               "kpi_bonus": v["kpi_bonus"], "doc": v.get("doc"),
                               "items": [{x: i.get(x) for x in ("n", "title", "weight", "period", "target_text", "description")}
@@ -305,6 +307,22 @@ class Handler(BaseHTTPRequestHandler):
                     if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
                         return self.send_json({"error": "Сотрудник не найден"}, 404)
                     return self.send_json(app.employee(login, month))
+                if path == "/api/staff":  # раздел «Сотрудники»: только администраторы
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только администратору"}, 403)
+                    if method == "POST":
+                        b = self.body()
+                        try:
+                            if b.get("action") == "delete":
+                                employees.delete(app.con, str(b.get("login") or ""), me["login"])
+                            elif b.get("action") in ("create", "update"):
+                                employees.save(app.con, app.rules, b, me["login"], b["action"] == "create", hash_password)
+                            else:
+                                raise BadRequest("Неизвестное действие")
+                        except employees.EmployeeError as e:
+                            raise BadRequest(str(e))
+                        employees.apply(app.con, app.config, app.rules)
+                    return self.send_json(employees.listing(app.con, app.rules))
                 if method == "POST" and not is_mgr:
                     return self.send_json({"error": "Изменять данные может только руководитель"}, 403)
                 if path == "/api/score" and method == "POST":

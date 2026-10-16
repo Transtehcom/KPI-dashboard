@@ -241,6 +241,26 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .funnel .row:last-child .fb { background: var(--bar); }
 .funnel .row b { font: 500 12px var(--mono); text-align: right; }
 
+.staff-list td, .staff-list th { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+.staff-list th { border-top: 0; color: var(--fg-3); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.staff-list tbody tr { cursor: pointer; }
+.staff-list tbody tr:hover, .staff-list tbody tr:focus-visible { background: var(--surface-2); outline: none; }
+.staff-list tr.sel { background: var(--accent-soft); }
+.staff-list td.nw { white-space: nowrap; }
+.staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+.staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
+.staff-form fieldset { border: 0; margin: 0; padding: 0; }
+.staff-form [hidden] { display: none; }
+.staff-form legend { padding: 0; margin-bottom: 4px; }
+.staff-form .hint { font-weight: 400; color: var(--fg-3); font-size: 12px; }
+.staff-form .opts { display: flex; gap: 14px; flex-wrap: wrap; min-height: 34px; align-items: center; }
+.staff-form .opts label { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
+.staff-form input[type=text], .staff-form input[type=password], .staff-form select { width: 100%; }
+.staff-form input[readonly] { background: var(--surface-2); color: var(--fg-3); }
+.staff-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+.staff-actions .err { color: var(--bad); font-size: 13px; }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+.btn.danger.armed { background: var(--bad); color: #fff; }
 .manual { border: 1px solid var(--line); border-radius: 3px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
 .manual table { font-size: 12px; }
 .manual th, .manual td { padding: 3px 6px; text-align: left; }
@@ -519,6 +539,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
     if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
+    else if (h === "staff") { state.view = "staff"; }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
     else if (h === "funnel") { state.view = "funnel"; }
     else { state.view = "team"; }
@@ -564,22 +585,23 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a></nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" || state.view === "staff" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
-          <label class="muted small" for="month" ${state.view === "funnel" ? "hidden" : ""}>Период</label>
-          <select id="month" ${state.view === "funnel" ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
+          <label class="muted small" for="month" ${state.view === "funnel" || state.view === "staff" ? "hidden" : ""}>Период</label>
+          <select id="month" ${state.view === "funnel" || state.view === "staff" ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
           <button class="btn" id="rulesBtn" type="button">Методика</button>
           ${isMgr && !PREVIEW ? `<button class="btn" id="syncBtn" type="button">Обновить данные</button>` : ""}
           <span class="small muted">${esc(b.me.name)}</span>
           ${PREVIEW ? "" : `<button class="btn ghost" id="logoutBtn" type="button">Выйти</button>`}
         </div></header>
-      <div class="shell ${isMgr && state.view !== "funnel" ? "" : "single"}">${isMgr && state.view !== "funnel" ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
+      <div class="shell ${isMgr && state.view !== "funnel" && state.view !== "staff" ? "" : "single"}">${isMgr && state.view !== "funnel" && state.view !== "staff" ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
     document.getElementById("month").addEventListener("change", (e) => { state.month = e.target.value; load(); });
     document.getElementById("rulesBtn").addEventListener("click", showRules);
     root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
       ev.preventDefault();
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
+      else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
       else if (isMgr) { state.view = "team"; location.hash = "team"; }
       else { state.view = "emp"; location.hash = "kpi"; }
       renderShell(); load();
@@ -624,6 +646,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const main = document.getElementById("main");
     main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
+    if (state.view === "staff") {
+      try { renderStaff(await api("/api/staff")); }
+      catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      return;
+    }
     if (state.view === "funnel") {
       try {
         const [dFrom, dTo] = funnelPeriod();
@@ -1146,6 +1173,106 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     dr.querySelector("[data-close]").focus();
   }
 
+  // ---------- сотрудники (только администратор)
+  function renderStaff(d, editLogin) {
+    const main = document.getElementById("main");
+    const posTitle = (k) => (d.positions.find((p) => p.key === k) || {}).title || "—";
+    const depTitle = (k) => (d.departments.find((x) => x.key === k) || {}).title || k || "—";
+    const editing = editLogin === "" ? {} : d.employees.find((e) => e.login === editLogin);
+    const surname = (s) => (s || "").trim().split(/\s+/);
+    main.innerHTML = `
+      <div class="head"><div><div class="eyebrow">Администрирование</div><h1>Сотрудники</h1>
+        <div class="sub">Кто входит в дашборд, чей KPI считается и кто видит всю команду</div></div>
+        <button class="btn primary" type="button" id="addEmp">+ Добавить сотрудника</button></div>
+      ${editing ? `<section class="panel" id="empFormPanel"><div class="panel-h"><h2>${editing.login ? esc(editing.name) : "Новый сотрудник"}</h2></div>
+        <div class="panel-b">${staffForm(d, editing)}</div></section>` : ""}
+      <section class="panel"><div class="panel-h"><h2>Все пользователи</h2><span class="muted small">${d.employees.length}</span></div>
+        <div class="scroll"><table class="staff-list"><thead><tr><th>Имя и фамилия</th><th>Отдел</th><th>Должность</th><th>KPI</th>
+          <th>Б24 ID</th><th>Видимость</th><th>Администратор</th><th>Логин</th><th>Пароль</th></tr></thead><tbody>
+          ${d.employees.map((e) => `<tr tabindex="0" data-edit="${esc(e.login)}" class="${editing && editing.login === e.login ? "sel" : ""}">
+            <td>${esc(e.name)}${e.onec_manager && surname(e.onec_manager)[0] !== surname(e.name).slice(-1)[0] ? `<div class="muted small">в 1С: ${esc(e.onec_manager)}</div>` : ""}</td>
+            <td>${esc(depTitle(e.department))}</td><td>${esc(e.title || "—")}</td><td>${esc(e.position ? posTitle(e.position) : "—")}</td>
+            <td class="nw">${e.b24_user_id || "—"}</td>
+            <td><span class="chip ${e.visible ? "s-met" : "s-nodata"}">${e.visible ? "Открытый" : "Закрытый"}</span></td>
+            <td>${e.admin ? "Да" : "—"}</td><td class="nw">${esc(e.login)}</td>
+            <td>${e.has_password ? "задан" : `<span style="color:var(--bad)">не задан</span>`}</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки и управляет этим списком. Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
+    document.getElementById("addEmp").addEventListener("click", () => { renderStaff(d, ""); document.getElementById("f_name").focus(); });
+    main.querySelectorAll("[data-edit]").forEach((tr) => {
+      const open = () => { renderStaff(d, tr.dataset.edit); window.scrollTo(0, 0); };
+      tr.addEventListener("click", open);
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+    });
+    if (editing) bindStaffForm(d, editing);
+  }
+
+  function staffForm(d, e) {
+    const isNew = !e.login;
+    const deps = d.departments.map((x) => `<option value="${esc(x.key)}" ${x.key === e.department ? "selected" : ""}>${esc(x.title)}</option>`).join("");
+    return `<form id="empForm" novalidate><div class="staff-form">
+      <label for="f_name">Имя и фамилия<input id="f_name" type="text" maxlength="100" value="${esc(e.name || "")}" required></label>
+      <label for="f_dep">Отдел<select id="f_dep"><option value="">— не указан —</option>${deps}<option value="__new">Новый отдел…</option></select></label>
+      <label for="f_dep_new" id="f_dep_new_l" hidden>Название нового отдела<input id="f_dep_new" type="text" maxlength="60"></label>
+      <label for="f_title">Должность<input id="f_title" type="text" maxlength="100" value="${esc(e.title || "")}"></label>
+      <label for="f_b24">ID в Битрикс24<input id="f_b24" type="text" inputmode="url" value="${e.b24_user_id || ""}" placeholder="56 или ссылка на карточку">
+        <span class="hint">Число или ссылка вида …/company/personal/user/56/</span></label>
+      <label for="f_onec">ФИО в 1С<input id="f_onec" type="text" maxlength="150" value="${esc(e.onec_manager || "")}" placeholder="Фамилия Имя Отчество">
+        <span class="hint">Как сотрудник записан менеджером или ответственным в 1С</span></label>
+      <label for="f_pos">KPI<select id="f_pos"><option value="">— без KPI —</option>${d.positions.map((p) => `<option value="${esc(p.key)}" ${p.key === e.position ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select>
+        <span class="hint">Регламент, по которому считается KPI</span></label>
+      <fieldset><legend>Видимость</legend><div class="opts">
+        <label for="f_vis1"><input id="f_vis1" type="radio" name="vis" value="1" ${e.visible !== false ? "checked" : ""}>Открытый</label>
+        <label for="f_vis0"><input id="f_vis0" type="radio" name="vis" value="0" ${e.visible === false ? "checked" : ""}>Закрытый</label></div></fieldset>
+      <fieldset><legend>Права</legend><div class="opts">
+        <label for="f_admin"><input id="f_admin" type="checkbox" ${e.admin ? "checked" : ""}>Администратор</label></div></fieldset>
+      <label for="f_login">Логин<input id="f_login" type="text" maxlength="32" autocomplete="off" value="${esc(e.login || "")}" ${isNew ? "" : "readonly"}>
+        <span class="hint">${isNew ? "Латинские буквы, цифры, точка, дефис" : "Логин после создания не меняется"}</span></label>
+      <label for="f_pwd">Пароль<input id="f_pwd" type="password" autocomplete="new-password" placeholder="${isNew ? "не короче 6 символов" : "оставьте пустым, чтобы не менять"}"></label>
+    </div>
+    <div class="staff-actions"><button class="btn primary" type="submit">${isNew ? "Добавить" : "Сохранить"}</button>
+      <button class="btn" type="button" id="empCancel">Отмена</button>
+      ${isNew || e.login === state.boot.me.login ? "" : `<button class="btn danger" type="button" id="empDelete">Удалить</button>`}
+      <span class="err" id="empErr" role="alert"></span></div></form>`;
+  }
+
+  function bindStaffForm(d, e) {
+    const isNew = !e.login, $ = (id) => document.getElementById(id);
+    const dep = $("f_dep");
+    dep.addEventListener("change", () => { $("f_dep_new_l").hidden = dep.value !== "__new"; if (dep.value === "__new") $("f_dep_new").focus(); });
+    $("f_pos").addEventListener("change", () => {  // подсказать должность и отдел по выбранному KPI
+      const p = d.positions.find((x) => x.key === $("f_pos").value);
+      if (!p) return;
+      if (!$("f_title").value.trim()) $("f_title").value = p.title;
+      if (!dep.value) dep.value = p.department;
+    });
+    $("empCancel").addEventListener("click", () => renderStaff(d));
+    const del = $("empDelete");
+    if (del) del.addEventListener("click", async () => {
+      if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Точно удалить? Нажмите ещё раз"; return; }
+      try { renderStaff(await api("/api/staff", { action: "delete", login: e.login })); toast(`${e.name} — удалён(а) из дашборда`); refreshBoot(); }
+      catch (err) { if (err.message !== "auth") $("empErr").textContent = err.message; }
+    });
+    $("empForm").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const body = {
+        action: isNew ? "create" : "update", login: $("f_login").value.trim().toLowerCase(), name: $("f_name").value,
+        department: dep.value === "__new" ? $("f_dep_new").value : dep.value, title: $("f_title").value,
+        b24_user_id: $("f_b24").value, onec_manager: $("f_onec").value, position: $("f_pos").value,
+        visible: $("f_vis1").checked, admin: $("f_admin").checked, password: $("f_pwd").value,
+      };
+      try {
+        renderStaff(await api("/api/staff", body));
+        toast(isNew ? "Сотрудник добавлен. Его данные из Битрикс24 и 1С появятся после «Обновить данные»" : "Изменения сохранены");
+        refreshBoot();
+      } catch (err) { if (err.message !== "auth") $("empErr").textContent = err.message; }
+    });
+  }
+
+  async function refreshBoot() {  // обновить список сотрудников в меню и кэш KPI команды
+    try { state.boot = await api("/api/bootstrap"); sideCache = {}; } catch (e) { /* покажется при следующей загрузке */ }
+  }
+
   window.addEventListener("hashchange", () => {
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
@@ -1157,6 +1284,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (h.startsWith("emp-") && h.slice(4) !== state.login) { state.view = "emp"; state.login = h.slice(4); load(); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
+    else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
   });
   start();
 })();

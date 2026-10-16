@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE TABLE IF NOT EXISTS baselines (
   emp TEXT, metric TEXT, value REAL, PRIMARY KEY (emp, metric));
 
+-- сотрудники дашборда (раздел «Сотрудники»); при первом запуске переносятся из config.json (app/employees.py)
+CREATE TABLE IF NOT EXISTS employees (
+  login TEXT PRIMARY KEY, name TEXT, department TEXT, title TEXT, position TEXT, b24_user_id INTEGER,
+  onec_manager TEXT, visible INTEGER, admin INTEGER, absences TEXT, sort INTEGER);
+
 CREATE TABLE IF NOT EXISTS users (
   login TEXT PRIMARY KEY, pwd_hash TEXT, salt TEXT);
 

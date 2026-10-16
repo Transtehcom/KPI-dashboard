@@ -3,9 +3,9 @@ import datetime as dt
 import threading
 import traceback
 
-from . import demo, manual
+from . import demo, employees, manual
 from .bitrix24 import Bitrix24
-from .common import current_month, db_lock, month_add, month_bounds, replace_rows, today
+from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
 from .onec import DATASETS, OneC
 
@@ -47,6 +47,7 @@ def run(con, config, force_demo=False):
     log = Log()
     status = "ok"
     try:
+        employees.apply(con, config, load_rules())  # сотрудники — из раздела «Сотрудники» (таблица employees)
         if config.get("mode", "demo") == "demo" or force_demo:
             counts = demo.generate(con, config)
             log.append("Демо-данные: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
