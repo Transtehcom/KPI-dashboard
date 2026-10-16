@@ -255,6 +255,18 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(it["status"], "fail")  # 80% < min_pct 90%
         self.assertEqual(it["payout"], 0)
 
+    def test_supply_funnel_requests_to_customer_orders(self):
+        stages = ["ordered", "ordered", "done", "done", "done", "open", "cancelled"]
+        insert(self.con, "supply_funnel", [{"id": f"f{i}", "emp": "supply", "dt": "2026-09-05", "doc": f"ЗС-{i}",
+                                            "customer_order": "12" if s == "ordered" else None, "stage": s}
+                                           for i, s in enumerate(stages)] +
+               [{"id": "old", "emp": "supply", "dt": "2026-08-31", "doc": "ЗС-0", "stage": "ordered"}])
+        r = self.calc("supply", "supply_funnel", "2026-09", target=0.5)
+        c = r["components"][0]
+        self.assertAlmostEqual(c["fact"], 2 / 5)  # 2 заявки с заказом из 5 отработанных
+        self.assertEqual([n for _, n in r["funnel"]["steps"]], [7, 5, 2])
+        self.assertEqual(self.item("supply", "supply_funnel", "2026-09")["status"], "nodata")  # норма не задана
+
     # ---------------------------------------------------------------- воронка сделок
     def test_deal_funnel_sections_and_filters(self):
         def row(i, stage, cat="0", emp="pm", semantic="P", entity="deal"):

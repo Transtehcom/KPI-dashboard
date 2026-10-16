@@ -105,7 +105,7 @@
       "guarantees":      { "source": "http", "path": "hs/kpi/guarantees" },
       "penalties":       { "source": "http", "path": "hs/kpi/penalties" },
       "supplier_orders": { "source": "http", "path": "hs/kpi/supplier_orders" },
-      "supply_funnel":   { "source": "http", "path": "hs/kpi/supply_funnel" },
+      "supply_funnel":   { "source": "supply_request_funnel" },
 
       "_odata_example": {
         "source": "odata",

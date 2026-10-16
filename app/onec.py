@@ -124,6 +124,9 @@ class OneC:
         if src == "supply_requests":  # заказы поставщикам с ответственным из заявок в снабжение (УТ 11, ТТК)
             from .onec_supply import fetch_supplier_orders
             return fetch_supplier_orders(self, ds, date_from, date_to)
+        if src == "supply_request_funnel":  # заявки в отдел снабжения → заказы клиентов (УТ 11, ТТК)
+            from .onec_supply import fetch_supply_funnel
+            return fetch_supply_funnel(self, ds, date_from, date_to)
         if src == "csv":
             path = ds["file"] if os.path.isabs(ds["file"]) else os.path.join(ROOT, ds["file"])
             with open(path, encoding=ds.get("encoding", "utf-8-sig"), newline="") as f:

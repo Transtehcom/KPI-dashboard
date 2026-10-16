@@ -78,3 +78,34 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
             "kp_count": kp_count,
         })
     return out
+
+
+# этапы заявки в отдел снабжения для KPI «Конверсия воронки» (как в отчёте 1С «Отчёт ОП», раздел ОС)
+REQUEST_STAGES = {"Отработана": "done", "Отменена": "cancelled"}  # остальные статусы — заявка ещё в работе
+
+
+def fetch_supply_funnel(onec, ds, date_from, date_to):
+    """Заявки в отдел снабжения за период (по дате заявки) с ответственным снабжения.
+    Заявка «перешла в заказ», если есть заказ клиента с тем же основанием (КП или тендер), что и у заявки.
+    stage: ordered — отработана и есть заказ клиента; done — отработана без заказа; open — в работе; cancelled — отменена."""
+    requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
+        "$format": "json", "$expand": "ОтветственныйСнабжение",
+        "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}' "
+                   f"and Date le datetime'{date_to.isoformat()}T23:59:59'",
+        "$select": "Ref_Key,Number,Date,ДокументОснования,СтатусЗаявки,ОтветственныйСнабжение/Description"})
+    orders = {}
+    for c in onec._odata("Document_ЗаказКлиента", {
+            "$format": "json", "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}'",
+            "$select": "Number,ДокументОснование"}):
+        if c.get("ДокументОснование") and c["ДокументОснование"] != EMPTY:
+            orders.setdefault(c["ДокументОснование"], []).append(c["Number"].strip())
+    out = []
+    for r in requests:
+        stage = REQUEST_STAGES.get(r.get("СтатусЗаявки"), "open")
+        nums = orders.get(r.get("ДокументОснования")) or []
+        if stage == "done" and nums:
+            stage = "ordered"
+        out.append({"id": r["Ref_Key"], "manager": (r.get("ОтветственныйСнабжение") or {}).get("Description"),
+                    "dt": r["Date"][:10], "doc": r["Number"].strip(), "customer_order": ", ".join(nums) or None,
+                    "stage": stage})
+    return out

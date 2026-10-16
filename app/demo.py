@@ -221,11 +221,10 @@ def generate(con, config):
                 for i in range(int(rnd.gauss(20, 3) * len(days) / 21)):
                     d = rnd.choice(days)
                     x = rnd.random() * kk
-                    stage = "delivered" if x > 0.32 else "contract" if x > 0.22 else "kp" if x > 0.12 else "search" if x > 0.05 else "need"
-                    if (t - d).days < 10 and stage == "delivered":
-                        stage = "contract"
-                    data["supply_funnel"].append({"id": nid("f"), "emp": emp, "dt": d.isoformat(), "customer_order": f"ЗК-{rnd.randint(1000, 9999)}",
-                                                  "client": rnd.choice(CLIENTS), "stage": stage})
+                    stage = "ordered" if x > 0.85 else "done" if x > 0.2 else "cancelled" if x > 0.08 else "open"
+                    data["supply_funnel"].append({"id": nid("f"), "emp": emp, "dt": d.isoformat(), "doc": f"ЗС-{rnd.randint(1000, 9999)}",
+                                                  "customer_order": f"ЗК-{rnd.randint(1000, 9999)}" if stage == "ordered" else None,
+                                                  "client": None, "stage": stage})
 
             # --- задачи Б24 (все)
             for _ in range(rnd.randint(12, 22)):

@@ -600,18 +600,20 @@ class Engine:
         }
 
     def calc_supply_funnel(self, e, ctx, p):
-        rows = self.q("SELECT * FROM supply_funnel WHERE emp=? AND dt>=? AND dt<=?",
+        """Конверсия заявок в отдел снабжения в заказы клиентов, как в отчёте 1С «Отчёт ОП» (раздел ОС):
+        заявки месяца, по которым есть заказ клиента / отработанные заявки месяца."""
+        rows = self.q("SELECT * FROM supply_funnel WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt",
                       e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
-        order = ["need", "search", "kp", "contract", "delivered"]
-        titles = ["Потребность (заказ клиента)", "Поиск и квалификация поставщиков", "КП получены", "Договор подписан", "Поставка"]
-        idx = {s: i for i, s in enumerate(order)}
-        steps = [(titles[i], len([r for r in rows if idx.get(r["stage"], 0) >= i])) for i in range(len(order))]
-        val = steps[-1][1] / steps[0][1] if steps[0][1] else None
+        done = [r for r in rows if r["stage"] in ("done", "ordered")]
+        ordered = [r for r in done if r["stage"] == "ordered"]
+        val = len(ordered) / len(done) if done else None
+        status = {"ordered": "Отработана, есть заказ клиента", "done": "Отработана", "open": "В работе", "cancelled": "Отменена"}
         return {
-            "components": [comp("Конверсия: потребность → поставка", val, p["target"], "%", source=SRC_1C)],
-            "funnel": {"title": "Воронка снабжения по заказам клиентов", "steps": steps},
-            "details": {"columns": ["Заказ клиента", "Клиент", "Дата", "Достигнутый этап"],
-                        "rows": [[r["customer_order"], r["client"], r["dt"], titles[idx.get(r["stage"], 0)]] for r in rows]},
+            "components": [comp("Конверсия: заявки → заказ клиента", val, p.get("target"), "%", source=SRC_1C)],
+            "funnel": {"title": "Заявки в отдел снабжения", "steps": [
+                ("Всего заявок", len(rows)), ("Отработано", len(done)), ("Заявки → заказ клиента", len(ordered))]},
+            "details": {"columns": ["Заявка", "Дата", "Статус", "Заказ клиента"],
+                        "rows": [[r["doc"], r["dt"], status.get(r["stage"], r["stage"]), r["customer_order"] or ""] for r in rows]},
         }
 
     # ------------------------------------------------------------------ assembly
