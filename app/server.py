@@ -96,6 +96,11 @@ class App:
         return token
 
     # ---------- данные для интерфейса
+    def department_title(self, e):
+        """Отдел сотрудника из раздела «Сотрудники», иначе — отдел его KPI; полное название из kpi_rules.json."""
+        dep = e.get("department") or self.rules["positions"].get(e.get("position"), {}).get("department")
+        return self.rules.get("departments", {}).get(dep, dep) if dep else None
+
     def bootstrap(self, me):
         is_mgr = me.get("role") == "manager"
         emps = self.engine.employees() if is_mgr else [me]
@@ -104,7 +109,8 @@ class App:
         return {
             "me": {"login": me["login"], "name": me["name"], "role": me.get("role", "employee")},
             "employees": [{"login": e["login"], "name": e["name"], "position": e["position"],
-                           "position_title": e.get("title") or self.rules["positions"][e["position"]]["title"]}
+                           "position_title": e.get("title") or self.rules["positions"][e["position"]]["title"],
+                           "department_title": self.department_title(e)}
                           for e in emps if e.get("position")],
             "positions": {k: {"title": v["title"], "department": v["department"], "salary": v["salary"],
                               "kpi_bonus": v["kpi_bonus"], "doc": v.get("doc"),
