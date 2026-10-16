@@ -55,10 +55,8 @@
       "lead_budget": "UF_CRM_LEAD_BUDGET",
       "lead_lpr": "UF_CRM_LEAD_LPR",
       "lead_solvency": "UF_CRM_LEAD_SOLVENCY",
-      "lead_next_step": "UF_CRM_LEAD_NEXT_STEP",
-      "lead_first_contact": "UF_CRM_LEAD_FIRST_CONTACT"
+      "_lead_comment": "Лид засчитывается в KPI «Качество квалифицированных лидов», когда выполнены все 5 условий: потребность, бюджет и сроки, ЛПР (поле лида или ЛПР у контакта лида), платёжеспособность (галочка или список со значением «Да»; можно несколько полей списком) и запланированный звонок, встреча или дело с датой в лиде; проигранные лиды не считаются. Месяц — когда дашборд впервые увидел все условия."
     },
-    "lead_qualified_statuses": ["IN_PROCESS", "CONVERTED"],
     "secretary_posts": ["секретар", "офис-менеджер", "ресепшн", "приёмная", "приемная"],
     "kp_email_keywords": ["КП", "коммерческое предложение"],
     "min_call_seconds": 120

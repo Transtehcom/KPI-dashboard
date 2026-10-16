@@ -342,11 +342,16 @@ class Engine:
             if not miss:
                 good.append(r)
             det.append([r["title"], (r["qualified_date"] or "")[:10], "целевой" if not miss else "не заполнено: " + ", ".join(miss)])
+        # лиды в работе, у которых выполнены не все условия, — подсказка менеджеру (срез на сегодня)
+        open_ = self.q("SELECT * FROM leads WHERE emp=? AND qualified_date IS NULL", e["login"]) if ctx["in_progress"] else []
+        partial = [r for r in open_ if any(r[k] for k, _ in names)]
+        det += [[r["title"], "—", "не хватает: " + ", ".join(n for k, n in names if not r[k])] for r in partial]
         return {
             "components": [comp("Новые целевые лиды", len(good), p["min_leads"], "шт", source=SRC_B24,
                                 pace=self._pace(ctx, p["min_leads"]))],
-            "extra": [{"label": "Лидов прошли квалификацию", "value": len(rows)},
-                      {"label": "Не признаны целевыми (не заполнены поля)", "value": len(rows) - len(good)}],
+            "extra": [{"label": "Лидов с выполненными 5 условиями в месяце", "value": len(good)},
+                      {"label": "Лидов в работе, где выполнена часть условий", "value": len(partial),
+                       "hint": "засчитаются, когда будут выполнены все пять"}],
             "details": {"columns": ["Лид", "Квалифицирован", "Статус"], "rows": det},
         }
 

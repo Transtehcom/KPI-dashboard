@@ -126,6 +126,8 @@ def run(con, config, force_demo=False):
                 with db_lock():
                     try:
                         for src, table, rows, date_field in writes:
+                            if table == "leads":
+                                rows = qualify_leads(con, rows)
                             # воронки сделок и лидов — срез по всем ответственным, заменяется целиком
                             replace_rows(con, table, rows, emps=None if table == "crm_deals" else logins, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
@@ -148,6 +150,26 @@ def run(con, config, force_demo=False):
             con.commit()
         _running.release()
     return {"status": status, "message": "\n".join(log), "finished": finished}
+
+
+def qualify_leads(con, rows):
+    """Лиды с выполненными 5 условиями квалификации: запомнить дату первого обнаружения (lead_qualified)
+    и проставить её в qualified_date. Месяц лида потом не меняется, даже если поля изменят или лид проиграют.
+    Проигранные (lost) лиды без такой даты не записываются."""
+    seen = {r["id"]: r["first_seen"] for r in con.execute("SELECT id, first_seen FROM lead_qualified")}
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    out = []
+    for r in rows:
+        full = all(r.get(k) for k in ("need", "budget", "lpr", "solvency", "next_step"))
+        if r["id"] in seen:
+            r.update(qualified_date=seen[r["id"]], need=1, budget=1, lpr=1, solvency=1, next_step=1)
+        elif full and not r.get("lost"):
+            con.execute("INSERT INTO lead_qualified VALUES (?,?,?)", (r["id"], r["emp"], now))
+            r["qualified_date"] = now
+        elif r.get("lost"):
+            continue
+        out.append(r)
+    return out
 
 
 def snapshot_clients(con, month):

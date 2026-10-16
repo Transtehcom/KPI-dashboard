@@ -217,6 +217,17 @@ class EngineTest(unittest.TestCase):
         self.assertEqual({order_key(x) for x in ("00ЦБ-000067", "ЦБ-67", "67", " 00ЦБ-000067 ")}, {"67"})
         self.assertIsNone(order_key("без номера"))
 
+    def test_lead_qualified_once_and_lost_leads_skipped(self):
+        full = {"need": 1, "budget": 1, "lpr": 1, "solvency": 1, "next_step": 1}
+        rows = [{"id": "l1", "emp": "pm", **full, "lost": False}, {"id": "l2", "emp": "pm", **full, "lost": True},
+                {"id": "l3", "emp": "pm", **full, "next_step": 0, "lost": False}]
+        out = sync.qualify_leads(self.con, rows)
+        self.assertEqual([(r["id"], bool(r.get("qualified_date"))) for r in out], [("l1", True), ("l3", False)])
+        first = out[0]["qualified_date"]
+        # позже условие пропало и лид проигран — месяц квалификации сохраняется
+        again = sync.qualify_leads(self.con, [{"id": "l1", "emp": "pm", **full, "need": 0, "lost": True}])
+        self.assertEqual((again[0]["qualified_date"], again[0]["need"]), (first, 1))
+
     def test_rejected_tenders_norm_zero(self):
         self.assertEqual(self.item("tender", "tender_operations", "2026-09")["status"], "met")
         insert(self.con, "tenders", [{"id": "t1", "emp": "tender", "title": "Т", "result": "lost", "result_date": "2026-09-10",

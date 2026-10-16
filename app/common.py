@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS leads (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, first_contact TEXT, qualified_date TEXT,
   need INTEGER, budget INTEGER, lpr INTEGER, solvency INTEGER, next_step INTEGER, status TEXT);
 
+-- когда дашборд впервые увидел у лида все 5 условий квалификации: лид засчитывается в этом месяце навсегда
+CREATE TABLE IF NOT EXISTS lead_qualified (
+  id TEXT PRIMARY KEY, emp TEXT, first_seen TEXT);
+
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY, emp TEXT, name TEXT, need INTEGER, strategy INTEGER, updated TEXT);
 

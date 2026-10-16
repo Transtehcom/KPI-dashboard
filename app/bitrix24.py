@@ -295,32 +295,45 @@ class Bitrix24:
 
         # лиды
         self.log("Б24: лиды")
-        lf = {k: self.f.get("lead_" + k) for k in ("need", "budget", "lpr", "solvency", "next_step", "first_contact")}
+        # лиды: 5 условий квалификации из регламента. Потребность, бюджет и сроки, ЛПР, платёжеспособность — поля лида
+        # (ЛПР ещё и по полям ЛПР у контакта лида), следующий шаг — запланированный звонок, встреча или дело с датой.
+        # Дату квалификации (первое обнаружение) запоминает синхронизация — sync.qualify_leads.
+        def fields_of(key):
+            v = self.f.get(key) or []
+            return [v] if isinstance(v, str) else list(v)
+        lf = {k: fields_of("lead_" + k) for k in ("need", "budget", "lpr", "solvency")}
+        lead_statuses = self.lead_statuses()
+        yes = self._enum_yes("crm.lead.fields", [f for v in lf.values() for f in v])
         leads = self.list_all("crm.lead.list", {
             "filter": {"ASSIGNED_BY_ID": uids, ">=DATE_MODIFY": df},
-            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "DATE_CREATE"] + [v for v in lf.values() if v]})
-        lhist = self.list_all("crm.stagehistory.list", {
-            "entityTypeId": 1, "filter": {">=CREATED_TIME": df}, "select": ["OWNER_ID", "STATUS_ID", "CREATED_TIME"],
-            "order": {"ID": "ASC"}}, key="items")
-        qstat = set(self.cfg.get("lead_qualified_statuses", []))
-        qdate = {}
-        for h in lhist:
-            if h.get("STATUS_ID") in qstat:
-                qdate.setdefault(str(h["OWNER_ID"]), str(h["CREATED_TIME"])[:19])
+            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "DATE_CREATE", "CONTACT_ID"] +
+                      [f for v in lf.values() for f in v]})
+        lead_contacts = self.by_ids("crm.contact.list", [l.get("CONTACT_ID") for l in leads], ["ID"] + lpr_fields)
+        planned = set()
+        ids = [l["ID"] for l in leads]
+        for i in range(0, len(ids), 50):
+            for a in self.list_all("crm.activity.list", {
+                    "filter": {"OWNER_TYPE_ID": 1, "OWNER_ID": ids[i:i + 50], "COMPLETED": "N"},
+                    "select": ["ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "DEADLINE", "START_TIME"]}):
+                kind_ok = str(a.get("TYPE_ID")) in ("1", "2") or a.get("PROVIDER_ID") == "CRM_TODO"  # встреча, звонок, дело
+                if kind_ok and (a.get("DEADLINE") or a.get("START_TIME")):
+                    planned.add(str(a["OWNER_ID"]))
+
+        def has(l, key):
+            return int(any(str(l.get(f)) in yes[f] if f in yes else self.flag(l.get(f)) for f in lf[key]))
         rows = []
         for l in leads:
             login = emp(l.get("ASSIGNED_BY_ID"))
-            if not login or l.get("STATUS_ID") not in qstat:
+            if not login:
                 continue
-            first_contact = str(l.get(lf["first_contact"]) or l.get("DATE_CREATE"))[:10] if lf["first_contact"] else str(l.get("DATE_CREATE"))[:10]
-            q = qdate.get(str(l["ID"]))
-            if not q:
-                continue
-            # лид относится к месяцу, когда и первый контакт, и квалификация уже состоялись
-            q = max(q, first_contact)
-            rows.append({"id": "lead" + str(l["ID"]), "emp": login, "title": l.get("TITLE"), "first_contact": first_contact,
-                         "qualified_date": q, "status": l.get("STATUS_ID"),
-                         **{k: self.flag(l.get(v)) if v else 0 for k, v in lf.items() if k != "first_contact"}})
+            contact = lead_contacts.get(str(l.get("CONTACT_ID")))
+            lpr = has(l, "lpr") or int(bool(contact) and any(self.flag(contact.get(f)) for f in lpr_fields))
+            rows.append({"id": "lead" + str(l["ID"]), "emp": login, "title": l.get("TITLE"),
+                         "first_contact": str(l.get("DATE_CREATE"))[:10], "qualified_date": None,
+                         "status": l.get("STATUS_ID"),
+                         "lost": (lead_statuses.get(l.get("STATUS_ID")) or {}).get("semantics") == "failure",
+                         "need": has(l, "need"), "budget": has(l, "budget"), "lpr": lpr,
+                         "solvency": has(l, "solvency"), "next_step": int(str(l["ID"]) in planned)})
         out["leads"] = rows
 
         # компании: активные клиенты с выявленной потребностью и стратегией
@@ -398,6 +411,17 @@ class Bitrix24:
                 "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
+
+    def _enum_yes(self, method, fields):
+        """Для полей-списков: какие значения означают «да» ({поле: {ID вариантов}}). Остальные поля сюда не попадают."""
+        meta = self.call(method).get("result", {})
+        out = {}
+        for f in fields:
+            m = meta.get(f) or {}
+            if m.get("type") == "enumeration":
+                out[f] = {str(i.get("ID")) for i in m.get("items", [])
+                          if str(i.get("VALUE", "")).strip().lower() in ("да", "yes", "проверена", "проверено")}
+        return out
 
     def order_owners(self, field):
         """Номер заказа клиента 1С, записанный в сделке (поле field) → [(ID ответственного, дата создания сделки)].
