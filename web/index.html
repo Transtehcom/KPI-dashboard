@@ -635,8 +635,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       Object.entries(groups).map(([dep, list]) => `<div class="nav-group"><div class="eyebrow">${esc(dep)}</div>${list.map((e) => {
         const s = byLogin[e.login];
         return `<a href="#emp-${e.login}" class="nav-item ${state.view === "emp" && state.login === e.login ? "active" : ""}" data-login="${e.login}">
-          <span class="nm">${esc(e.name)}</span><span class="pct">${s ? pct(s.share) : ""}</span>
-          <span class="role" title="${esc(e.position_title)}">${esc(e.position_title)}</span>
+          <span class="nm">${esc(e.name)}</span><span class="pct">${s ? pct(s.share) : e.position ? "" : "—"}</span>
+          <span class="role">${esc(e.position_title || "")}${e.position ? "" : `${e.position_title ? " · " : ""}KPI не назначен`}</span>
           <span class="mini"><i style="width:${s ? Math.min(100, s.share * 100) : 0}%"></i></span></a>`;
       }).join("")}</div>`).join("");
     side.querySelectorAll("[data-login]").forEach((a) => a.addEventListener("click", (ev) => { ev.preventDefault(); openEmp(a.dataset.login); }));
@@ -670,7 +670,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         sideCache[state.month] = await api("/api/overview?month=" + state.month);
       }
       if (isMgr) renderSide(sideCache[state.month]);
+      const who = state.boot.employees.find((e) => e.login === state.login);
       if (state.view === "team") renderTeam(sideCache[state.month]);
+      else if (who && !who.position) renderNoKpi(who, isMgr);
       else renderEmp(await api(`/api/employee?login=${encodeURIComponent(state.login)}&month=${state.month}`));
     } catch (e) {
       if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
@@ -1157,7 +1159,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   // ---------- методика
   function showRules() {
     const b = state.boot;
-    const own = b.me.role === "manager" ? Object.keys(b.positions) : [b.employees[0].position];
+    const own = b.me.role === "manager" ? Object.keys(b.positions) : b.employees.map((e) => e.position).filter(Boolean);
     const dr = document.createElement("div");
     dr.className = "drawer";
     dr.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Методика расчёта KPI">
@@ -1174,6 +1176,15 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     dr.addEventListener("click", (e) => { if (e.target === dr || e.target.hasAttribute("data-close")) close(); });
     document.addEventListener("keydown", function k(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", k); } });
     dr.querySelector("[data-close]").focus();
+  }
+
+  function renderNoKpi(e, isMgr) {  // сотрудник без назначенного KPI
+    document.getElementById("main").innerHTML = `
+      <div class="head"><div><div class="eyebrow">${esc(e.department_title || "Без отдела")}${e.position_title ? " · " + esc(e.position_title) : ""}</div><h1>${esc(e.name)}</h1></div></div>
+      <section class="panel"><div class="panel-b" style="padding-top:16px">
+        <p style="margin:0 0 6px"><b>KPI не назначен.</b> ${isMgr ? "Пока у сотрудника нет KPI, по нему ничего не считается и не начисляется." : "Когда руководитель назначит вам KPI, здесь появится ваш дашборд."}</p>
+        <p class="muted small" style="margin:0">${isMgr ? `Назначить KPI можно в разделе <a href="#staff">«Сотрудники»</a>.` : "Раздел «Воронки» доступен уже сейчас."}</p>
+      </div></section>`;
   }
 
   // ---------- сотрудники (только администратор)
@@ -1200,7 +1211,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <td>${e.admin ? "Да" : "—"}</td><td class="nw">${esc(e.login)}</td>
             <td>${e.has_password ? "задан" : `<span style="color:var(--bad)">не задан</span>`}</td></tr>`).join("")}
         </tbody></table></div>
-        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки и управляет этим списком. Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
+        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается, если KPI выбран. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки и управляет этим списком. Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
     document.getElementById("addEmp").addEventListener("click", () => { renderStaff(d, ""); document.getElementById("f_name").focus(); });
     main.querySelectorAll("[data-edit]").forEach((tr) => {
       const open = () => { renderStaff(d, tr.dataset.edit); window.scrollTo(0, 0); };
@@ -1223,7 +1234,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <label for="f_onec">ФИО в 1С<input id="f_onec" type="text" maxlength="150" value="${esc(e.onec_manager || "")}" placeholder="Фамилия Имя Отчество">
         <span class="hint">Как сотрудник записан менеджером или ответственным в 1С</span></label>
       <label for="f_pos">KPI<select id="f_pos"><option value="">— без KPI —</option>${d.positions.map((p) => `<option value="${esc(p.key)}" ${p.key === e.position ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select>
-        <span class="hint">Регламент, по которому считается KPI</span></label>
+        <span class="hint">Регламент, по которому считается KPI. Можно оставить без KPI</span></label>
       <fieldset><legend>Видимость</legend><div class="opts">
         <label for="f_vis1"><input id="f_vis1" type="radio" name="vis" value="1" ${e.visible !== false ? "checked" : ""}>Открытый</label>
         <label for="f_vis0"><input id="f_vis0" type="radio" name="vis" value="0" ${e.visible === false ? "checked" : ""}>Закрытый</label></div></fieldset>

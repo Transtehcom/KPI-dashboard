@@ -111,10 +111,6 @@ def save(con, rules, data, me, is_new, hash_password):
     visible, admin = bool(data.get("visible")), bool(data.get("admin"))
     if login == me and not admin:
         raise EmployeeError("Нельзя снять права администратора с самого себя")
-    if visible and not position:
-        raise EmployeeError("Открытому сотруднику нужно выбрать KPI — иначе его не по чему оценивать")
-    if not visible and not admin:
-        raise EmployeeError("Закрытым может быть только администратор: обычному сотруднику дашборд нечего показать")
     b24 = parse_b24_id(data.get("b24_user_id"))
     onec = " ".join(str(data.get("onec_manager") or "").split())[:150] or None
     password = str(data.get("password") or "")

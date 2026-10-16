@@ -55,11 +55,24 @@ class EmployeesTest(unittest.TestCase):
         self.assertIn("new", [e["login"] for e in Engine(self.con, self.rules, self.config).employees()])
 
     def test_validation(self):
-        bad = [dict(login="Bad Login"), dict(name=""), dict(position="", visible=True), dict(visible=False, admin=False),
-               dict(password="123"), dict(b24_user_id="не ссылка"), dict(login="pm"), dict(b24_user_id="56")]
+        bad = [dict(login="Bad Login"), dict(name=""), dict(position="nope"), dict(password="123"), dict(b24_user_id="не ссылка"), dict(login="pm"), dict(b24_user_id="56")]
         for kw in bad:
             with self.subTest(kw=kw), self.assertRaises(employees.EmployeeError):
                 self.save(**kw)
+
+    def test_employee_without_kpi_is_listed_but_not_calculated(self):
+        self.save(position="", title="Стажёр")
+        employees.apply(self.con, self.config, self.rules)
+        engine = Engine(self.con, self.rules, self.config)
+        self.assertNotIn("new", [e["login"] for e in engine.employees()])
+        from app.server import App
+        app = App.__new__(App)  # без подключения к рабочей базе: нужны только config и rules
+        app.config, app.rules, app.con, app.engine = self.config, self.rules, self.con, engine
+        boot = {e["login"]: e for e in app.bootstrap(next(e for e in self.config["employees"] if e["login"] == "boss"))["employees"]}
+        self.assertIsNone(boot["new"]["position"])
+        self.assertEqual(boot["new"]["position_title"], "Стажёр")
+        self.assertEqual(boot["new"]["department_title"], self.rules["departments"]["ОС"])
+        self.assertNotIn("boss", boot)  # закрытый
 
     def test_update_keeps_password_when_empty_and_protects_last_admin(self):
         self.save()

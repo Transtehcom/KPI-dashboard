@@ -103,15 +103,16 @@ class App:
 
     def bootstrap(self, me):
         is_mgr = me.get("role") == "manager"
-        emps = self.engine.employees() if is_mgr else [me]
+        # руководителю — все открытые сотрудники, в том числе без KPI (в меню они помечены «KPI не назначен»)
+        emps = [e for e in self.config["employees"] if e.get("visible", e.get("role") != "manager")] if is_mgr else [me]
         cm = current_month()
         last = sync.last_sync(self.con)
         return {
             "me": {"login": me["login"], "name": me["name"], "role": me.get("role", "employee")},
-            "employees": [{"login": e["login"], "name": e["name"], "position": e["position"],
-                           "position_title": e.get("title") or self.rules["positions"][e["position"]]["title"],
+            "employees": [{"login": e["login"], "name": e["name"], "position": e.get("position"),
+                           "position_title": e.get("title") or self.rules["positions"].get(e.get("position"), {}).get("title"),
                            "department_title": self.department_title(e)}
-                          for e in emps if e.get("position")],
+                          for e in emps],
             "positions": {k: {"title": v["title"], "department": v["department"], "salary": v["salary"],
                               "kpi_bonus": v["kpi_bonus"], "doc": v.get("doc"),
                               "items": [{x: i.get(x) for x in ("n", "title", "weight", "period", "target_text", "description")}
