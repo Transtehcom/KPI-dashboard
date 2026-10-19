@@ -1123,6 +1123,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <tr><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
           <tr><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
         </tbody></table></div>
+      <div id="fCalPrint">${calPrintHtml()}</div>
       ${FUNNELS.map(printFunnel).join("")}</div>`;
 
     const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
@@ -1206,7 +1207,25 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       if (e.message !== "auth" && state.fCal && state.fCal.key === key) { state.fCal = { key, error: e.message }; paintCal(); }
     }
   }
-  function paintCal() { const el = document.getElementById("fCal"); if (el) el.innerHTML = calHtml(); }
+  function paintCal() {
+    const el = document.getElementById("fCal"); if (el) el.innerHTML = calHtml();
+    const pr = document.getElementById("fCalPrint"); if (pr) pr.innerHTML = calPrintHtml();
+  }
+  const calWhen = (x) => x.all_day ? "весь день" : x.from && x.to ? `${x.from}–${x.to}` : x.from ? `с ${x.from}` : `до ${x.to}`;
+  function calPrintHtml() {  // расписание в печатной версии: все записи, без сворачивания
+    const c = state.fCal;
+    if (PREVIEW || !(state.fLogins || []).length || !c) return "";
+    const title = `<h2>Расписание на ${esc(ruDay(calDay()))} (календарь Битрикс24)</h2>`;
+    if (c.loading) return `<section class="pr-sec">${title}<p class="sm">Календарь ещё загружается — повторите печать через несколько секунд.</p></section>`;
+    if (c.error || c.data.unavailable) return `<section class="pr-sec">${title}<p class="sm">${esc(c.error || c.data.unavailable)}</p></section>`;
+    return `<section class="pr-sec">${title}${c.data.people.map((p) => {
+      const name = (state.fRespNames && state.fRespNames.get(p.key)) || p.key;
+      if (p.error) return `<h3>${esc(name)}</h3><p class="sm">${esc(p.error)}</p>`;
+      return `<h3>${esc(name)}</h3>${p.items.length ? `<table class="pr"><thead><tr><th>Время</th><th>Что</th><th>Тип</th></tr></thead><tbody>
+        ${p.items.map((x) => `<tr><td>${esc(calWhen(x))}</td><td>${esc(x.title)}</td><td>${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</td></tr>`).join("")}
+        </tbody></table>` : `<p class="sm">В этот день ничего не запланировано.</p>`}`;
+    }).join("")}</section>`;
+  }
   function calHtml() {
     if (PREVIEW) return "";
     const logins = state.fLogins || [], day = calDay(), c = state.fCal;
@@ -1219,9 +1238,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else body = `<div class="cal-grid">${c.data.people.map((p) => {
       const name = (state.fRespNames && state.fRespNames.get(p.key)) || p.key;
       if (p.error) return `<div class="cal-person"><h3>${esc(name)}</h3><div class="small" style="color:var(--bad)">${esc(p.error)}</div></div>`;
-      const when = (x) => x.all_day ? "весь день" : x.from && x.to ? `${x.from}–${x.to}` : x.from ? `с ${x.from}` : `до ${x.to}`;
       const li = (x) => `<li class="cal-item ${x.kind}${x.done ? " done" : ""}">
-          <span class="cal-t">${esc(when(x))}</span><i class="cal-m" aria-hidden="true"></i>
+          <span class="cal-t">${esc(calWhen(x))}</span><i class="cal-m" aria-hidden="true"></i>
           <span class="cal-b"><span class="cal-n">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</span>
           <span class="cal-s">${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</span></span></li>`;
       // задачи «на весь день» (в работе до срока) Б24 показывает каждый день — их сворачиваем, если их много
