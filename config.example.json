@@ -28,7 +28,7 @@
   "workdays": [],
 
   "bitrix24": {
-    "_comment": "Входящий вебхук: Битрикс24 → Разработчикам → Другое → Входящий вебхук. Права: crm, telephony, tasks, user.",
+    "_comment": "Входящий вебхук: Битрикс24 → Разработчикам → Другое → Входящий вебхук. Права: crm, telephony, tasks, user, calendar.",
     "webhook": "https://ВАШ-ПОРТАЛ.bitrix24.ru/rest/1/КЛЮЧ/",
 
     "tender_category_id": 1,

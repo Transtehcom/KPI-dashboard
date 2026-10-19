@@ -258,6 +258,29 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .staff-form .opts label { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
 .staff-form input[type=text], .staff-form input[type=password], .staff-form select { width: 100%; }
 .staff-form input[readonly] { background: var(--surface-2); color: var(--fg-3); }
+.fn-layout.with-cal { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.fn-layout.with-cal > .fn2 { min-width: 0; }
+#fCal { position: sticky; top: 12px; }
+#fCal .cal { max-height: calc(100vh - 24px); display: flex; flex-direction: column; }
+#fCal .cal .panel-b { overflow: auto; }
+@media (max-width: 1400px) { .fn-layout.with-cal .fn2 { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .fn-layout.with-cal { grid-template-columns: minmax(0, 1fr); } #fCal { position: static; } #fCal .cal { max-height: none; } }
+.cal-grid { display: flex; flex-direction: column; gap: 18px; }
+.cal-person { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cal-person h3 { margin: 0; font-size: 14px; }
+.cal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cal-item { display: grid; grid-template-columns: 84px 8px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--line); }
+.cal-item:first-child { border-top: 0; }
+.cal-t { font: 500 12px var(--mono); color: var(--fg-2); white-space: nowrap; }
+.cal-m { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); align-self: center; }
+.cal-item.task .cal-m { background: var(--bad); }
+.cal-item.done .cal-n { text-decoration: line-through; color: var(--fg-3); }
+.cal-b { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cal-n { overflow-wrap: anywhere; }
+.cal-n a { color: inherit; }
+.cal-s { font-size: 12px; color: var(--fg-3); }
+.cal-more summary { cursor: pointer; font-size: 13px; color: var(--fg-2); padding: 6px 0; }
+.cal-more .cal-list { max-height: 320px; overflow: auto; }
 .absences { border: 0; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .absences legend { font-size: 13px; font-weight: 600; padding: 0; margin-bottom: 2px; }
 .absences .hint { font-size: 12px; color: var(--fg-3); }
@@ -1037,6 +1060,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       const o = resp.get(r.value) || { value: r.value, name: r.name, count: 0 };
       o.count += r.count; resp.set(r.value, o);
     }));
+    state.fRespNames = new Map([...resp.values()].map((r) => [r.value, r.name]));
     const respList = [...resp.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
     const chosen = (state.fLogins || []).filter((v) => resp.has(v));
     const chosenNames = chosen.map((v) => resp.get(v).name);
@@ -1105,7 +1129,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
     main.innerHTML = `
       <div class="head no-print"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
-        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}</div></div>
+        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
         <div class="filters">
           ${perHtml}
           <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
@@ -1115,7 +1139,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <nav class="tabs" aria-label="Вид"><a href="#funnel" data-fview="funnel" class="${bars ? "" : "on"}">Воронка</a><a href="#funnel" data-fview="bars" class="${bars ? "on" : ""}">Диаграмма</a></nav>
           <button class="btn" id="fPrintBtn" type="button">Печать</button>
         </div></div>
-      <div class="fn2 no-print">${FUNNELS.map(panel).join("")}</div>
+      <div class="fn-layout no-print ${chosen.length && !PREVIEW ? "with-cal" : ""}">
+        <div class="fn2">${FUNNELS.map(panel).join("")}</div>
+        ${chosen.length && !PREVIEW ? `<aside id="fCal" aria-label="Расписание из календаря Битрикс24">${calHtml()}</aside>` : ""}</div>
       <section class="panel no-print"><div class="panel-h"><div><div class="eyebrow">${K.title} · этап воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)}${amt ? ` · ${money(cur.amount)}` : ""}</h2></div>
         <span class="muted small">${esc(cur.rule)}</span></div>
         <div class="panel-b" style="display:flex;flex-direction:column;gap:16px">
@@ -1163,6 +1189,51 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       e.preventDefault(); state.fView = a.dataset.fview; renderFunnel(state.fData);
     }));
     document.getElementById("fPrintBtn").addEventListener("click", () => window.print());
+    loadCalendar();
+  }
+
+  // ---------- расписание из календаря Битрикс24 на последний день периода воронок
+  function calDay() { const [, dTo] = funnelPeriod(); return dTo || isoDay(new Date()); }
+  async function loadCalendar() {
+    const logins = state.fLogins || [], day = calDay(), key = day + "|" + logins.join(",");
+    if (PREVIEW || !logins.length) { state.fCal = null; return paintCal(); }
+    if (state.fCal && state.fCal.key === key && !state.fCal.error) return paintCal();
+    state.fCal = { key, loading: true }; paintCal();
+    try {
+      const data = await api(`/api/calendar?login=${encodeURIComponent(logins.join(","))}&date=${day}`);
+      if (state.fCal && state.fCal.key === key) { state.fCal = { key, data }; paintCal(); }
+    } catch (e) {
+      if (e.message !== "auth" && state.fCal && state.fCal.key === key) { state.fCal = { key, error: e.message }; paintCal(); }
+    }
+  }
+  function paintCal() { const el = document.getElementById("fCal"); if (el) el.innerHTML = calHtml(); }
+  function calHtml() {
+    if (PREVIEW) return "";
+    const logins = state.fLogins || [], day = calDay(), c = state.fCal;
+    const head = `<div class="panel-h"><div><div class="eyebrow">Календарь Битрикс24 · последний день периода</div><h2>Расписание на ${esc(ruDay(day))}</h2></div></div>`;
+    if (!logins.length) return "";
+    let body;
+    if (!c || c.loading) body = `<div class="muted small">Загружаю календарь…</div>`;
+    else if (c.error) body = `<div class="small" style="color:var(--bad)">${esc(c.error)}</div>`;
+    else if (c.data.unavailable) body = `<div class="muted small">${esc(c.data.unavailable)}</div>`;
+    else body = `<div class="cal-grid">${c.data.people.map((p) => {
+      const name = (state.fRespNames && state.fRespNames.get(p.key)) || p.key;
+      if (p.error) return `<div class="cal-person"><h3>${esc(name)}</h3><div class="small" style="color:var(--bad)">${esc(p.error)}</div></div>`;
+      const when = (x) => x.all_day ? "весь день" : x.from && x.to ? `${x.from}–${x.to}` : x.from ? `с ${x.from}` : `до ${x.to}`;
+      const li = (x) => `<li class="cal-item ${x.kind}${x.done ? " done" : ""}">
+          <span class="cal-t">${esc(when(x))}</span><i class="cal-m" aria-hidden="true"></i>
+          <span class="cal-b"><span class="cal-n">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</span>
+          <span class="cal-s">${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</span></span></li>`;
+      // задачи «на весь день» (в работе до срока) Б24 показывает каждый день — их сворачиваем, если их много
+      const longTasks = p.items.filter((x) => x.kind === "task" && x.all_day);
+      const fold = longTasks.length > 3;
+      const main = fold ? p.items.filter((x) => !longTasks.includes(x)) : p.items;
+      return `<div class="cal-person"><h3>${esc(name)}</h3>
+        ${p.calendar_error ? `<div class="muted small">${p.calendar_error === "scope" ? "Нет доступа к событиям календаря: добавьте вебхуку право «Календарь». Показаны только задачи." : "События календаря не загрузились: " + esc(p.calendar_error)}</div>` : ""}
+        ${main.length ? `<ul class="cal-list">${main.map(li).join("")}</ul>` : p.items.length ? `<div class="muted small">Событий и задач со сроком в этот день нет.</div>` : `<div class="muted small">В этот день ничего не запланировано.</div>`}
+        ${fold ? `<details class="cal-more"><summary>Ещё задачи в работе на весь день: ${longTasks.length}</summary><ul class="cal-list">${longTasks.map(li).join("")}</ul></details>` : ""}</div>`;
+    }).join("")}</div>`;
+    return `<section class="panel cal">${head}<div class="panel-b">${body}</div></section>`;
   }
 
   // ---------- методика

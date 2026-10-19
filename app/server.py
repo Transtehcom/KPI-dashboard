@@ -14,7 +14,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import employees, manual, sync
+from . import b24_calendar, employees, manual, sync
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -127,6 +127,34 @@ class App:
             "sync_running": sync.is_running(),
         }
 
+    def calendar(self, me, is_mgr, q):
+        """Расписание ответственных из «Воронок» на день: login — ключи через запятую (логин или «id:<ID в Б24>»).
+        Сотрудник видит только своё расписание, руководитель — любого."""
+        try:
+            day = dt.date.fromisoformat(q.get("date") or dt.date.today().isoformat())
+        except ValueError:
+            raise BadRequest("Некорректная дата")
+        cfg = self.config.get("bitrix24", {})
+        if self.config.get("mode", "demo") == "demo" or not cfg.get("webhook") or "ВАШ-ПОРТАЛ" in cfg["webhook"]:
+            return {"date": day.isoformat(), "unavailable": "Битрикс24 не подключён — календарь доступен в рабочем режиме"}
+        by_login = {e["login"]: e.get("b24_user_id") for e in self.config["employees"]}
+        own = me.get("b24_user_id")
+        people = []
+        for key in [k for k in (q.get("login") or "").split(",") if k][:6]:
+            m = re.fullmatch(r"id:(\d+)", key)
+            uid = int(m.group(1)) if m else by_login.get(key)
+            if not uid:
+                people.append({"key": key, "error": "Нет ID в Битрикс24 — укажите его в разделе «Сотрудники»"})
+            elif not is_mgr and int(uid) != int(own or 0):
+                people.append({"key": key, "error": "Расписание других сотрудников видит только руководитель"})
+            else:
+                try:
+                    people.append({"key": key, **b24_calendar.day_schedule(cfg, int(uid), day)})
+                except Exception as e:  # noqa
+                    traceback.print_exc()
+                    people.append({"key": key, "error": f"Битрикс24 не ответил: {e}"})
+        return {"date": day.isoformat(), "people": people}
+
     def employee(self, login, month):
         r = self.engine.compute(login, month)
         first, last = month_bounds(month)
@@ -168,6 +196,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Frame-Options", "SAMEORIGIN")
+        if path.endswith(".html"):  # после обновления дашборда браузер не должен показывать старую страницу
+            self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
@@ -286,6 +316,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
             month = self.month_param(q["month"]) if q.get("month") else current_month()
+
+            if path == "/api/calendar":  # расписание из Битрикс24 на день — запрос в Б24 без общей блокировки базы
+                return self.send_json(app.calendar(me, is_mgr, q))
 
             with app.lock:
                 if path == "/api/bootstrap":
