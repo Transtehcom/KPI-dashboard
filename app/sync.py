@@ -102,6 +102,8 @@ def run(con, config, force_demo=False):
                     field = config.get("bitrix24", {}).get("fields", {}).get("deal_order_1c")
                     sales_ds = onec_cfg.get("datasets", {}).get("sales", {})
                     if field and b24 and sales_ds.get("source") == "sales_by_lead":
+                        field = b24.resolve_field("crm.deal.fields", field, "№ заказа клиента 1С")
+                    if field and b24 and sales_ds.get("source") == "sales_by_lead":
                         # выручка по заказу клиента, указанному в сделке Б24, — ответственному за сделку
                         by_uid = {int(e["b24_user_id"]): e["onec_manager"] for e in emps
                                   if e.get("b24_user_id") and e.get("onec_manager")}

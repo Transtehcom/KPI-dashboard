@@ -355,7 +355,8 @@ class Bitrix24:
 
         # компании: активные клиенты с выявленной потребностью и стратегией
         self.log("Б24: компании")
-        cf = [self.f.get("company_need"), self.f.get("company_strategy")]
+        cf = [self.resolve_field("crm.company.fields", self.f.get("company_need"), "Потребность выявлена (да/нет)"),
+              self.resolve_field("crm.company.fields", self.f.get("company_strategy"), "Стратегия")]
         if all(cf):
             comps = self.list_all("crm.company.list", {"filter": {"ASSIGNED_BY_ID": uids},
                                                        "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "DATE_MODIFY"] + cf})
@@ -449,6 +450,19 @@ class Bitrix24:
                 "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
+
+    def resolve_field(self, method, code, label):
+        """Код пользовательского поля: code из настроек, а если такого поля больше нет (поле пересоздали —
+        Б24 даёт новый код) — поле с названием label. Без этого фильтр по несуществующему полю Б24 молча игнорирует."""
+        fields = self.call(method).get("result") or {}
+        if not code or code in fields:
+            return code
+        want = label.strip().lower()
+        found = next((k for k, f in fields.items() if k.startswith("UF_") and want in
+                      {str(f.get(x) or "").strip().lower() for x in ("formLabel", "listLabel", "title")}), None)
+        self.log(f"Б24: поля {code} нет" + (f", используется «{label}» ({found}) — обновите код в config.json" if found
+                                            else f", поле «{label}» не найдено"))
+        return found
 
     def _enum_yes(self, method, fields):
         """Для полей-списков: какие значения означают «да» ({поле: {ID вариантов}}). Остальные поля сюда не попадают."""
