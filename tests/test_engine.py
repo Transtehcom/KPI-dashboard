@@ -85,7 +85,7 @@ class EngineTest(unittest.TestCase):
                                         call(4, "tender", "2026-09-10", lpr=0), call(5, "tender", "2026-09-11", lpr=1)])
         pm = self.calc("pm", "operational_activity", "2026-09")["components"][0]
         self.assertEqual(pm["fact"], 2)
-        tender = self.calc("tender", "base_development", "2026-09", calls_every_day=False)["components"][0]
+        tender = self.calc("tender", "base_development", "2026-09")["components"][0]
         self.assertEqual(tender["fact"], 1)
 
     def test_lead_calls_plain_touches_need_lpr_and_next_step(self):
@@ -94,7 +94,7 @@ class EngineTest(unittest.TestCase):
         r = self.calc("lead", "base_development", "2026-09")
         comps = {c["name"]: c["fact"] for c in r["components"]}
         self.assertEqual(comps["Результативные касания"], 1)  # только звонок с ЛПР и следующим шагом
-        calls = {x["label"]: x["value"] for x in r["extra"]}["Звонков засчитано за месяц"]
+        calls = next(c["fact"] for c in r["components"] if c["name"].startswith("Звонки от 2 мин"))
         self.assertEqual(calls, 2)  # ЛПР и следующий шаг для звонков не нужны
 
     def test_calls_one_per_contact_per_day(self):
@@ -102,23 +102,18 @@ class EngineTest(unittest.TestCase):
                                         call(2, "tender", "2026-09-10", contact="CONTACT:7"),
                                         call(3, "tender", "2026-09-11", contact="CONTACT:7"),
                                         call(4, "tender", "2026-09-10", contact="CONTACT:8")])
-        r = self.calc("tender", "base_development", "2026-09", calls_every_day=False)
+        r = self.calc("tender", "base_development", "2026-09")
         self.assertEqual(r["components"][0]["fact"], 3)  # повторный звонок тому же контакту в тот же день не в счёт
 
-    def test_calls_norm_every_working_day(self):
+    def test_calls_norm_is_monthly_not_every_day(self):
         sup = next(e for e in CONFIG["employees"] if e["login"] == "tender")
         self.addCleanup(sup.pop, "absences", None)
-        sup["absences"] = [{"from": "2026-09-21", "to": "2026-09-30"}]
-        days = ["2026-09-01", "2026-09-02", "2026-09-03"]
-        insert(self.con, "activities", [call(f"{d}{k}", "tender", d) for d in days for k in range(3)] +
-               [call(f"x{k}", "tender", "2026-09-04") for k in range(2)] +  # 2 звонка — норма дня не выполнена
-               [call(f"s{k}", "tender", "2026-09-05") for k in range(5)])   # суббота — не рабочий день
-        r = self.calc("tender", "base_development", "2026-09")
-        c = r["components"][0]
-        self.assertEqual(c["fact"], 3)
-        self.assertEqual(c["target"], 14)  # 22 рабочих дня минус 8 дней отсутствия
-        short = {x["label"]: x["value"] for x in r["extra"]}["Дни без нормы"]
-        self.assertTrue(short.startswith("04.09 — 2"))
+        sup["absences"] = [{"from": "2026-09-21", "to": "2026-09-30", "kind": "vacation"}]
+        # 42 звонка за 2 дня: в остальные дни звонков нет, но месячная норма 3 × 14 раб. дн. выполнена
+        insert(self.con, "activities", [call(f"{d}{k}", "tender", d) for d in ("2026-09-01", "2026-09-02") for k in range(21)])
+        c = self.calc("tender", "base_development", "2026-09")["components"][0]
+        self.assertEqual((c["fact"], c["target"]), (42, 42))  # 22 рабочих дня минус 8 дней отпуска
+        self.assertEqual(c["pct"], 1.0)
 
     def test_pm_calls_target_is_per_working_day(self):
         comp = self.calc("pm", "operational_activity", "2026-01")["components"][0]
@@ -126,13 +121,20 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(comp["target"], 15 * wd)
         self.assertLess(comp["target"], 320)
 
-    def test_truancy_does_not_excuse_from_daily_norm(self):
+    def test_pm_norms_exclude_vacation_days(self):
+        pm = next(e for e in CONFIG["employees"] if e["login"] == "pm")
+        self.addCleanup(pm.pop, "absences", None)
+        pm["absences"] = [{"from": "2026-09-21", "to": "2026-09-30", "kind": "vacation"}]
+        calls, kp = self.calc("pm", "operational_activity", "2026-09")["components"][:2]
+        self.assertEqual((calls["target"], kp["target"]), (15 * 14, 15 * 14))
+
+    def test_truancy_does_not_reduce_monthly_norm(self):
         emp = next(e for e in CONFIG["employees"] if e["login"] == "tender")
         self.addCleanup(emp.pop, "absences", None)
         emp["absences"] = [{"from": "2026-09-21", "to": "2026-09-30", "kind": "vacation"},
                            {"from": "2026-09-01", "to": "2026-09-02", "kind": "truancy"}]
         c = self.calc("tender", "base_development", "2026-09")["components"][0]
-        self.assertEqual(c["target"], 14)  # отпуск (8 дней) вычтен, прогул (2 дня) — нет
+        self.assertEqual(c["target"], 3 * 14)  # отпуск (8 дней) вычтен, прогул (2 дня) — нет
         r = self.engine.compute("tender", "2026-09")
         self.assertEqual((r["absence"]["days"], r["absence"]["truancy_days"]), (8, 2))
         self.assertTrue(r["absence"]["periods"][0].startswith("Отпуск 21.09"))

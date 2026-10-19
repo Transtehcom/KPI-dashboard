@@ -208,32 +208,19 @@ class Engine:
             t = p["touches"].get(ctx["month"], p["touches"]["default"])
             touches = len(result_calls) + len([m for m in meetings if m["is_lpr"]])
             comps.append(comp("Результативные касания", touches, t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
-        if "result_calls_per_day" in p and p.get("calls_every_day"):
-            # норма — не меньше N звонков в каждый рабочий день (дни отсутствия не в счёт)
+        if "result_calls_per_day" in p:
+            # норма на месяц: N звонков × рабочие дни без дней уважительного отсутствия (прогул не вычитается)
             n = p["result_calls_per_day"]
-            counted = plain_calls if p.get("calls_plain") else result_calls
-            per_day = {}
-            for r in counted:
-                per_day[r["dt"][:10]] = per_day.get(r["dt"][:10], 0) + 1
-            month_days = self._work_dates(e, ctx)
-            days_so_far = self._work_dates(e, ctx, upto=ctx["asof"])
-            ok_days = [d for d in days_so_far if per_day.get(d, 0) >= n]
-            what = f"звонками от {self.min_call // 60} мин, не секретарю" if p.get("calls_plain") else "результативными звонками"
-            comps.append(comp(f"Рабочие дни с {n}+ {what}", len(ok_days), len(month_days), "раб. дн", source=SRC_B24,
-                              pace=len(days_so_far) if ctx["in_progress"] else None))
-            extra.append({"label": "Звонков засчитано за месяц", "value": len(counted)})
-            short = [f"{d[8:10]}.{d[5:7]} — {per_day.get(d, 0)}" for d in days_so_far
-                     if per_day.get(d, 0) < n and not (ctx["in_progress"] and d == ctx["asof"].isoformat())]  # сегодня ещё не кончилось
-            if short:
-                extra.append({"label": "Дни без нормы", "value": ", ".join(short)})
-        elif "result_calls_per_day" in p:
-            t = p["result_calls_per_day"] * ctx["wd"]
+            days, so_far = len(self._work_dates(e, ctx)), len(self._work_dates(e, ctx, upto=ctx["asof"]))
+            t = n * days
+            away = ctx["wd"] - days
+            basis = f"{n} в день × {days} раб. дн." + (f", без {away} дн. отсутствия" if away else "")
             if p.get("calls_plain"):  # звонок: от 2 минут, не секретарю; ЛПР и следующий шаг — уже для касаний
-                comps.append(comp(f"Звонки от {self.min_call // 60} мин, не секретарю ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",
-                                  len(plain_calls), t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
+                name, counted = f"Звонки от {self.min_call // 60} мин, не секретарю", plain_calls
             else:
-                comps.append(comp(f"Результативные звонки ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)",
-                                  len(result_calls), t, "шт", source=SRC_B24, pace=self._pace(ctx, t)))
+                name, counted = "Результативные звонки", result_calls
+            comps.append(comp(f"{name} ({basis})", len(counted), t, "шт", source=SRC_B24,
+                              pace=n * so_far if ctx["in_progress"] else None))
         if "meetings_min" in p:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                               pace=self._pace(ctx, p["meetings_min"])))
@@ -438,15 +425,16 @@ class Engine:
         emp = e["login"]
         first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
         result_calls, call_funnel, _ = self._result_calls(emp, ctx, p.get("require_lpr", False))
+        wd = len(self._work_dates(e, ctx))  # рабочие дни месяца без дней уважительного отсутствия
         if "result_calls_per_day" in p:
-            calls_target = p["result_calls_per_day"] * ctx["wd"]
-            calls_name = f"Результативные исходящие звонки ({p['result_calls_per_day']} в день × {ctx['wd']} раб. дн.)"
+            calls_target = p["result_calls_per_day"] * wd
+            calls_name = f"Результативные исходящие звонки ({p['result_calls_per_day']} в день × {wd} раб. дн.)"
         else:
             calls_target = p["result_calls_month"]
             calls_name = "Результативные исходящие звонки"
 
         kp_all = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=?", emp, first, last)
-        kp_target = p["kp_per_day"] * ctx["wd"]
+        kp_target = p["kp_per_day"] * wd
         extra = []
         if p.get("kp_confirmation", "b24") == "b24":
             # регламент: КП загружено в 1С, а скан исходящего письма прикреплён к карточке сделки в Б24
@@ -455,14 +443,14 @@ class Engine:
             # письма берутся из журнала исходящих (Google-таблица), если он подключён, иначе из сделок Б24
             sheet = bool(self.config.get("letters_sheet", {}).get("url"))
             where, src = ("в журнале исходящих", "журнал исходящих писем") if sheet else ("в сделке Б24", SRC_B24)
-            kp_comp = comp(f"КП в 1С, подтверждённые письмом {where} ({p['kp_per_day']} в день × {ctx['wd']} раб. дн.)",
+            kp_comp = comp(f"КП в 1С, подтверждённые письмом {where} ({p['kp_per_day']} в день × {wd} раб. дн.)",
                            kp_fact, kp_target, "шт", source=f"{SRC_1C} + {src}", pace=self._pace(ctx, kp_target))
             extra += [{"label": "КП загружено в 1С", "value": len(kp_all)},
                       {"label": "Исходящих писем в журнале" if sheet else "Исходящих писем с КП и вложением в сделках Б24",
                        "value": len(letters), "hint": "засчитывается меньшее из двух чисел"}]
         else:
             kp_ok = [k for k in kp_all if k["confirmed"]]
-            kp_comp = comp(f"КП в 1С со сканом письма ({p['kp_per_day']} в день × {ctx['wd']} раб. дн.)", len(kp_ok),
+            kp_comp = comp(f"КП в 1С со сканом письма ({p['kp_per_day']} в день × {wd} раб. дн.)", len(kp_ok),
                            kp_target, "шт", source=SRC_1C, pace=self._pace(ctx, kp_target))
             extra.append({"label": "КП без подтверждения отправки", "value": len(kp_all) - len(kp_ok)})
 
