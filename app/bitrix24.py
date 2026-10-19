@@ -367,36 +367,22 @@ class Bitrix24:
         fc = self.cfg.get("deal_failures") or {}
         if fc.get("stages"):
             self.log("Б24: проваленные сделки")
-            # кому засчитать провал: поле «Тендерный специалист» в сделке (если есть), иначе ответственный
-            field = fc.get("employee_field") or self._field_by_label("crm.deal.fields", fc.get("employee_field_label") or "Тендерный специалист")
-            flt = {"STAGE_ID": fc["stages"]}
-            if not field:
-                flt["ASSIGNED_BY_ID"] = uids
+            flt = {"STAGE_ID": fc["stages"], "ASSIGNED_BY_ID": uids}
             if fc.get("category_id") is not None:
                 flt["CATEGORY_ID"] = fc["category_id"]
             deals = self.list_all("crm.deal.list", {"filter": flt, "select": [
-                "ID", "TITLE", "ASSIGNED_BY_ID", "STAGE_ID", "MOVED_TIME", "CLOSEDATE", "DATE_MODIFY", "COMPANY_ID"]
-                + ([field] if field else [])})
+                "ID", "TITLE", "ASSIGNED_BY_ID", "STAGE_ID", "MOVED_TIME", "CLOSEDATE", "DATE_MODIFY", "COMPANY_ID"]})
             companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
             names = {s["STATUS_ID"]: s["NAME"] for s in self.list_all("crm.status.list", {"filter": {
                 "ENTITY_ID": f"DEAL_STAGE_{fc['category_id']}" if fc.get("category_id") else "DEAL_STAGE"}})}
-
-            def who(d):
-                picked = d.get(field) if field else None
-                for uid in (picked if isinstance(picked, list) else [picked]):
-                    if uid not in (None, "", False, 0, "0") and emp(uid):
-                        return emp(uid)
-                return emp(d.get("ASSIGNED_BY_ID"))
             out["deal_failures"] = [{
-                "id": "fail" + str(d["ID"]), "emp": who(d), "title": d.get("TITLE"),
+                "id": "fail" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
                 "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
                 # дата провала — переход на стадию (MOVED_TIME)
                 "dt": (self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_MODIFY")) or "")[:10] or None,
                 "stage": names.get(d.get("STAGE_ID"), d.get("STAGE_ID")),
                 "reason": fc.get("reason") or names.get(d.get("STAGE_ID"))}
-                for d in deals if who(d)]
-            self.log(f"Б24: проваленных сделок — {len(out['deal_failures'])}"
-                     + ("" if field else " (поле «Тендерный специалист» в сделках не найдено — по ответственному)"))
+                for d in deals if emp(d.get("ASSIGNED_BY_ID"))]
 
         # задачи
         self.log("Б24: задачи")
@@ -463,15 +449,6 @@ class Bitrix24:
                 "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
-
-    def _field_by_label(self, method, label):
-        """Код пользовательского поля по его названию (без учёта регистра), например «Тендерный специалист»."""
-        want = label.strip().lower()
-        for code, f in (self.call(method).get("result") or {}).items():
-            names = {str(f.get(k) or "").strip().lower() for k in ("formLabel", "listLabel", "title")}
-            if code.startswith("UF_") and want in names:
-                return code
-        return None
 
     def _enum_yes(self, method, fields):
         """Для полей-списков: какие значения означают «да» ({поле: {ID вариантов}}). Остальные поля сюда не попадают."""
