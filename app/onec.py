@@ -22,8 +22,9 @@ DATASETS = {
     "penalties": ("penalties", "dt"),
     "supplier_orders": ("supplier_orders", "dt"),
     "supply_funnel": ("supply_funnel", "dt"),
+    "tenders_1c": ("tenders_1c", "dt"),
 }
-BOOL_FIELDS = {"signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
+BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified"}
 NUM_FIELDS = {"revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
 DATE_FIELDS = {"dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
@@ -127,6 +128,12 @@ class OneC:
         if src == "supply_request_funnel":  # заявки в отдел снабжения → заказы клиентов (УТ 11, ТТК)
             from .onec_supply import fetch_supply_funnel
             return fetch_supply_funnel(self, ds, date_from, date_to)
+        if src == "kp_orders":  # КП с признаком «есть заказ клиента» (Отчёт ОП, ТТК)
+            from .onec_report import fetch_kp
+            return fetch_kp(self, ds, date_from, date_to)
+        if src == "tender_status":  # тендеры с ведущим менеджером и статусом (Отчёт ОП, ТТК)
+            from .onec_report import fetch_tenders
+            return fetch_tenders(self, ds, date_from, date_to)
         if src == "csv":
             path = ds["file"] if os.path.isabs(ds["file"]) else os.path.join(ROOT, ds["file"])
             with open(path, encoding=ds.get("encoding", "utf-8-sig"), newline="") as f:

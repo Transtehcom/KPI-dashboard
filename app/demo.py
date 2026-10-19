@@ -106,6 +106,11 @@ def generate(con, config):
                         "submitted_date": sub.isoformat() if sub and sub <= t else None, "result": result,
                         "result_date": res_d.isoformat() if res_d else None, "price": price, "planned_cost": planned,
                         "actual_cost": round(planned * rnd.uniform(0.97, 1.03), -3) if result == "won" else None})
+                    # тот же тендер в 1С: статус для конверсии, как в «Отчёте ОП»
+                    status = {"won": "Выиграно", "lost": "Проиграно"}.get(result) or ("Действует" if in_work else "Отменено")
+                    data["tenders_1c"].append({"id": nid("t1"), "emp": emp, "dt": d.isoformat(), "doc": f"ТН-{rnd.randint(100, 999)}",
+                                               "client": rnd.choice(CLIENTS), "title": "Поставка оборудования",
+                                               "status": status, "amount": price})
                 # КП вне тендера (1С)
                 if pos == "tender":
                     for _ in range(int(rnd.gauss(108 * kk, 8) * len(days) / 21)):
@@ -160,7 +165,7 @@ def generate(con, config):
                         client = rnd.choice(CLIENTS)
                         data["kp"].append({"id": nid("k"), "emp": emp, "dt": d.isoformat(), "client": client,
                                            "amount": round(rnd.uniform(30, 2000) * 1e3, -3), "out_of_tender": 0,
-                                           "confirmed": confirmed, "source": "1С"})
+                                           "confirmed": confirmed, "source": "1С", "ordered": int(rnd.random() < 0.08 * kk)})
                         if confirmed:
                             data["kp_letters"].append({"id": nid("e"), "emp": emp, "dt": _ts(d, rnd), "deal": nid("deal"),
                                                        "subject": f"КП для {client}"})

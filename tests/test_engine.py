@@ -263,6 +263,23 @@ class EngineTest(unittest.TestCase):
         self.assertEqual({order_key(x) for x in ("00ЦБ-000067", "ЦБ-67", "67", " 00ЦБ-000067 ")}, {"67"})
         self.assertIsNone(order_key("без номера"))
 
+    def test_tender_conversion_from_1c_report(self):
+        statuses = ["Действует"] * 6 + ["Выиграно"] + ["Проиграно"] * 9 + ["Отменено"] * 5 + ["Черновик"]
+        insert(self.con, "tenders_1c", [{"id": f"t{i}", "emp": "tender", "dt": "2026-09-10", "status": s}
+                                        for i, s in enumerate(statuses)])
+        r = self.calc("tender", "conversion_tender", "2026-09")
+        self.assertAlmostEqual(r["components"][0]["fact"], 1 / 16)  # как у Пепеляевой в «Отчёте ОП»: 6,25%
+        extra = {x["label"]: x["value"] for x in r["extra"]}
+        self.assertEqual((extra["Валидные заявки"], extra["Действует"]), (16, 6))
+        self.assertAlmostEqual(extra["Win-rate"], 0.1)
+        self.assertAlmostEqual(self.calc("tender", "conversion_tender", "2026-09", basis="decided")["components"][0]["fact"], 0.1)
+
+    def test_pm_conversion_kp_to_customer_order(self):
+        insert(self.con, "kp", [{"id": f"k{i}", "emp": "pm", "dt": "2026-09-10", "ordered": int(i < 2)} for i in range(61)])
+        r = self.calc("pm", "conversion_sales", "2026-09")
+        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 61)  # 3,28%, как в «Отчёте ОП»
+        self.assertEqual(r["components"][0]["target"], 0.07)
+
     def test_company_need_and_strategy_text_fields(self):
         from app.bitrix24 import Bitrix24
         yes = ["Да", " да ", "ДА.", "да, проект модернизации", "Y", "1", True]

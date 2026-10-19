@@ -5,6 +5,7 @@ from .common import (business_days_between, month_add, month_bounds, parse_date,
                      quarter_months, today, weeks_of_month, working_days)
 from .employees import ABSENCE_KINDS
 
+TENDER_VALID = ("Действует", "Выиграно", "Проиграно")  # «валидные заявки» в «Отчёте ОП» 1С
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
 SRC_HAND = "Ввод руководителя"  # записи, которые руководитель вносит в дашборде (штрафы)
@@ -170,31 +171,36 @@ class Engine:
 
     # ------------------------------------------------------------------ calculators
     def calc_conversion_tender(self, e, ctx, p):
-        # в расчёт — торги с итогом, дошедшие хотя бы до рассмотрения заявки заказчиком (tender_stages.price_review)
-        rows = self.q("SELECT * FROM tenders WHERE emp=? AND price_review=1 AND result IN ('won','lost')", e["login"])
+        """Как раздел «Тендерный отдел» отчёта 1С «Отчёт ОП»: тендеры ведущего менеджера по дате документа.
+        Валидные — статусы Действует, Выиграно, Проиграно. basis: valid — выигранные / валидные
+        («Конверсия от валидных»), decided — выигранные / (выигранные + проигранные) («Win-rate»)."""
+        rows = self.q("SELECT * FROM tenders_1c WHERE emp=? ORDER BY dt", e["login"])
+        known = bool(self.q("SELECT 1 FROM tenders_1c LIMIT 1"))
 
         def conv(first, last):
-            sel = [r for r in rows if _in(r["result_date"], first, last)]
-            won = [r for r in sel if r["result"] == "won"]
-            return (len(won) / len(sel) if sel else None), sel, won
+            sel = [r for r in rows if _in(r["dt"], first, last) and r["status"] in TENDER_VALID]
+            won = [r for r in sel if r["status"] == "Выиграно"]
+            lost = [r for r in sel if r["status"] == "Проиграно"]
+            by_valid = len(won) / len(sel) if sel else None
+            win_rate = len(won) / (len(won) + len(lost)) if won or lost else None
+            return (win_rate if p.get("basis") == "decided" else by_valid), sel, won, lost, by_valid, win_rate
 
-        val, sel, won = conv(ctx["first"], ctx["last"])
+        val, sel, won, lost, by_valid, win_rate = conv(ctx["first"], ctx["last"])
         qm = quarter_months(ctx["month"])
-        qv, qsel, qwon = conv(month_bounds(qm[0])[0], month_bounds(qm[-1])[1])
-        all_m = self.q("SELECT COUNT(*) c FROM tenders WHERE emp=? AND created>=? AND created<=?",
-                       e["login"], ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")[0]["c"]
+        qv, qsel, qwon, *_ = conv(month_bounds(qm[0])[0], month_bounds(qm[-1])[1])
+        name = "Win-rate: выигранные / (выигранные + проигранные)" if p.get("basis") == "decided"             else "Конверсия от валидных: выигранные / валидные заявки"
         return {
-            "components": [comp("Конверсия в победу", val, p["target"], "%", source=SRC_B24)],
+            "components": [comp(name, val if known else None, p["target"], "%", source=SRC_1C)],
             "extra": [
-                {"label": "Торгов с итогом, дошедших до рассмотрения заявки", "value": len(sel)},
-                {"label": "Выиграно", "value": len(won)},
-                {"label": "Конверсия за квартал", "value": qv, "fmt": "pct",
-                 "hint": f"{len(qwon)} из {len(qsel)}"},
-                {"label": "Новых торгов в воронке за месяц", "value": all_m},
+                {"label": "Валидные заявки", "value": len(sel), "hint": "статусы Действует, Выиграно, Проиграно"},
+                {"label": "Действует", "value": len(sel) - len(won) - len(lost)},
+                {"label": "Выиграно", "value": len(won)}, {"label": "Проиграно", "value": len(lost)},
+                {"label": "Конверсия от валидных", "value": by_valid, "fmt": "pct"},
+                {"label": "Win-rate", "value": win_rate, "fmt": "pct"},
+                {"label": "Конверсия за квартал", "value": qv, "fmt": "pct", "hint": f"{len(qwon)} из {len(qsel)}"},
             ],
-            "details": {"columns": ["Торги", "Заказчик", "Итог", "Дата итога", "Цена, ₽"],
-                        "rows": [[r["title"], r["client"], "Победа" if r["result"] == "won" else "Проигрыш",
-                                  r["result_date"], r["price"]] for r in sel]},
+            "details": {"columns": ["Тендер", "Заказчик", "Лот", "Дата", "Статус", "Сумма, ₽"],
+                        "rows": [[r["doc"], r["client"], r["title"], r["dt"], r["status"], r["amount"]] for r in sel]},
             "funnel": None,
         }
 
@@ -330,11 +336,14 @@ class Engine:
         }
 
     def calc_conversion_sales(self, e, ctx, p):
+        """Как раздел «Отдел продаж» отчёта 1С «Отчёт ОП»: КП менеджера за месяц, по которым создан заказ клиента
+        («КП → Заказ»), делённые на все его КП за месяц."""
         emp = e["login"]
-        rows = self.q("SELECT * FROM deals WHERE emp=? AND result IN ('won','lost') AND closed_date>=? AND closed_date<=?",
+        rows = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt",
                       emp, ctx["first"].isoformat(), ctx["last"].isoformat())
-        won = [r for r in rows if r["result"] == "won"]
-        val = len(won) / len(rows) if rows else None
+        known = bool(self.q("SELECT 1 FROM kp WHERE ordered IS NOT NULL LIMIT 1"))
+        won = [r for r in rows if r["ordered"]]
+        val = len(won) / len(rows) if rows and known else None
         base = self.q("SELECT value FROM baselines WHERE emp=? AND metric='conversion_last_year'", emp)
         if base and base[0]["value"]:
             target = base[0]["value"] * (1 + p.get("growth_vs_last_year", 0.1))
@@ -343,12 +352,11 @@ class Engine:
             target = p["target"]
             rule = "Базовый уровень прошлого года не задан — используется целевая конверсия из регламента"
         return {
-            "components": [comp("Конверсия сделок в успех", val, target, "%", source=SRC_B24)],
-            "extra": [{"label": "Закрыто сделок", "value": len(rows)}, {"label": "Успешных", "value": len(won)},
+            "components": [comp("Конверсия КП в заказ клиента", val, target, "%", source=SRC_1C)],
+            "extra": [{"label": "КП за месяц", "value": len(rows)}, {"label": "КП → заказ клиента", "value": len(won)},
                       {"label": "Как задана цель", "value": rule}],
-            "details": {"columns": ["Сделка", "Клиент", "Итог", "Закрыта", "Сумма, ₽"],
-                        "rows": [[r["title"], r["client"], "Успех" if r["result"] == "won" else "Провал", r["closed_date"], r["amount"]]
-                                 for r in rows]},
+            "details": {"columns": ["КП", "Клиент", "Дата", "Сумма, ₽", "Заказ клиента"],
+                        "rows": [[r["doc"], r["client"], r["dt"], r["amount"], "есть" if r["ordered"] else "—"] for r in rows]},
         }
 
     def calc_gross_profit(self, e, ctx, p):

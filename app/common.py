@@ -81,7 +81,11 @@ CREATE TABLE IF NOT EXISTS clients_monthly (
 
 CREATE TABLE IF NOT EXISTS kp (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, client TEXT, amount REAL,
-  out_of_tender INTEGER, confirmed INTEGER, source TEXT);
+  out_of_tender INTEGER, confirmed INTEGER, source TEXT, doc TEXT, ordered INTEGER);
+
+-- тендеры из 1С (ТТК_Тендер): ведущий менеджер и статус — для конверсии тендерного отдела, как в «Отчёте ОП»
+CREATE TABLE IF NOT EXISTS tenders_1c (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, title TEXT, status TEXT, amount REAL);
 
 -- исходящие письма с КП и вложением в карточках сделок Б24 (подтверждение отправки КП)
 CREATE TABLE IF NOT EXISTS kp_letters (
@@ -154,13 +158,13 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
-               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel"]
+               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "tenders_1c"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
-                 "supply_funnel": [("doc", "TEXT")]}
+                 "supply_funnel": [("doc", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")]}
 
 
 def migrate(con):
