@@ -263,6 +263,15 @@ class EngineTest(unittest.TestCase):
         self.assertEqual({order_key(x) for x in ("00ЦБ-000067", "ЦБ-67", "67", " 00ЦБ-000067 ")}, {"67"})
         self.assertIsNone(order_key("без номера"))
 
+    def test_company_need_and_strategy_text_fields(self):
+        from app.bitrix24 import Bitrix24
+        yes = ["Да", " да ", "ДА.", "да, проект модернизации", "Y", "1", True]
+        no = ["Нет", "нет", "не выявлена", "", None, "N", "-", "пока нет"]
+        self.assertEqual([Bitrix24.yes(v) for v in yes], [1] * len(yes))
+        self.assertEqual([Bitrix24.yes(v) for v in no], [0] * len(no))
+        self.assertEqual([Bitrix24.filled(v) for v in ["Ежемесячные КП по БПЛА", "звонок раз в неделю"]], [1, 1])
+        self.assertEqual([Bitrix24.filled(v) for v in ["", None, "-", " — ", "нет", "Нет."]], [0] * 6)
+
     def test_lead_qualified_once_and_lost_leads_skipped(self):
         full = {"need": 1, "budget": 1, "lpr": 1, "solvency": 1, "next_step": 1}
         rows = [{"id": "l1", "emp": "pm", **full, "lost": False}, {"id": "l2", "emp": "pm", **full, "lost": True},

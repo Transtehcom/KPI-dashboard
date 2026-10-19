@@ -80,6 +80,20 @@ class Bitrix24:
         return 0 if s in ("", "n", "0", "нет", "false", "none") else 1
 
     @staticmethod
+    def yes(v):
+        """«Да» в поле: галочка Да/Нет или строка «да/нет» (засчитывается только ответ, начинающийся с «да»)."""
+        if isinstance(v, bool) or v in (None, "", "Y", "N", 0, 1, "0", "1"):
+            return Bitrix24.flag(v)
+        s = re.sub(r"[^\wё+]", "", str(v).strip().lower())
+        return int(s.startswith("да") or s in ("yes", "y", "+", "выявлена"))
+
+    @staticmethod
+    def filled(v):
+        """Текст по существу: пустое поле, прочерк или «нет» не считаются заполнением (поле может быть обязательным)."""
+        s = str(v or "").strip().lower().strip(" .-—–_")
+        return int(bool(s) and s not in ("нет", "no", "0", "не знаю"))
+
+    @staticmethod
     def num(v):
         """Число из поля Б24 (поле типа «Деньги» приходит как «100000|RUB»)."""
         if v in (None, "", False):
@@ -346,7 +360,7 @@ class Bitrix24:
             comps = self.list_all("crm.company.list", {"filter": {"ASSIGNED_BY_ID": uids},
                                                        "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "DATE_MODIFY"] + cf})
             out["clients"] = [{"id": "co" + str(c["ID"]), "emp": emp(c["ASSIGNED_BY_ID"]), "name": c.get("TITLE"),
-                               "need": self.flag(c.get(cf[0])), "strategy": self.flag(c.get(cf[1])),
+                               "need": self.yes(c.get(cf[0])), "strategy": self.filled(c.get(cf[1])),
                                "updated": str(c.get("DATE_MODIFY"))[:19]} for c in comps if emp(c.get("ASSIGNED_BY_ID"))]
 
         # задачи
