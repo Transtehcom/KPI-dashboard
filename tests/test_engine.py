@@ -91,11 +91,22 @@ class EngineTest(unittest.TestCase):
     def test_lead_calls_plain_touches_need_lpr_and_next_step(self):
         insert(self.con, "activities", [call(1, "lead", "2026-09-10", lpr=0, next_step=0), call(2, "lead", "2026-09-11"),
                                         call(3, "lead", "2026-09-11", secretary=1), call(4, "lead", "2026-09-12", duration=60)])
-        r = self.calc("lead", "base_development", "2026-09")
+        r = self.calc("lead", "base_development", "2026-09", touches={"default": 70}, result_calls_per_day=3,
+                      calls_plain=True)  # прежние нормы ведущего (с 2026-10-19 не действуют, но расчёт остаётся)
         comps = {c["name"]: c["fact"] for c in r["components"]}
         self.assertEqual(comps["Результативные касания"], 1)  # только звонок с ЛПР и следующим шагом
         calls = next(c["fact"] for c in r["components"] if c["name"].startswith("Звонки от 2 мин"))
         self.assertEqual(calls, 2)  # ЛПР и следующий шаг для звонков не нужны
+
+    def test_lead_base_development_is_only_active_clients(self):
+        insert(self.con, "activities", [call(1, "lead", "2026-10-05")])
+        insert(self.con, "clients", [{"id": f"c{i}", "emp": "lead", "name": f"Клиент {i}", "need": 1, "strategy": int(i < 7)}
+                                     for i in range(9)])
+        r = self.calc("lead", "base_development", "2026-10")
+        self.assertEqual([(c["name"], c["fact"], c["target"]) for c in r["components"]],
+                         [("Активные клиенты с потребностью и стратегией", 7, 7)])
+        self.assertEqual(len(r["details"]["rows"]), 7)
+        self.assertIsNone(r["funnel"])
 
     def test_calls_one_per_contact_per_day(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10", contact="CONTACT:7"),

@@ -259,6 +259,13 @@ class Engine:
                               source=SRC_B24))
             extra.append({"label": "Активные клиенты", "value": ", ".join(r["name"] for r in rows[:12]) or "—",
                           "hint": hint})
+            if not ("touches" in p or "result_calls_per_day" in p):  # KPI только по клиентам: показать, из чего он
+                allc = self.q("SELECT need, strategy FROM clients WHERE emp=?", emp)
+                extra += [{"label": "Компаний, где ответственный", "value": len(allc), "hint": "сейчас в CRM"},
+                          {"label": "С выявленной потребностью", "value": sum(1 for c in allc if c["need"])},
+                          {"label": "Со стратегией работы", "value": sum(1 for c in allc if c["strategy"])}]
+                return {"components": comps, "extra": extra, "funnel": None,
+                        "details": {"columns": ["Активный клиент"], "rows": [[r["name"]] for r in rows]}}
         return {
             "components": comps, "extra": extra,
             "funnel": {"title": "Как отбираются результативные звонки", "steps": call_funnel},
