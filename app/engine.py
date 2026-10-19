@@ -275,14 +275,15 @@ class Engine:
         }
 
     def calc_tender_operations(self, e, ctx, p):
-        """Тендеры, проигранные по ошибке тендерного отдела (bitrix24.tender_stages.rejected), с итогом в месяце."""
-        rows = self.q("SELECT * FROM tenders WHERE emp=? AND rejected=1 AND result_date>=? AND result_date<=?",
+        """Сделки сотрудника, проваленные в месяце в воронке «Реализация» (стадия «Сделка провалена» —
+        причина «Сделка провалена при подготовке предложения»; bitrix24.deal_failures). Норма — 0."""
+        rows = self.q("SELECT * FROM deal_failures WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt",
                       e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
         return {
-            "components": [comp("Отклонённые тендеры (ошибка тендерного отдела)", len(rows), p.get("rejected_max", 0),
+            "components": [comp("Сделки, проваленные при подготовке предложения", len(rows), p.get("failures_max", 0),
                                 "шт", op="<=", source=SRC_B24)],
-            "details": {"columns": ["Торги", "Заказчик", "Дата итога", "Цена, ₽"],
-                        "rows": [[r["title"], r["client"], r["result_date"], r["price"]] for r in rows]},
+            "details": {"columns": ["Сделка", "Клиент", "Дата провала", "Причина"],
+                        "rows": [[r["title"], r["client"], r["dt"], r["reason"]] for r in rows]},
         }
 
     def calc_exec_discipline(self, e, ctx, p):

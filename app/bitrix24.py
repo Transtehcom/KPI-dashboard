@@ -363,6 +363,27 @@ class Bitrix24:
                                "need": self.yes(c.get(cf[0])), "strategy": self.filled(c.get(cf[1])),
                                "updated": str(c.get("DATE_MODIFY"))[:19]} for c in comps if emp(c.get("ASSIGNED_BY_ID"))]
 
+        # проваленные сделки для KPI 3 тендерного отдела: воронка «Реализация», стадия «Сделка провалена»
+        fc = self.cfg.get("deal_failures") or {}
+        if fc.get("stages"):
+            self.log("Б24: проваленные сделки")
+            flt = {"STAGE_ID": fc["stages"], "ASSIGNED_BY_ID": uids}
+            if fc.get("category_id") is not None:
+                flt["CATEGORY_ID"] = fc["category_id"]
+            deals = self.list_all("crm.deal.list", {"filter": flt, "select": [
+                "ID", "TITLE", "ASSIGNED_BY_ID", "STAGE_ID", "MOVED_TIME", "CLOSEDATE", "DATE_MODIFY", "COMPANY_ID"]})
+            companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
+            names = {s["STATUS_ID"]: s["NAME"] for s in self.list_all("crm.status.list", {"filter": {
+                "ENTITY_ID": f"DEAL_STAGE_{fc['category_id']}" if fc.get("category_id") else "DEAL_STAGE"}})}
+            out["deal_failures"] = [{
+                "id": "fail" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                # дата провала — переход на стадию (MOVED_TIME)
+                "dt": (self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_MODIFY")) or "")[:10] or None,
+                "stage": names.get(d.get("STAGE_ID"), d.get("STAGE_ID")),
+                "reason": fc.get("reason") or names.get(d.get("STAGE_ID"))}
+                for d in deals if emp(d.get("ASSIGNED_BY_ID"))]
+
         # задачи
         self.log("Б24: задачи")
         tasks = self.list_all("tasks.task.list", {

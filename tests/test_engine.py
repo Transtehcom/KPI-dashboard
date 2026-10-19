@@ -311,12 +311,15 @@ class EngineTest(unittest.TestCase):
         again = sync.qualify_leads(self.con, [{"id": "l1", "emp": "pm", **full, "need": 0, "lost": True}])
         self.assertEqual((again[0]["qualified_date"], again[0]["need"]), (first, 1))
 
-    def test_rejected_tenders_norm_zero(self):
+    def test_failed_realization_deals_norm_zero(self):
         self.assertEqual(self.item("tender", "tender_operations", "2026-09")["status"], "met")
-        insert(self.con, "tenders", [{"id": "t1", "emp": "tender", "title": "Т", "result": "lost", "result_date": "2026-09-10",
-                                      "rejected": 1}])
+        insert(self.con, "deal_failures", [
+            {"id": "f1", "emp": "tender", "title": "Поставка", "dt": "2026-09-10", "reason": "Сделка провалена при подготовке предложения"},
+            {"id": "f2", "emp": "tender", "title": "Другая", "dt": "2026-08-31"},   # прошлый месяц
+            {"id": "f3", "emp": "lead", "title": "Чужая", "dt": "2026-09-12"}])
         it = self.item("tender", "tender_operations", "2026-09")
         self.assertEqual((it["components"][0]["fact"], it["status"]), (1, "fail"))
+        self.assertEqual(it["details"]["rows"][0][3], "Сделка провалена при подготовке предложения")
 
     def test_team_revenue_plan_split_between_sales_and_tender_staff(self):
         # 150 млн на месяц делятся на pm, lead, tender из CONFIG; свой план руководителя важнее

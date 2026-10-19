@@ -10,7 +10,7 @@ from .letters import fetch_letters
 from .onec import DATASETS, OneC
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
-                   "leads": "qualified_date", "clients": None, "tasks": "deadline"}
+                   "leads": "qualified_date", "clients": None, "tasks": "deadline", "deal_failures": "dt"}
 
 _running = threading.Lock()
 # ход текущей синхронизации: когда началась и какой шаг выполняется (для кнопки «Обновить данные»)

@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS kp (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, client TEXT, amount REAL,
   out_of_tender INTEGER, confirmed INTEGER, source TEXT, doc TEXT, ordered INTEGER);
 
+-- проваленные сделки (воронка «Реализация», стадия «Сделка провалена») — KPI 3 тендерного отдела
+CREATE TABLE IF NOT EXISTS deal_failures (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, title TEXT, client TEXT, stage TEXT, reason TEXT);
+
 -- тендеры из 1С (ТТК_Тендер): ведущий менеджер и статус — для конверсии тендерного отдела, как в «Отчёте ОП»
 CREATE TABLE IF NOT EXISTS tenders_1c (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, title TEXT, status TEXT, amount REAL);
@@ -158,7 +162,8 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
-               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "tenders_1c"]
+               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "tenders_1c",
+               "deal_failures"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")],
