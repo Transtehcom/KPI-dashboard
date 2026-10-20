@@ -116,6 +116,11 @@ class EngineTest(unittest.TestCase):
         r = self.calc("tender", "base_development", "2026-09")
         self.assertEqual(r["components"][0]["fact"], 3)  # повторный звонок тому же контакту в тот же день не в счёт
 
+    def test_incoming_calls_do_not_count(self):
+        insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
+        r = self.calc("tender", "base_development", "2026-09")
+        self.assertEqual(r["components"][0]["fact"], 1)  # входящий звонок в KPI не идёт
+
     def test_calls_norm_is_monthly_not_every_day(self):
         sup = next(e for e in CONFIG["employees"] if e["login"] == "tender")
         self.addCleanup(sup.pop, "absences", None)

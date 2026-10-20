@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS employees (
   login TEXT PRIMARY KEY, name TEXT, department TEXT, title TEXT, position TEXT, b24_user_id INTEGER,
   onec_manager TEXT, visible INTEGER, admin INTEGER, absences TEXT, sort INTEGER);
 
+-- записи разговоров из телефонии Б24 (app/call_records.py). Не в SYNC_TABLES: синхронизация обновляет сведения
+-- о звонке, но не трогает скачанный файл. id — как у звонка в activities («call» + ID статистики),
+-- call_id — CALL_ID телефонии (для методов telephony.*), bindings — привязки дела звонка «DEAL:12,CONTACT:3»,
+-- file — путь к аудио относительно папки записей
+CREATE TABLE IF NOT EXISTS call_records (
+  id TEXT PRIMARY KEY, call_id TEXT, emp TEXT, dt TEXT, direction TEXT, duration INTEGER, phone TEXT,
+  crm_entity TEXT, client TEXT, crm_activity_id TEXT, bindings TEXT, bindings_checked TEXT,
+  record_file_id TEXT, record_url TEXT, file TEXT, file_size INTEGER, downloaded TEXT,
+  attempts INTEGER DEFAULT 0, error TEXT, purged TEXT, updated TEXT);
+CREATE INDEX IF NOT EXISTS ix_call_records ON call_records(emp, dt);
+
 CREATE TABLE IF NOT EXISTS users (
   login TEXT PRIMARY KEY, pwd_hash TEXT, salt TEXT);
 

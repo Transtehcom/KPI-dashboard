@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import re
 import time
+import urllib.parse
 import urllib.request
 
 from .common import parse_date
@@ -62,6 +63,11 @@ class Bitrix24:
                     time.sleep(2 + attempt * 2)
                     continue
                 raise B24Error(f"{method}: HTTP {e.code} {body[:300]}")
+            except OSError as e:  # таймаут SSL-рукопожатия, обрыв соединения: портал иногда отвечает не с первого раза
+                if attempt < 4:
+                    time.sleep(5 + attempt * 5)
+                    continue
+                raise B24Error(f"{method}: нет связи с порталом ({e})")
         if "error" in res:
             raise B24Error(f"{method}: {res.get('error')} {res.get('error_description', '')}")
         time.sleep(0.4)  # лимит Б24 — около 2 запросов в секунду
@@ -79,6 +85,17 @@ class Bitrix24:
             if "next" not in res:
                 return out
             start = res["next"]
+
+    def batch(self, cmds):
+        """Пакет команд по 50 за запрос: {ключ: (метод, параметры)} → ({ключ: результат}, {ключ: ошибка}).
+        Параметры — плоские (id=…), как в строке запроса."""
+        items, results, errors = list(cmds.items()), {}, {}
+        for i in range(0, len(items), 50):
+            chunk = {k: f"{m}?{urllib.parse.urlencode(p)}" for k, (m, p) in items[i:i + 50]}
+            res = self.call("batch", {"halt": 0, "cmd": chunk}).get("result", {})
+            results.update(res.get("result") or {})
+            errors.update(res.get("result_error") or {})
+        return results, errors
 
     def by_ids(self, method, ids, select):
         ids = list({int(i) for i in ids if i})
@@ -149,10 +166,10 @@ class Bitrix24:
         for a in acts:
             by_owner.setdefault((int(a["OWNER_TYPE_ID"] or 0), str(a["OWNER_ID"])), []).append(a)
 
-        # звонки (телефония)
+        # звонки (телефония): исходящие и входящие; в KPI идут только исходящие (direction = out)
         self.log("Б24: звонки")
         calls = self.list_all("voximplant.statistic.get", {
-            "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": uids, "CALL_TYPE": 1},
+            "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": uids},
             "SORT": "CALL_START_DATE", "ORDER": "ASC"})
         # к чему привязаны звонки и встречи: контакт, компания или лид
         bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set()}
@@ -211,12 +228,13 @@ class Bitrix24:
                 return (self.flag(ld.get(lead_lpr_field)) if lead_lpr_field else 0), 0, ld.get("TITLE", "")
             return 0, 0, ""
 
-        rows = []
+        rows, records = [], []
         for c in calls:
             login = emp(c.get("PORTAL_USER_ID"))
             if not login:
                 continue
             start = str(c.get("CALL_START_DATE"))[:19]
+            direction = "out" if str(c.get("CALL_TYPE")) == "1" else "in"  # 2 — входящий, 3 — с переадресацией, 4 — обратный
             is_lpr, is_secr, client = entity_info(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID"))
             owner = (OWNER_TYPES.get(c.get("CRM_ENTITY_TYPE"), 0), str(c.get("CRM_ENTITY_ID")))
             t0 = dt.datetime.fromisoformat(start)
@@ -228,12 +246,21 @@ class Bitrix24:
                 if t0 <= created <= t0 + dt.timedelta(days=1):
                     nxt = 1
                     break
-            rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": "out",
+            # с кем разговор: сущность CRM, а если звонок не привязан — номер телефона
+            contact = f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID") \
+                else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])
+            rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": direction,
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
-                         "next_step": nxt, "status": "done", "subject": "", "client": client,
-                         # с кем разговор: сущность CRM, а если звонок не привязан — номер телефона
-                         "contact": f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID")
-                         else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])})
+                         "next_step": nxt, "status": "done", "subject": "", "client": client, "contact": contact})
+            # запись разговора: копия на Диске Б24 (RECORD_FILE_ID) или ссылка на АТС (CALL_RECORD_URL)
+            if c.get("RECORD_FILE_ID") or c.get("CALL_RECORD_URL"):
+                records.append({"id": "call" + str(c["ID"]), "call_id": c.get("CALL_ID"), "emp": login, "dt": start,
+                                "direction": direction, "duration": int(c.get("CALL_DURATION") or 0),
+                                "phone": c.get("PHONE_NUMBER"), "crm_entity": contact if c.get("CRM_ENTITY_ID") else None,
+                                "client": client, "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None,
+                                "record_file_id": str(c.get("RECORD_FILE_ID") or "") or None,
+                                "record_url": c.get("CALL_RECORD_URL") or None})
+        out["call_records"] = records
         meeting_files = self._meeting_calendar_files(df)
         for a in acts:
             if not is_meeting(a, self.cfg):

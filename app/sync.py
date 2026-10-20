@@ -3,7 +3,7 @@ import datetime as dt
 import threading
 import traceback
 
-from . import demo, employees, manual
+from . import call_records, demo, employees, manual
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
@@ -129,6 +129,9 @@ def run(con, config, force_demo=False):
                 with db_lock():
                     try:
                         for src, table, rows, date_field in writes:
+                            if table == "call_records":  # записи звонков копятся, а не перезаписываются
+                                call_records.upsert(con, rows, commit=False)
+                                continue
                             if table == "leads":
                                 rows = qualify_leads(con, rows)
                             # воронки сделок и лидов — срез по всем ответственным, заменяется целиком
@@ -145,6 +148,8 @@ def run(con, config, force_demo=False):
                         traceback.print_exc()
                     else:
                         log += [f"{src} → {table}: {len(rows)}" for src, table, rows, _ in writes]
+                        if b24 and any(table == "call_records" for _, table, _, _ in writes):
+                            call_records.start_background(con, config)  # аудио — в фоне, после синхронизации
     finally:
         finished = dt.datetime.now().isoformat(timespec="seconds")
         with db_lock():
