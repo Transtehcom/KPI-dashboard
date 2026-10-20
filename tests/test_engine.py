@@ -456,5 +456,19 @@ class ProxyTest(unittest.TestCase):
         self.assertEqual(self.handler("198.51.100.7", "203.0.113.5", True).client_ip(), "198.51.100.7")
 
 
+class MeetingDetectionTest(unittest.TestCase):
+    def test_meeting_by_subject(self):
+        from app.bitrix24 import is_meeting
+        todo = lambda s: {"TYPE_ID": "6", "PROVIDER_ID": "CRM_TODO", "SUBJECT": s}
+        for s in ("Встреча с Транснефть", "Рабочая встреча с ВСМПО", "ВКС Химсталькон", "ЗВКС с заказчиком",
+                  "Видеоконференция", "Переговоры в офисе", "ООО Ромашка, визит к клиенту", "Телемост с АО X"):
+            self.assertTrue(is_meeting(todo(s)), s)
+        for s in ("Назначить встречу с ЛПР", "ООО Ромашка — согласовать ВКС", "Перенос встречи", "Позвонить клиенту",
+                  "Изумрудный город"):
+            self.assertFalse(is_meeting(todo(s)), s)
+        self.assertTrue(is_meeting({"TYPE_ID": "1", "SUBJECT": "Без темы"}))
+        self.assertFalse(is_meeting({"TYPE_ID": "4", "PROVIDER_ID": "CRM_EMAIL", "SUBJECT": "Встреча"}))
+
+
 if __name__ == "__main__":
     unittest.main()

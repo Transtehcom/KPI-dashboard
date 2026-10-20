@@ -9,6 +9,25 @@ from .common import parse_date
 
 OWNER_TYPES = {"LEAD": 1, "DEAL": 2, "CONTACT": 3, "COMPANY": 4}
 
+# встречу ставят универсальным «Делом» — узнаём её по теме: встреча, переговоры, ВКС/ЗВКС, видеоконференция, визит, выезд…
+MEETING_RE = (r"встре[чт]|переговор|\bз?вкс|видео\W?(конф|связ|звон|встреч)|конференц|\bвизит|\bвыезд|\bприезд"
+              r"|\bzoom\b|\bзум\b|телемост|\bteams\b|контур\W?толк|\bmeet\b")
+# …но не дело-напоминание «назначить/согласовать/перенести встречу»
+MEETING_NOT_RE = (r"\b(назначить|назначь|договориться|договорись|согласовать|перенести|перенос|запланировать"
+                  r"|организовать|подготовить|подготовиться|подтвердить|пригласить|отправить|напомнить)\b")
+
+
+def is_meeting(activity, cfg=None):
+    """Дело CRM — встреча: тип «Встреча» (старый) или «Дело» с подходящей темой."""
+    if str(activity.get("TYPE_ID")) == "1":
+        return True
+    if activity.get("PROVIDER_ID") != "CRM_TODO":
+        return False
+    cfg = cfg or {}
+    subj = activity.get("SUBJECT") or ""
+    return bool(re.search(cfg.get("meeting_regex") or MEETING_RE, subj, re.I)) and \
+        not re.search(cfg.get("meeting_exclude_regex") or MEETING_NOT_RE, subj, re.I)
+
 
 class B24Error(Exception):
     pass
@@ -216,7 +235,7 @@ class Bitrix24:
                          "contact": f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID")
                          else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])})
         for a in acts:
-            if str(a.get("TYPE_ID")) != "1":  # 1 — встреча
+            if not is_meeting(a, self.cfg):
                 continue
             login = emp(a.get("RESPONSIBLE_ID"))
             if not login:
