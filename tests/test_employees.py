@@ -54,6 +54,15 @@ class EmployeesTest(unittest.TestCase):
         self.assertTrue(self.con.execute("SELECT 1 FROM users WHERE login='new'").fetchone())
         self.assertIn("new", [e["login"] for e in Engine(self.con, self.rules, self.config).employees()])
 
+    def test_listen_department_right_is_saved(self):
+        self.save(listen_dept=True)
+        by = {e["login"]: e for e in employees.apply(self.con, self.config, self.rules)}
+        self.assertTrue(by["new"]["listen_dept"])
+        self.assertFalse(by["pm"]["listen_dept"])
+        employees.save(self.con, self.rules, form(listen_dept=False, password=""), "boss", False, hash_password)
+        row = next(e for e in employees.listing(self.con, self.rules)["employees"] if e["login"] == "new")
+        self.assertIs(row["listen_dept"], False)
+
     def test_validation(self):
         bad = [dict(login="Bad Login"), dict(name=""), dict(position="nope"), dict(password="123"), dict(b24_user_id="не ссылка"), dict(login="pm"), dict(b24_user_id="56")]
         for kw in bad:

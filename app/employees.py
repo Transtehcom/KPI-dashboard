@@ -3,7 +3,8 @@
 При первом запуске список переносится из config.json → employees; дальше config.json для сотрудников
 не используется. Для расчёта сотрудники отдаются в прежнем формате config["employees"]:
 login, name, role (manager — администратор), position (ключ KPI из kpi_rules.json), b24_user_id,
-onec_manager, absences, а также department, title и visible (показывать ли в KPI команды).
+onec_manager, absences, а также department, title, visible (показывать ли в KPI команды)
+и listen_dept (слушает записи звонков сотрудников своего отдела).
 """
 import datetime as dt
 import json
@@ -36,7 +37,8 @@ def _from_config(e, rules):
 
 def _to_config(r):
     e = {"login": r["login"], "name": r["name"], "role": "manager" if r["admin"] else "employee",
-         "department": r["department"], "title": r["title"], "visible": bool(r["visible"])}
+         "department": r["department"], "title": r["title"], "visible": bool(r["visible"]),
+         "listen_dept": bool(r["listen_dept"])}
     if r["position"]:
         e["position"] = r["position"]
     if r["b24_user_id"]:
@@ -111,7 +113,7 @@ def listing(con, rules):
         rows = [dict(r) for r in con.execute("SELECT * FROM employees ORDER BY sort, name")]
         has_pwd = {r["login"] for r in con.execute("SELECT login FROM users")}
     for r in rows:
-        r["visible"], r["admin"] = bool(r["visible"]), bool(r["admin"])
+        r["visible"], r["admin"], r["listen_dept"] = bool(r["visible"]), bool(r["admin"]), bool(r["listen_dept"])
         r["has_password"] = r["login"] in has_pwd
         r["absences"] = json.loads(r["absences"] or "[]")
         r.pop("sort", None)
@@ -138,7 +140,7 @@ def save(con, rules, data, me, is_new, hash_password):
     position = data.get("position") or None
     if position and position not in rules["positions"]:
         raise EmployeeError("Неизвестный KPI")
-    visible, admin = bool(data.get("visible")), bool(data.get("admin"))
+    visible, admin, listen_dept = bool(data.get("visible")), bool(data.get("admin")), bool(data.get("listen_dept"))
     if login == me and not admin:
         raise EmployeeError("Нельзя снять права администратора с самого себя")
     b24 = parse_b24_id(data.get("b24_user_id"))
@@ -162,12 +164,13 @@ def save(con, rules, data, me, is_new, hash_password):
         if is_new:
             sort = (con.execute("SELECT MAX(sort) FROM employees").fetchone()[0] or 0) + 1
             con.execute("INSERT INTO employees (login, name, department, title, position, b24_user_id, onec_manager, "
-                        "visible, admin, absences, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (login, name, department, title, position, b24, onec, int(visible), int(admin), absences or "[]", sort))
+                        "visible, admin, absences, sort, listen_dept) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (login, name, department, title, position, b24, onec, int(visible), int(admin), absences or "[]", sort,
+                         int(listen_dept)))
         else:
             con.execute("UPDATE employees SET name=?, department=?, title=?, position=?, b24_user_id=?, onec_manager=?, "
-                        "visible=?, admin=?, absences=COALESCE(?, absences) WHERE login=?",
-                        (name, department, title, position, b24, onec, int(visible), int(admin), absences, login))
+                        "visible=?, admin=?, absences=COALESCE(?, absences), listen_dept=? WHERE login=?",
+                        (name, department, title, position, b24, onec, int(visible), int(admin), absences, int(listen_dept), login))
         if password:
             h, salt = hash_password(password)
             con.execute("INSERT OR REPLACE INTO users (login, pwd_hash, salt) VALUES (?,?,?)", (login, h, salt))

@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS baselines (
 -- сотрудники дашборда (раздел «Сотрудники»); при первом запуске переносятся из config.json (app/employees.py)
 CREATE TABLE IF NOT EXISTS employees (
   login TEXT PRIMARY KEY, name TEXT, department TEXT, title TEXT, position TEXT, b24_user_id INTEGER,
-  onec_manager TEXT, visible INTEGER, admin INTEGER, absences TEXT, sort INTEGER);
+  onec_manager TEXT, visible INTEGER, admin INTEGER, absences TEXT, sort INTEGER, listen_dept INTEGER);
 
 -- записи разговоров из телефонии Б24 (app/call_records.py). Не в SYNC_TABLES: синхронизация обновляет сведения
 -- о звонке, но не трогает скачанный файл. id — как у звонка в activities («call» + ID статистики),
@@ -186,7 +186,8 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
-                 "supply_funnel": [("doc", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")]}
+                 "supply_funnel": [("doc", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
+                 "employees": [("listen_dept", "INTEGER")]}
 
 
 def migrate(con):

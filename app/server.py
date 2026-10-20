@@ -157,24 +157,32 @@ class App:
         return {"date": day.isoformat(), "people": people}
 
     def calls(self, me, is_mgr, q, month):
-        """Раздел «Звонки». Сотрудник видит только свои звонки, администратор — любого сотрудника или все по сделке."""
-        login = (q.get("login") or None) if is_mgr else me["login"]  # у администратора без login — все сотрудники
-        if login and not self.user(login):
+        """Раздел «Звонки»: сотрудник видит свои звонки, с правом listen_dept — звонки своего отдела,
+        администратор — всех. login — один сотрудник из доступных, без него — все доступные."""
+        allowed = call_records.audible_logins(self.config, me)
+        if allowed is not None and me["login"] not in allowed:
+            allowed = [me["login"]] + allowed  # свои звонки видны в списке, даже если слушать их нельзя
+        login = q.get("login") or None
+        if login and (not self.user(login) or (allowed is not None and login not in allowed)):
             raise BadRequest("Сотрудник не найден")
+        emps = [login] if login else allowed
         deal = None
         if q.get("deal"):
             if not str(q["deal"]).strip().isdigit():
                 raise BadRequest("Номер сделки — число (ID сделки в Битрикс24)")
             deal = int(q["deal"])
         first, last = month_bounds(month)
-        rows = call_records.listing(self.con, self.config, emp=login, deal=deal,
+        rows = call_records.listing(self.con, self.config, emps=emps, deal=deal,
                                     date_from=None if deal is not None else first, date_to=None if deal is not None else last,
                                     with_listens=is_mgr)
         names = {e["login"]: e["name"] for e in self.config["employees"]}
         for r in rows:
             r["emp_name"] = names.get(r["emp"], r["emp"])
+            r["can_listen"] = call_records.can_listen(self.config, me, r)
+        # кого можно выбрать в фильтре: администратору — сотрудников с KPI, руководителю отдела — свой отдел
+        choices = [e for e in self.config["employees"] if (e.get("position") if allowed is None else e["login"] in allowed)]
         return {"calls": rows, "login": login, "deal": deal, "month": month,
-                "can_listen": is_mgr or bool(call_records.settings(self.config).get("listen_own", True)),
+                "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_days": call_records.settings(self.config)["keep_days"],
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
                 "download": call_records.status() if is_mgr else None}

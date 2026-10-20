@@ -981,7 +981,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   async function loadCalls() {
     const main = document.getElementById("main"), isMgr = state.boot.me.role === "manager";
     try {
-      const login = isMgr ? (state.cLogin ?? "") : state.boot.me.login;
+      const login = state.cLogin ?? "";
       const deal = (state.cDeal || "").trim();
       const d = await api(`/api/calls?login=${encodeURIComponent(login)}&month=${state.month}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
@@ -991,7 +991,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderCalls(d, log) {
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
     const audio = (c) => {
-      if (c.audio === "ready") return d.can_listen ? `<button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>` : `<span class="muted">прослушивание недоступно</span>`;
+      if (c.audio === "ready") return c.can_listen ? `<button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>` : `<span class="muted">прослушивание недоступно</span>`;
       if (c.audio === "purged") return `<span class="muted">удалена${d.keep_days ? ` (хранится ${d.keep_days} дн.)` : ""}</span>`;
       if (c.audio === "error") return `<span style="color:var(--bad)">не удалось скачать</span>`;
       return `<span class="muted">скачивается…</span>`;
@@ -999,22 +999,22 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const deals = (c) => !c.deals.length ? "—" : c.deals.slice(0, 3).map((id) => d.portal
       ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
-    const emps = b.employees.filter((e) => e.position);
+    const emps = d.employees, multi = emps.length > 1;  // администратор или руководитель отдела
     const title = d.deal != null ? `по сделке ${d.deal}` : mLabel(d.month).toLowerCase();
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
-        <div class="sub">${isMgr ? "Звонки сотрудников" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
+        <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters">
-          ${isMgr ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
+          ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
           <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
             <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× весь месяц</button>` : ""}</form></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
-        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr><th>Дата</th>${isMgr ? "<th>Сотрудник</th>" : ""}<th>Звонок</th><th>Длит.</th><th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
-          ${d.calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${isMgr ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr><th>Дата</th>${multi ? "<th>Сотрудник</th>" : ""}<th>Звонок</th><th>Длит.</th><th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+          ${d.calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот месяц"} нет</div>`}
-        <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : "Вы видите только свои звонки. Прослушивания записываются в журнал, его видит администратор."}
+        <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
           Записи появляются после синхронизации с Битрикс24${d.keep_days ? ` и хранятся ${d.keep_days} дней` : ""}.</div></section>
       ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
         <form class="inline-form" id="cLogForm"><label for="cLogFrom">С</label><input id="cLogFrom" type="date" value="${esc(log ? log.date_from : state.cLogFrom || "")}">
@@ -1384,10 +1384,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <td>${esc(depTitle(e.department))}</td><td>${esc(e.title || "—")}</td><td>${esc(e.position ? posTitle(e.position) : "—")}</td>
             <td class="nw">${e.b24_user_id || "—"}</td>
             <td><span class="chip ${e.visible ? "s-met" : "s-nodata"}">${e.visible ? "Открытый" : "Закрытый"}</span></td>
-            <td>${e.admin ? "Да" : "—"}</td><td class="nw">${esc(e.login)}</td>
+            <td>${e.admin ? "Да" : e.listen_dept ? `<span class="muted small">звонки отдела</span>` : "—"}</td><td class="nw">${esc(e.login)}</td>
             <td>${e.has_password ? "задан" : `<span style="color:var(--bad)">не задан</span>`}</td></tr>`).join("")}
         </tbody></table></div>
-        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается, если KPI выбран. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки и управляет этим списком. Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
+        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается, если KPI выбран. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки, слушает все звонки и управляет этим списком. «Слушает звонки своего отдела» — доступ к записям звонков коллег по отделу (без доступа к их KPI). Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
     document.getElementById("addEmp").addEventListener("click", () => { renderStaff(d, ""); document.getElementById("f_name").focus(); });
     main.querySelectorAll("[data-edit]").forEach((tr) => {
       const open = () => { renderStaff(d, tr.dataset.edit); window.scrollTo(0, 0); };
@@ -1415,7 +1415,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <label for="f_vis1"><input id="f_vis1" type="radio" name="vis" value="1" ${e.visible !== false ? "checked" : ""}>Открытый</label>
         <label for="f_vis0"><input id="f_vis0" type="radio" name="vis" value="0" ${e.visible === false ? "checked" : ""}>Закрытый</label></div></fieldset>
       <fieldset><legend>Права</legend><div class="opts">
-        <label for="f_admin"><input id="f_admin" type="checkbox" ${e.admin ? "checked" : ""}>Администратор</label></div></fieldset>
+        <label for="f_admin"><input id="f_admin" type="checkbox" ${e.admin ? "checked" : ""}>Администратор</label>
+        <label for="f_listen"><input id="f_listen" type="checkbox" ${e.listen_dept ? "checked" : ""}>Слушает звонки своего отдела</label></div>
+        <span class="hint">Записи звонков сотрудников с тем же отделом. Администратор слушает все звонки</span></fieldset>
       <label for="f_login">Логин<input id="f_login" type="text" maxlength="32" autocomplete="off" value="${esc(e.login || "")}" ${isNew ? "" : "readonly"}>
         <span class="hint">${isNew ? "Латинские буквы, цифры, точка, дефис" : "Логин после создания не меняется"}</span></label>
       <label for="f_pwd">Пароль<input id="f_pwd" type="password" autocomplete="new-password" placeholder="${isNew ? "не короче 6 символов" : "оставьте пустым, чтобы не менять"}"></label>
@@ -1481,7 +1483,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         action: isNew ? "create" : "update", login: $("f_login").value.trim().toLowerCase(), name: $("f_name").value,
         department: dep.value === "__new" ? $("f_dep_new").value : dep.value, title: $("f_title").value,
         b24_user_id: $("f_b24").value, onec_manager: $("f_onec").value, position: $("f_pos").value,
-        visible: $("f_vis1").checked, admin: $("f_admin").checked, password: $("f_pwd").value, absences: absences(),
+        visible: $("f_vis1").checked, admin: $("f_admin").checked, listen_dept: $("f_listen").checked, password: $("f_pwd").value, absences: absences(),
       };
       try {
         renderStaff(await api("/api/staff", body));

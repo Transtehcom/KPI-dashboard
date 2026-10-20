@@ -31,8 +31,11 @@ class ListenTest(unittest.TestCase):
         config = {"holidays": [], "call_records": {"dir": str(rec_dir), "keep_days": 90},
                   "bitrix24": {"webhook": "https://portal.example.test/rest/1/secret/"},
                   "employees": [{"login": "boss", "name": "Руководитель", "role": "manager"},
-                                {"login": "pm", "name": "ПМ", "position": "pm", "role": "employee"},
-                                {"login": "tender", "name": "Тендерный", "position": "tender", "role": "employee"}]}
+                                {"login": "pm", "name": "ПМ", "position": "pm", "role": "employee", "department": "ОП"},
+                                {"login": "tender", "name": "Тендерный", "position": "tender", "role": "employee",
+                                 "department": "ОС"},
+                                {"login": "lead", "name": "Руководитель ОС", "position": "tender_lead", "role": "employee",
+                                 "department": "ОС", "listen_dept": True}]}
         con = connect(":memory:")
         app = App.__new__(App)  # без рабочей базы и config.json
         app.config, app.rules, app.con = config, load_rules(), con
@@ -41,8 +44,10 @@ class ListenTest(unittest.TestCase):
             set_password(con, e["login"], "pw-" + e["login"])
         call_records.upsert(con, [{"id": "call1", "emp": "pm", "dt": "2026-10-20T10:00:00", "direction": "out",
                                    "duration": 95, "client": "Ромашка", "phone": "79990000000"},
-                                  {"id": "call2", "emp": "pm", "dt": "2026-10-19T10:00:00", "direction": "in", "duration": 30}])
+                                  {"id": "call2", "emp": "pm", "dt": "2026-10-19T10:00:00", "direction": "in", "duration": 30},
+                                  {"id": "call3", "emp": "tender", "dt": "2026-10-18T10:00:00", "direction": "out", "duration": 60}])
         con.execute("UPDATE call_records SET file='2026-10/call1.mp3', bindings='CONTACT:5,DEAL:12' WHERE id='call1'")
+        con.execute("UPDATE call_records SET file='2026-10/call1.mp3' WHERE id='call3'")
         con.commit()
         cls.con, cls.app = con, app
         Handler.app = app
@@ -50,7 +55,7 @@ class ListenTest(unittest.TestCase):
         cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
         cls.tokens = {}
-        for login in ("boss", "pm", "tender"):
+        for login in ("boss", "pm", "tender", "lead"):
             req = urllib.request.Request(cls.base + "/api/login", method="POST",
                                          data=json.dumps({"login": login, "password": "pw-" + login}).encode(),
                                          headers={"Content-Type": "application/json"})
@@ -106,9 +111,9 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(self.get("pm", "/api/call-audio?id=nope")[0], 404)
 
     def test_calls_list_rights(self):
-        _, _, body = self.get("tender", "/api/calls?login=pm&month=2026-10")
-        self.assertEqual(json.loads(body)["calls"], [])  # чужой login игнорируется — только свои звонки
+        self.assertEqual(self.get("tender", "/api/calls?login=pm&month=2026-10")[0], 400)  # чужие звонки не выбрать
         d = json.loads(self.get("pm", "/api/calls?month=2026-10")[2])
+        self.assertEqual([e["login"] for e in d["employees"]], ["pm"])
         self.assertEqual([(c["id"], c["audio"]) for c in d["calls"]], [("call1", "ready"), ("call2", "pending")])
         self.assertNotIn("listens", d["calls"][0])
         self.assertEqual(d["portal"], "https://portal.example.test")  # без секрета вебхука
@@ -125,6 +130,20 @@ class ListenTest(unittest.TestCase):
         self.assertEqual((code, len(rows)), (200, 1))
         self.assertEqual((rows[0]["name"], rows[0]["emp_name"], rows[0]["client"], rows[0]["ip"]),
                          ("ПМ", "ПМ", "Ромашка", "127.0.0.1"))
+
+    def test_department_head_listens_to_own_department_only(self):
+        d = json.loads(self.get("lead", "/api/calls?month=2026-10")[2])
+        self.assertEqual([(c["id"], c["can_listen"]) for c in d["calls"]], [("call3", True)])
+        self.assertEqual(sorted(e["login"] for e in d["employees"]), ["lead", "tender"])
+        self.assertNotIn("listens", d["calls"][0])
+        self.assertEqual(self.get("lead", "/api/calls?login=pm&month=2026-10")[0], 400)
+        self.assertEqual(self.get("lead", "/api/calls?deal=12")[2].count(b"call1"), 0)  # сделка чужого отдела — пусто
+        self.assertEqual(self.get("lead", "/api/call-audio?id=call3")[0], 200)
+        self.assertEqual(self.get("lead", "/api/call-audio?id=call1")[0], 403)
+        self.assertEqual(self.get("lead", "/api/listen-log")[0], 403)
+        self.assertEqual(self.log(), [("lead", "call3", "tender", "ok"), ("lead", "call1", "pm", "denied")])
+        self.assertEqual(self.get("tender", "/api/call-audio?id=call3")[0], 200)  # без права — только свои
+        self.assertEqual(self.get("tender", "/api/call-audio?id=call1")[0], 403)
 
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False

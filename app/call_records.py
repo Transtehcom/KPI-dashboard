@@ -73,11 +73,21 @@ def deals_of(row):
 LISTEN_REPEAT_MINUTES = 10  # повторные запросы одной записи в эти минуты (перемотка, повтор) — одно прослушивание
 
 
-def can_listen(config, me, row):
-    """Администратор слушает любые записи, сотрудник — только свои (если не запрещено call_records.listen_own)."""
+def audible_logins(config, me):
+    """Чьи записи может слушать пользователь: None — любые (администратор); иначе список логинов.
+    Свои — если не запрещено call_records.listen_own; с правом listen_dept — ещё всех сотрудников своего отдела."""
     if me.get("role") == "manager":
-        return True
-    return bool(settings(config).get("listen_own", True)) and row.get("emp") == me.get("login")
+        return None
+    out = [me["login"]] if settings(config).get("listen_own", True) else []
+    dep = me.get("department")
+    if me.get("listen_dept") and dep:
+        out += [e["login"] for e in config.get("employees", []) if e.get("department") == dep and e["login"] != me["login"]]
+    return out
+
+
+def can_listen(config, me, row):
+    allowed = audible_logins(config, me)
+    return allowed is None or row.get("emp") in allowed
 
 
 def log_listen(con, login, row, ip, result="ok"):
@@ -94,12 +104,12 @@ def log_listen(con, login, row, ip, result="ok"):
     return True
 
 
-def listing(con, config, emp=None, deal=None, date_from=None, date_to=None, with_listens=False):
-    """Звонки с записью для раздела «Звонки»: сотрудника за период или по сделке (deal — ID сделки Б24)."""
+def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, with_listens=False):
+    """Звонки с записью для раздела «Звонки»: сотрудников emps (None — всех) за период или по сделке (deal — ID сделки Б24)."""
     q, args = "SELECT * FROM call_records WHERE 1=1", []
-    if emp:
-        q += " AND emp=?"
-        args.append(emp)
+    if emps is not None:
+        q += f" AND emp IN ({','.join('?' * len(emps)) or 'NULL'})"
+        args += list(emps)
     if deal is not None:
         q += " AND ','||bindings||',' LIKE ?"
         args.append(f"%,DEAL:{int(deal)},%")
