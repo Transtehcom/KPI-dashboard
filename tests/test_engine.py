@@ -469,6 +469,22 @@ class MeetingDetectionTest(unittest.TestCase):
         self.assertTrue(is_meeting({"TYPE_ID": "1", "SUBJECT": "Без темы"}))
         self.assertFalse(is_meeting({"TYPE_ID": "4", "PROVIDER_ID": "CRM_EMAIL", "SUBJECT": "Встреча"}))
 
+    def test_protocol_from_calendar_event(self):
+        from app.bitrix24 import Bitrix24
+        b = Bitrix24({"webhook": "https://example.test/rest/1/x/"}, log=lambda *a: None)
+        answers = {
+            "calendar.event.get": {"result": [
+                {"ID": "1869", "PARENT_ID": "1868", "NAME": "Рабочая встреча  с ВСМПО", "DATE_FROM": "15.10.2026 09:00:00"},
+                {"ID": "1845", "PARENT_ID": "1844", "NAME": "Встреча с Ромашкой", "DATE_FROM": "12.10.2026 14:30:00"}]},
+            "calendar.event.getbyid": lambda p: {"result": {"UF_WEBDAV_CAL_EVENT": [770] if p["id"] == "1868" else []}},
+        }
+        with mock.patch.object(Bitrix24, "call", lambda self, m, p=None:
+                               answers[m](p) if callable(answers[m]) else answers[m]):
+            files = b._meeting_calendar_files("2026-10-01")
+            self.assertEqual(files(56, "Рабочая встреча с ВСМПО", "2026-10-15"), [770])
+            self.assertIsNone(files(56, "Встреча с Ромашкой", "2026-10-12"))
+            self.assertIsNone(files(56, "Рабочая встреча с ВСМПО", "2026-10-16"))
+
 
 if __name__ == "__main__":
     unittest.main()

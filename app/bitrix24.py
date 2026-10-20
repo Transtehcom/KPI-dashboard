@@ -234,6 +234,7 @@ class Bitrix24:
                          # с кем разговор: сущность CRM, а если звонок не привязан — номер телефона
                          "contact": f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID")
                          else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])})
+        meeting_files = self._meeting_calendar_files(df)
         for a in acts:
             if not is_meeting(a, self.cfg):
                 continue
@@ -244,7 +245,8 @@ class Bitrix24:
             is_lpr, _, client = entity_info(etype, a["OWNER_ID"])
             if etype not in ("CONTACT", "LEAD"):
                 is_lpr = 1  # встреча по сделке или компании
-            files = a.get("STORAGE_ELEMENT_IDS") or a.get("FILES")
+            files = a.get("STORAGE_ELEMENT_IDS") or a.get("FILES") or \
+                meeting_files(a.get("RESPONSIBLE_ID"), a.get("SUBJECT"), str(a.get("START_TIME") or "")[:10])
             done = a.get("COMPLETED") == "Y"
             rows.append({"id": "act" + str(a["ID"]), "emp": login, "dt": self.iso(a.get("START_TIME")), "kind": "meeting",
                          "direction": "out", "duration": 0, "is_lpr": is_lpr, "secretary": 0, "next_step": 1,
@@ -469,6 +471,43 @@ class Bitrix24:
                 "rejected": int(result == "lost" and d.get("STAGE_ID") in set(lc.get("rejected_stages", []))),
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
+
+    def _meeting_calendar_files(self, date_from):
+        """Файлы встречи, прикреплённые к её событию в календаре (у дела с участниками Б24 создаёт событие,
+        и протокол часто прикладывают туда; REST дела эти файлы не отдаёт).
+        Событие ищется в календаре ответственного по теме и дате, файлы берутся у исходного события (PARENT_ID)."""
+        by_user, parents = {}, {}
+        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().casefold()
+
+        def events(uid):
+            if uid not in by_user:
+                try:
+                    rows = self.call("calendar.event.get", {
+                        "type": "user", "ownerId": uid, "from": date_from,
+                        "to": (dt.date.today() + dt.timedelta(days=1)).isoformat()}).get("result") or []
+                except B24Error as e:
+                    self.log(f"Б24: календарь сотрудника {uid} недоступен — {e}")
+                    rows = []
+                idx = {}
+                for e in rows:
+                    m = re.match(r"(\d\d)\.(\d\d)\.(\d{4})", str(e.get("DATE_FROM") or ""))
+                    if m:
+                        idx.setdefault((norm(e.get("NAME")), f"{m[3]}-{m[2]}-{m[1]}"), e.get("PARENT_ID") or e.get("ID"))
+                by_user[uid] = idx
+            return by_user[uid]
+
+        def files(uid, subject, day):
+            parent = events(str(uid)).get((norm(subject), day)) if uid and day else None
+            if not parent:
+                return None
+            if parent not in parents:
+                try:
+                    ev = self.call("calendar.event.getbyid", {"id": parent}).get("result") or {}
+                except B24Error:
+                    ev = {}
+                parents[parent] = ev.get("UF_WEBDAV_CAL_EVENT") or None
+            return parents[parent]
+        return files
 
     def resolve_field(self, method, code, label):
         """Код пользовательского поля: code из настроек, а если такого поля больше нет (поле пересоздали —
