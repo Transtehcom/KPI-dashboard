@@ -161,8 +161,14 @@ CREATE TABLE IF NOT EXISTS call_records (
   attempts INTEGER DEFAULT 0, error TEXT, purged TEXT, updated TEXT);
 CREATE INDEX IF NOT EXISTS ix_call_records ON call_records(emp, dt);
 
+-- расшифровки записей звонков (app/transcripts.py): segments — JSON [[начало, конец, текст], …] без голосового меню,
+-- text — сплошной текст, spent — секунд на распознавание; error/attempts — неудачные попытки
+CREATE TABLE IF NOT EXISTS call_transcripts (
+  id TEXT PRIMARY KEY, segments TEXT, text TEXT, duration REAL, engine TEXT, spent REAL, created TEXT,
+  error TEXT, attempts INTEGER DEFAULT 0);
+
 -- журнал прослушиваний записей звонков: кто, какую запись (call_records.id), чей звонок, когда, с какого адреса;
--- result: ok — прослушал, denied — запросил чужую запись без прав
+-- result: ok — прослушал, read — открыл расшифровку, denied — запросил чужую запись без прав
 CREATE TABLE IF NOT EXISTS listen_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, login TEXT, record TEXT, emp TEXT, ip TEXT, result TEXT);
 CREATE INDEX IF NOT EXISTS ix_listen_log ON listen_log(ts);

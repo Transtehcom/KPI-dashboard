@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import b24_calendar, call_records, employees, manual, sync
+from . import b24_calendar, call_records, employees, manual, sync, transcripts
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -458,6 +458,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(app.employee(login, month))
                 if path == "/api/calls":  # звонки с записью: сотрудник — свои, администратор — любого или по сделке
                     return self.send_json(app.calls(me, is_mgr, q, month))
+                if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
+                    row = call_records.get(app.con, q.get("id") or "")
+                    if not row:
+                        return self.send_json({"error": "Запись не найдена"}, 404)
+                    if not call_records.can_listen(app.config, me, row):
+                        call_records.log_listen(app.con, me["login"], row, self.client_ip(), "denied")
+                        return self.send_json({"error": "Нет прав на эту расшифровку"}, 403)
+                    tr = transcripts.get(app.con, row["id"])
+                    if not tr or not tr.get("engine"):  # нет строки или только неудачные попытки
+                        return self.send_json({"error": "Расшифровки ещё нет"}, 404)
+                    call_records.log_listen(app.con, me["login"], row, self.client_ip(), "read")
+                    return self.send_json({"id": row["id"], "segments": tr["segments"], "duration": tr["duration"]})
                 if path == "/api/listen-log":
                     if not is_mgr:
                         return self.send_json({"error": "Журнал прослушиваний доступен только администратору"}, 403)

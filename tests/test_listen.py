@@ -153,6 +153,20 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(d["date_from"][8:], "01")  # без периода — текущий месяц
         self.assertEqual(self.get("boss", "/api/call-funnel?login=pm&date_from=2026-10-20&date_to=2026-10-01")[0], 400)
 
+    def test_transcript_rights_and_journal(self):
+        with db_lock():
+            self.con.execute("INSERT OR REPLACE INTO call_transcripts (id, segments, text, engine) VALUES "
+                             "('call1', '[[1.0, 2.5, \"цена устраивает\"]]', 'цена устраивает', 'gigaam-v2')")
+            self.con.commit()
+        d = json.loads(self.get("pm", "/api/call-transcript?id=call1")[2])
+        self.assertEqual(d["segments"], [[1.0, 2.5, "цена устраивает"]])
+        self.get("pm", "/api/call-transcript?id=call1")  # повтор сразу — одна строка журнала
+        self.assertEqual(self.get("tender", "/api/call-transcript?id=call1")[0], 403)
+        self.assertEqual(self.get("pm", "/api/call-transcript?id=call2")[0], 404)
+        self.assertEqual(self.log(), [("pm", "call1", "pm", "read"), ("tender", "call1", "pm", "denied")])
+        calls = json.loads(self.get("pm", "/api/calls?month=2026-10")[2])["calls"]
+        self.assertEqual({c["id"]: c["transcript"] for c in calls}, {"call1": "ready", "call2": None})
+
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False
         try:

@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import call_records  # noqa: E402
+from app import call_records, transcripts  # noqa: E402
 from app.bitrix24 import B24Error, Bitrix24  # noqa: E402
 from app.common import connect  # noqa: E402
 
@@ -107,6 +107,66 @@ class CallRecordsTest(unittest.TestCase):
         self.assertFalse((self.dir / "records" / "old" / "call1.mp3").exists())
         self.assertIsNone(self.row("call1")["file"])
         self.assertIsNotNone(self.row("call2")["file"])
+
+
+FAKE_WORKER = r"""
+import json, sys
+sys.stdin.reconfigure(encoding="utf-8"); sys.stdout.reconfigure(encoding="utf-8")
+for line in sys.stdin:
+    path = line.strip()
+    if path.endswith("bad.mp3"):
+        print(json.dumps({"path": path, "error": "RuntimeError: битый файл"}), flush=True)
+    else:
+        print(json.dumps({"path": path, "duration": 61.0, "segments": [
+            [0.5, 3.0, "вас приветствует компания транстехком"], [3.5, 6.0, "нажмите один для соединения с отделом продаж"],
+            [9.0, 15.2, "добрый день по поводу коммерческого предложения"], [16.0, 20.0, "цена устраивает"]]},
+            ensure_ascii=False), flush=True)
+"""
+
+
+class TranscriptsTest(unittest.TestCase):
+    def setUp(self):
+        self.con = connect(":memory:")
+        self.addCleanup(self.con.close)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = pathlib.Path(tmp.name)
+        (self.dir / "2026-10").mkdir()
+        for name in ("call1.mp3", "bad.mp3"):
+            (self.dir / "2026-10" / name).write_bytes(b"x")
+        self.worker = self.dir / "worker.py"
+        self.worker.write_text(FAKE_WORKER, encoding="utf-8")
+        call_records.upsert(self.con, [rec(1), rec(2), rec(3)])
+        self.con.execute("UPDATE call_records SET file='2026-10/call1.mp3' WHERE id='call1'")
+        self.con.execute("UPDATE call_records SET file='2026-10/bad.mp3' WHERE id='call2'")  # call3 не скачан
+        self.config = {"call_records": {"dir": str(self.dir), "transcribe_log": str(self.dir / "err.log")}}
+
+    def run_worker(self):
+        return transcripts.run(self.con, self.config, str(self.dir), log=lambda *a: None, worker=str(self.worker))
+
+    def test_transcribe_queue_drops_ivr_and_retries_errors(self):
+        self.assertEqual(self.run_worker(), (1, 1))
+        t = transcripts.get(self.con, "call1")
+        self.assertEqual([s[2] for s in t["segments"]], ["добрый день по поводу коммерческого предложения", "цена устраивает"])
+        self.assertEqual(t["text"], "добрый день по поводу коммерческого предложения цена устраивает")
+        self.assertEqual(t["engine"], transcripts.ENGINE)
+        self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call2"])  # готовый не повторяется
+        self.run_worker()
+        self.run_worker()
+        self.assertEqual(transcripts.pending(self.con, 10), [])  # после MAX_ATTEMPTS ошибок — не повторять
+        st = {c["id"]: c["transcript"] for c in call_records.listing(self.con, self.config)}
+        self.assertEqual(st, {"call1": "ready", "call2": "error", "call3": None})
+
+    def test_transcript_deleted_with_audio(self):
+        self.run_worker()
+        old = (dt.date.today() - dt.timedelta(days=100)).isoformat() + "T10:00:00"
+        self.con.execute("UPDATE call_records SET dt=? WHERE id='call1'", (old,))
+        call_records.purge_old(self.con, {"call_records": {"dir": str(self.dir), "keep_days": 90}})
+        self.assertIsNone(transcripts.get(self.con, "call1"))
+
+    def test_disabled(self):
+        self.config["call_records"]["transcribe"] = False
+        self.assertEqual(self.run_worker(), (0, 0))
 
 
 class TransportTest(unittest.TestCase):

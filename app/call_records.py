@@ -95,8 +95,9 @@ def log_listen(con, login, row, ip, result="ok"):
     now = dt.datetime.now()
     since = (now - dt.timedelta(minutes=LISTEN_REPEAT_MINUTES)).isoformat(timespec="seconds")
     with db_lock():
-        if result == "ok" and con.execute("SELECT 1 FROM listen_log WHERE login=? AND record=? AND result='ok' AND ts>=?",
-                                          (login, row["id"], since)).fetchone():
+        if result in ("ok", "read") and con.execute(
+                "SELECT 1 FROM listen_log WHERE login=? AND record=? AND result=? AND ts>=?",
+                (login, row["id"], result, since)).fetchone():
             return False
         con.execute("INSERT INTO listen_log (ts, login, record, emp, ip, result) VALUES (?,?,?,?,?,?)",
                     (now.isoformat(timespec="seconds"), login, row["id"], row.get("emp"), ip, result))
@@ -120,6 +121,14 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
         q += " AND dt <= ?"
         args.append(str(date_to) + "T23:59:59")
     rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT 2000", args)]
+    tr = {}
+    if rows:
+        ids = [r["id"] for r in rows]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for t in con.execute(f"SELECT id, error, attempts, segments IS NOT NULL ready FROM call_transcripts "
+                                 f"WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                tr[t["id"]] = "ready" if t["ready"] else "error" if t["attempts"] >= 3 else "pending"
     listens = {}
     if with_listens and rows:
         ids = [r["id"] for r in rows]
@@ -140,7 +149,8 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
         else:
             audio = "pending"
         item = {k: r[k] for k in ("id", "emp", "dt", "direction", "duration", "phone", "client")}
-        item.update(audio=audio, deals=deals_of(r))
+        item.update(audio=audio, deals=deals_of(r),
+                    transcript=tr.get(r["id"]) or ("pending" if audio == "ready" else None))
         if with_listens:
             item["listens"] = listens.get(r["id"], 0)
         out.append(item)
@@ -253,7 +263,7 @@ def download_pending(con, b24, config, log=print):
 
 
 def purge_old(con, config):
-    """Удалить аудио старше keep_days (сведения о звонке остаются, purged — когда удалено)."""
+    """Удалить аудио и расшифровку старше keep_days (сведения о звонке остаются, purged — когда удалено)."""
     keep = settings(config)["keep_days"]
     if not keep:
         return 0
@@ -266,6 +276,7 @@ def purge_old(con, config):
             pass
         with db_lock():
             con.execute("UPDATE call_records SET file=NULL, purged=? WHERE id=?", (_now(), r["id"]))
+            con.execute("DELETE FROM call_transcripts WHERE id=?", (r["id"],))
             con.commit()
     return len(rows)
 
@@ -282,6 +293,11 @@ def run(con, b24, config, log=print):
         msg.append(f"привязки проверены: {resolve_bindings(con, b24)}")
         ok, failed = download_pending(con, b24, config, log)
         msg.append(f"скачано: {ok}" + (f", ошибок: {failed}" if failed else ""))
+        _status["message"] = "Записи звонков: " + "; ".join(msg) + "; идёт расшифровка…"
+        from . import transcripts
+        ok, failed = transcripts.run(con, config, records_dir(config), log)
+        if ok or failed:
+            msg.append(f"расшифровано: {ok}" + (f", ошибок: {failed}" if failed else ""))
         left = con.execute("SELECT COUNT(*) FROM call_records WHERE file IS NULL AND purged IS NULL AND attempts < ?",
                            (MAX_ATTEMPTS,)).fetchone()[0]
         if left:

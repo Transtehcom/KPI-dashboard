@@ -254,6 +254,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .staff-list.calls tbody tr { cursor: default; }
 .staff-list.calls td.n { font-family: var(--mono); }
 .staff-list.calls audio { height: 32px; width: 260px; max-width: 70vw; vertical-align: middle; }
+.staff-list.calls .rec-cell { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.staff-list.calls tr.tr-row td { white-space: normal; background: var(--surface-2); }
+.transcript { max-height: 360px; overflow: auto; max-width: 90ch; font-size: 13px; line-height: 1.5; margin-bottom: 6px; }
+.transcript p { margin: 0 0 4px; }
+.transcript .ts { font: 500 12px var(--mono); margin-right: 6px; }
 .staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
 .staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
 .staff-form fieldset { border: 0; margin: 0; padding: 0; }
@@ -997,7 +1002,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderCalls(d, log) {
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
     const audio = (c) => {
-      if (c.audio === "ready") return c.can_listen ? `<button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>` : `<span class="muted">прослушивание недоступно</span>`;
+      if (c.audio === "ready") return c.can_listen ? `<span class="rec-cell"><button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>${c.transcript === "ready"
+        ? ` <button class="btn ghost" type="button" data-text="${esc(c.id)}" aria-expanded="false">Текст</button>` : c.transcript === "pending" ? ` <span class="muted small">текст готовится…</span>` : ""}</span>` : `<span class="muted">прослушивание недоступно</span>`;
       if (c.audio === "purged") return `<span class="muted">удалена${d.keep_days ? ` (хранится ${d.keep_days} дн.)` : ""}</span>`;
       if (c.audio === "error") return `<span style="color:var(--bad)">не удалось скачать</span>`;
       return `<span class="muted">скачивается…</span>`;
@@ -1018,7 +1024,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr><th>Дата</th>${multi ? "<th>Сотрудник</th>" : ""}<th>Звонок</th><th>Длит.</th><th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
           ${d.calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
-            ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw">${audio(c)}</td></tr>`).join("")}
+            ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот месяц"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
           Записи появляются после синхронизации с Битрикс24${d.keep_days ? ` и хранятся ${d.keep_days} дней` : ""}.</div></section>
@@ -1028,7 +1034,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         ${log && log.rows.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Когда</th><th>Кто</th><th>Чей звонок</th><th>Звонок</th><th>Клиент</th><th>IP</th><th>Результат</th></tr></thead><tbody>
           ${log.rows.map((r) => `<tr><td>${esc(dtLabel(r.ts))}</td><td>${esc(r.name)}</td><td>${esc(r.emp_name || "—")}</td>
             <td>${r.call_dt ? `${esc(dtLabel(r.call_dt))} · ${DIR[r.direction] || ""} · ${dur(r.duration)}` : esc(r.record)}</td><td>${esc(r.client || "—")}</td>
-            <td>${esc(r.ip || "")}</td><td>${r.result === "ok" ? "прослушал(а)" : `<span style="color:var(--bad)">отказано: нет прав</span>`}</td></tr>`).join("")}
+            <td>${esc(r.ip || "")}</td><td>${r.result === "ok" ? "прослушал(а)" : r.result === "read" ? "открыл(а) расшифровку" : `<span style="color:var(--bad)">отказано: нет прав</span>`}</td></tr>`).join("")}
         </tbody></table></div>` : log ? `<div class="muted small">За период прослушиваний нет.</div>` : ""}
       </div></details></section>` : ""}`;
     const sel = document.getElementById("cLogin");
@@ -1037,13 +1043,36 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const clr = document.getElementById("cDealClear");
     if (clr) clr.addEventListener("click", () => { state.cDeal = ""; loadCalls(); });
     // плеер создаётся только по нажатию: иначе браузер заранее скачал бы записи и они попали бы в журнал как прослушанные
-    main.querySelectorAll("[data-play]").forEach((btn) => btn.addEventListener("click", () => {
-      const cell = btn.parentElement, au = document.createElement("audio");
-      au.controls = true; au.autoplay = true; au.preload = "auto"; au.setAttribute("controlsList", "nodownload");
-      au.src = "/api/call-audio?id=" + encodeURIComponent(btn.dataset.play);
-      au.addEventListener("error", () => { cell.innerHTML = `<span style="color:var(--bad)">не удалось воспроизвести</span>`; });
-      au.addEventListener("play", () => main.querySelectorAll("audio").forEach((a) => { if (a !== au) a.pause(); }));
-      cell.replaceChildren(au);
+    const player = (id, at) => {
+      const cell = main.querySelector(`[data-rec="${CSS.escape(id)}"]`);
+      let au = cell.querySelector("audio");
+      if (!au) {
+        au = document.createElement("audio");
+        au.controls = true; au.preload = "auto"; au.setAttribute("controlsList", "nodownload");
+        au.src = "/api/call-audio?id=" + encodeURIComponent(id);
+        au.addEventListener("error", () => { cell.querySelector(".rec-cell").innerHTML = `<span style="color:var(--bad)">не удалось воспроизвести</span>`; });
+        au.addEventListener("play", () => main.querySelectorAll("audio").forEach((a) => { if (a !== au) a.pause(); }));
+        cell.querySelector("[data-play]").replaceWith(au);
+      }
+      if (at != null) { if (au.readyState >= 1) au.currentTime = at; else au.addEventListener("loadedmetadata", () => { au.currentTime = at; }, { once: true }); }
+      au.play().catch(() => {});
+    };
+    main.querySelectorAll("[data-play]").forEach((btn) => btn.addEventListener("click", () => player(btn.dataset.play)));
+    // расшифровка раскрывается строкой под звонком; щелчок по таймкоду — слушать с этого места
+    main.querySelectorAll("[data-text]").forEach((btn) => btn.addEventListener("click", async () => {
+      const tr = btn.closest("tr"), next = tr.nextElementSibling;
+      if (next && next.classList.contains("tr-row")) { next.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+      const row = document.createElement("tr");
+      row.className = "tr-row";
+      row.innerHTML = `<td colspan="${tr.children.length}"><div class="muted small">Загрузка…</div></td>`;
+      tr.after(row); btn.setAttribute("aria-expanded", "true");
+      try {
+        const t = await api("/api/call-transcript?id=" + encodeURIComponent(btn.dataset.text));
+        row.firstElementChild.innerHTML = `<div class="transcript">${t.segments.length ? t.segments.map((s) =>
+          `<p><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${esc(s[2])}</p>`).join("") : `<p class="muted">Речь не распознана</p>`}</div>
+          <div class="muted small">Расшифровка автоматическая: возможны ошибки в отдельных словах, реплики собеседников не разделены.</div>`;
+        row.querySelectorAll("[data-at]").forEach((b) => b.addEventListener("click", () => player(btn.dataset.text, +b.dataset.at)));
+      } catch (e) { if (e.message !== "auth") row.firstElementChild.innerHTML = `<div style="color:var(--bad)">${esc(e.message)}</div>`; }
     }));
     const lg = document.getElementById("cLog");
     if (lg) lg.addEventListener("toggle", () => { if (lg.open !== !!state.cLogOpen) { state.cLogOpen = lg.open; if (lg.open && !log) loadCalls(); } });

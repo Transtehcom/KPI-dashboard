@@ -5,11 +5,15 @@
 Всё работает офлайн после первой загрузки моделей (~1.3 ГБ, один раз).
 
 Установка:  pip install sherpa-onnx soundfile numpy scipy
-Запуск:     python transcribe.py звонок.mp3 [ещё.mp3 ...] [--fast]
-            --fast  только GigaAM (в 3-4 раза быстрее, без пунктуации)
+Запуск:     python transcribe.py звонок.mp3 [ещё.mp3 ...] [--fast] [--threads=4]
+            --fast  только GigaAM (в 6-7 раз быстрее, без пунктуации)
 Результат:  звонок.txt рядом с аудиофайлом
+
+Для дашборда (app/transcripts.py): python transcribe.py --jsonl --fast
+            пути к файлам — по строке в stdin; на каждый файл — строка JSON в stdout:
+            {"path": …, "duration": секунды, "segments": [[начало, конец, текст], …]} или {"path": …, "error": …}
 """
-import sys, tarfile, urllib.request
+import json, sys, tarfile, urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -73,18 +77,18 @@ def segments(audio):
     return out
 
 
-def recognizers(fast):
+def recognizers(fast, threads=4):
     g = fetch(GIGA)
     recs = [("G", so.OfflineRecognizer.from_transducer(
         encoder=str(g / "encoder.int8.onnx"), decoder=str(g / "decoder.onnx"),
         joiner=str(g / "joiner.onnx"), tokens=str(g / "tokens.txt"),
-        model_type="nemo_transducer", num_threads=4))]
+        model_type="nemo_transducer", num_threads=threads))]
     if not fast:
         w = fetch(WHISPER)
         recs.append(("W", so.OfflineRecognizer.from_whisper(
             encoder=str(w / "turbo-encoder.int8.onnx"),
             decoder=str(w / "turbo-decoder.int8.onnx"),
-            tokens=str(w / "turbo-tokens.txt"), language="ru", num_threads=4)))
+            tokens=str(w / "turbo-tokens.txt"), language="ru", num_threads=threads)))
     return recs
 
 
@@ -92,23 +96,54 @@ def ts(t):
     return f"{int(t // 60):02d}:{t % 60:04.1f}"
 
 
+def transcribe(path, recs):
+    """(длительность, [(начало, конец, {метка модели: текст})]) по фрагментам речи."""
+    audio = load_audio(path)
+    out = []
+    for start, smp in segments(audio):
+        texts = {}
+        for tag, r in recs:
+            s = r.create_stream()
+            s.accept_waveform(SR, smp)
+            r.decode_stream(s)
+            texts[tag] = s.result.text.strip()
+        out.append((start, start + len(smp) / SR, texts))
+    return len(audio) / SR, out
+
+
+def jsonl(recs):
+    for line in sys.stdin:
+        path = line.strip()
+        if not path:
+            continue
+        try:
+            dur, segs = transcribe(Path(path), recs)
+            res = {"path": path, "duration": round(dur, 1),
+                   "segments": [[round(a, 1), round(b, 1), x["G"]] for a, b, x in segs if x["G"]]}
+        except Exception as e:  # noqa
+            res = {"path": path, "error": f"{type(e).__name__}: {e}"[:300]}
+        print(json.dumps(res, ensure_ascii=False), flush=True)
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     fast = "--fast" in sys.argv
+    threads = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--threads=")), 4)
+    if "--jsonl" in sys.argv:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdin.reconfigure(encoding="utf-8")
+        return jsonl(recognizers(fast, threads))
     if not args:
         sys.exit(__doc__)
-    recs = recognizers(fast)
+    recs = recognizers(fast, threads)
     for f in map(Path, args):
-        audio = load_audio(f)
-        lines = [f"# {f.name} | длительность {ts(len(audio) / SR)}",
+        dur, segs = transcribe(f, recs)
+        lines = [f"# {f.name} | длительность {ts(dur)}",
                  "# G = GigaAM (точнее по словам), W = Whisper (пунктуация)"]
-        for start, smp in segments(audio):
-            lines.append(f"[{ts(start)}-{ts(start + len(smp) / SR)}]")
-            for tag, r in recs:
-                s = r.create_stream()
-                s.accept_waveform(SR, smp)
-                r.decode_stream(s)
-                lines.append(f"  {tag}: {s.result.text.strip()}")
+        for start, end, texts in segs:
+            lines.append(f"[{ts(start)}-{ts(end)}]")
+            for tag, text in texts.items():
+                lines.append(f"  {tag}: {text}")
         out = f.with_suffix(".txt")
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"Готово: {out}")
