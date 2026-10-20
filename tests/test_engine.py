@@ -116,6 +116,26 @@ class EngineTest(unittest.TestCase):
         r = self.calc("tender", "base_development", "2026-09")
         self.assertEqual(r["components"][0]["fact"], 3)  # повторный звонок тому же контакту в тот же день не в счёт
 
+    def test_call_funnel_for_period_follows_kpi_rules(self):
+        insert(self.con, "activities", [call(1, "pm", "2026-10-05", lpr=0), call(2, "pm", "2026-10-06", duration=30),
+                                        call(3, "pm", "2026-10-20", next_step=0),
+                                        call(4, "tender", "2026-10-05", contact="CONTACT:7"),
+                                        call(5, "tender", "2026-10-05", contact="CONTACT:7"),
+                                        call(6, "tender", "2026-10-06", lpr=0),
+                                        call(7, "lead", "2026-10-06", lpr=0)])
+        d1, d2 = dt.date(2026, 10, 1), dt.date(2026, 10, 19)
+        pm = self.engine.call_funnel("pm", d1, d2)
+        self.assertEqual(pm["steps"], [("Исходящие звонки", 2), ("От 2 мин", 1), ("Не секретарь", 1),
+                                       ("Зафиксирован след. шаг", 1)])  # ЛПР не нужен; звонок 20-го вне периода
+        self.assertTrue(pm["kpi"].startswith("KPI "))
+        tender = self.engine.call_funnel("tender", d1, d2)
+        self.assertEqual(tender["steps"][0], ("Исходящие звонки", 2))  # два звонка контакту 7 в один день — один
+        self.assertEqual(tender["steps"][-2:], [("Есть информация о ЛПР", 1), ("Зафиксирован след. шаг", 1)])
+        lead = self.engine.call_funnel("lead", d1, d2)
+        self.assertIsNone(lead["kpi"])  # у ведущего звонков в KPI нет — для справки, без требования ЛПР
+        self.assertEqual(lead["steps"][-1], ("Зафиксирован след. шаг", 1))
+        self.assertIsNone(self.engine.call_funnel("nobody", d1, d2))
+
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
         r = self.calc("tender", "base_development", "2026-09")

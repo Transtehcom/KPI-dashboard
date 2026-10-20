@@ -204,6 +204,28 @@ class Engine:
             "funnel": None,
         }
 
+    def call_funnel(self, login, date_from, date_to):
+        """Воронка отбора результативных звонков сотрудника за произвольный период (вкладка «Воронки») —
+        по правилам его KPI: тот же отбор, что в пункте KPI со звонками. Если звонков в KPI нет — для справки:
+        исходящие → от min_call → не секретарь → следующий шаг. None — сотрудника нет в дашборде."""
+        e = self.employee(login)
+        if not e:
+            return None
+        item = None
+        for it in self.rules["positions"].get(e.get("position"), {}).get("items", []):
+            p = it.get("params", {})
+            if it["code"] == "operational_activity" or \
+                    (it["code"] == "base_development" and ("touches" in p or "result_calls_per_day" in p)):
+                item = it
+                break
+        p = item.get("params", {}) if item else {}
+        require_lpr = p.get("require_lpr", item["code"] == "base_development") if item else False
+        result, steps, _ = self._result_calls(login, {"first": date_from, "last": date_to}, require_lpr,
+                                              p.get("one_call_per_contact_day", False))
+        return {"login": login, "name": e["name"], "steps": steps, "result": len(result),
+                "kpi": f"KPI {item.get('n')}. {item['title']}" if item else None,
+                "one_per_contact_day": bool(p.get("one_call_per_contact_day")), "require_lpr": require_lpr}
+
     def calc_base_development(self, e, ctx, p):
         emp = e["login"]
         result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True),

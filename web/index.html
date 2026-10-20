@@ -236,6 +236,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .dt td.n { font-family: var(--mono); text-align: right; }
 .dt-wrap { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 3px; }
 .funnel { display: flex; flex-direction: column; gap: 4px; }
+.cf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px 28px; }
+.cf-p { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cf-p h3 { margin: 0; font-size: 14px; }
 .funnel .row { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 48px; gap: 8px; align-items: center; font-size: 12px; }
 .funnel .row span:first-child { color: var(--fg-2); }
 .funnel .fb { height: 14px; border-radius: 3px; background: var(--bar-2); }
@@ -435,6 +438,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   .pr-sec .panel-h { display: none; }
   .pr-sec .fn-row { grid-template-columns: minmax(0, 38%) minmax(0, 1fr); cursor: default; break-inside: avoid; }
   .pr-sec .fn-row.sel { background: none; }
+  .pr-sec .cf-p { break-inside: avoid; }
   .pr-sec .fn-row.sel .fn-lab .t { font-weight: 400; color: var(--fg-2); }
   table.pr { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
   table.pr th, table.pr td { border: 0.5pt solid #9aa3a3; padding: 3pt 5pt; text-align: left; vertical-align: top; }
@@ -697,8 +701,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         const [dFrom, dTo] = funnelPeriod();
         const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
         const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}`);
-        const [leads, deals] = await Promise.all([q("leads", ""), q("deals", state.fCat || "")]);
-        renderFunnel({ leads, deals });
+        const logins = (state.fLogins || []).join(",");
+        const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
+          logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
+        renderFunnel({ leads, deals, calls });
       }
       catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
       return;
@@ -1191,6 +1197,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         ${fx.other_stages.length ? `<p class="sm">Не вошли в этапы воронки: ${fx.other_stages.map((o) => `${esc(o.stage)}${many ? ` (${esc(o.category)})` : ""} — ${nf(o.count)}`).join("; ")}.</p>` : ""}
       </section>`;
     };
+    // --- звонки выбранных ответственных: воронка отбора результативных звонков, как в карточке KPI
+    const cf = d.calls, cfPeople = cf ? cf.people.filter(Boolean) : [];
+    const cfPer = !cf ? "" : (cf.date_from === cf.date_to ? ruDay(cf.date_from) : `${ruDay(cf.date_from)} – ${ruDay(cf.date_to)}`) +
+      (dFrom || dTo ? "" : " (период не выбран — текущий месяц)");
+    const cfBlock = (p) => {
+      const name = p.name || (state.fRespNames && state.fRespNames.get(p.login)) || p.login;
+      if (p.error) return `<div class="cf-p"><h3>${esc(name)}</h3><div class="muted small">${esc(p.error)}</div></div>`;
+      const mx = Math.max(1, ...p.steps.map((s) => s[1]));
+      return `<div class="cf-p"><h3>${esc(name)}</h3>
+        <div class="muted small">${p.kpi ? `Отбор по правилам: ${esc(p.kpi)}` : "В KPI сотрудника звонки не оцениваются — воронка для справки"}${p.one_per_contact_day ? " · не больше одного звонка в день одному контакту" : ""}</div>
+        <div class="funnel">${p.steps.map((s) => `<div class="row"><span>${esc(s[0])}</span><div class="fb" style="width:${Math.max(1, (s[1] / mx) * 100)}%"></div><b>${nf(s[1])}</b></div>`).join("")}</div></div>`;
+    };
+    const cfHtml = cfPeople.length ? cfPeople.map(cfBlock).join("") : "";
+
     const now = new Date();
     const printHtml = `<div class="print-only">
       <div class="pr-head"><h1>Воронки лидов и сделок</h1>
@@ -1202,6 +1222,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <tr><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
+      ${cfHtml ? `<section class="pr-sec"><h2>Звонки: как отбираются результативные, ${esc(cfPer)}</h2><div class="cf-grid">${cfHtml}</div></section>` : ""}
       ${FUNNELS.map(printFunnel).join("")}</div>`;
 
     const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
@@ -1221,6 +1242,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <div class="fn-layout no-print ${chosen.length && !PREVIEW ? "with-cal" : ""}">
         <div class="fn2">${FUNNELS.map(panel).join("")}</div>
         ${chosen.length && !PREVIEW ? `<aside id="fCal" aria-label="Расписание из календаря Битрикс24">${calHtml()}</aside>` : ""}</div>
+      ${cfHtml ? `<section class="panel no-print"><div class="panel-h"><div><div class="eyebrow">Битрикс24 · телефония</div><h2>Звонки: как отбираются результативные</h2></div>
+        <span class="muted small">${esc(cfPer)}</span></div><div class="panel-b cf-grid">${cfHtml}</div></section>` : ""}
       <section class="panel no-print"><div class="panel-h"><div><div class="eyebrow">${K.title} · этап воронки</div><h2>${esc(cur.title)}: ${nf(cur.count)}${amt ? ` · ${money(cur.amount)}` : ""}</h2></div>
         <span class="muted small">${esc(cur.rule)}</span></div>
         <div class="panel-b" style="display:flex;flex-direction:column;gap:16px">

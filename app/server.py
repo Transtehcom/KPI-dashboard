@@ -429,6 +429,26 @@ class Handler(BaseHTTPRequestHandler):
                     logins = [x for x in (q.get("login") or "").split(",") if x]  # несколько ответственных через запятую
                     return self.send_json(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
                                                       date_from, date_to, date_field))
+                if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
+                    date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
+                    if not date_from and not date_to:  # период не выбран — текущий месяц, как в KPI
+                        first, last = month_bounds(current_month())
+                        date_from, date_to = first.isoformat(), last.isoformat()
+                    date_from = date_from or "2000-01-01"
+                    date_to = date_to or dt.date.today().isoformat()
+                    if date_from > date_to:
+                        raise BadRequest("Начало периода позже его конца")
+                    people = []
+                    for key in [k for k in (q.get("login") or "").split(",") if k][:20]:
+                        if key.startswith("id:") or not app.engine.employee(key):
+                            continue  # ответственный не из дашборда — звонки по нему не выгружаются
+                        if not is_mgr and key != me["login"]:
+                            people.append({"login": key, "error": "Звонки других сотрудников видит только руководитель"})
+                            continue
+                        people.append(app.engine.call_funnel(key, dt.date.fromisoformat(date_from),
+                                                             dt.date.fromisoformat(date_to)))
+                    return self.send_json({"date_from": date_from, "date_to": date_to, "min_call": app.engine.min_call,
+                                           "people": people})
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:

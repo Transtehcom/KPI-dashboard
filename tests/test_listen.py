@@ -145,6 +145,14 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(self.get("tender", "/api/call-audio?id=call3")[0], 200)  # без права — только свои
         self.assertEqual(self.get("tender", "/api/call-audio?id=call1")[0], 403)
 
+    def test_call_funnel_rights(self):
+        d = json.loads(self.get("pm", "/api/call-funnel?login=pm,tender,id:77&date_from=2026-10-01&date_to=2026-10-31")[2])
+        self.assertEqual([(p["login"], "error" in p) for p in d["people"]], [("pm", False), ("tender", True)])
+        d = json.loads(self.get("boss", "/api/call-funnel?login=pm,tender")[2])
+        self.assertEqual([("error" in p) for p in d["people"]], [False, False])
+        self.assertEqual(d["date_from"][8:], "01")  # без периода — текущий месяц
+        self.assertEqual(self.get("boss", "/api/call-funnel?login=pm&date_from=2026-10-20&date_to=2026-10-01")[0], 400)
+
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False
         try:
