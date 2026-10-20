@@ -64,7 +64,7 @@ class CallRecordsTest(unittest.TestCase):
         call_records.resolve_bindings(self.con, FakeB24(lambda m, p: answers[p["activityId"]]))
         self.assertEqual(self.row("call1")["bindings"], "CONTACT:5,DEAL:12")
         self.assertIsNotNone(self.row("call3")["bindings_checked"])
-        self.assertEqual([r["id"] for r in call_records.for_deal(self.con, 12)], ["call1"])  # не DEAL:120
+        self.assertEqual([r["id"] for r in call_records.listing(self.con, {}, deal=12)], ["call1"])  # не DEAL:120
 
     def test_old_calls_bindings_checked_once(self):
         old = (dt.date.today() - dt.timedelta(days=30)).isoformat()

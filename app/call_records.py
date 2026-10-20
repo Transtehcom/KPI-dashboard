@@ -59,20 +59,93 @@ def upsert(con, rows, commit=True):
             con.commit()
 
 
-def for_employee(con, emp, date_from=None, date_to=None):
-    q, args = "SELECT * FROM call_records WHERE emp=?", [emp]
+def get(con, record_id):
+    r = con.execute("SELECT * FROM call_records WHERE id=?", (str(record_id),)).fetchone()
+    return dict(r) if r else None
+
+
+def deals_of(row):
+    return [int(k[5:]) for k in (row.get("bindings") or "").split(",") if k.startswith("DEAL:") and k[5:].isdigit()]
+
+
+# ---------- права и журнал прослушиваний
+
+LISTEN_REPEAT_MINUTES = 10  # повторные запросы одной записи в эти минуты (перемотка, повтор) — одно прослушивание
+
+
+def can_listen(config, me, row):
+    """Администратор слушает любые записи, сотрудник — только свои (если не запрещено call_records.listen_own)."""
+    if me.get("role") == "manager":
+        return True
+    return bool(settings(config).get("listen_own", True)) and row.get("emp") == me.get("login")
+
+
+def log_listen(con, login, row, ip, result="ok"):
+    """Записать прослушивание. Возвращает True, если запись добавлена (повтор в пределах LISTEN_REPEAT_MINUTES — нет)."""
+    now = dt.datetime.now()
+    since = (now - dt.timedelta(minutes=LISTEN_REPEAT_MINUTES)).isoformat(timespec="seconds")
+    with db_lock():
+        if result == "ok" and con.execute("SELECT 1 FROM listen_log WHERE login=? AND record=? AND result='ok' AND ts>=?",
+                                          (login, row["id"], since)).fetchone():
+            return False
+        con.execute("INSERT INTO listen_log (ts, login, record, emp, ip, result) VALUES (?,?,?,?,?,?)",
+                    (now.isoformat(timespec="seconds"), login, row["id"], row.get("emp"), ip, result))
+        con.commit()
+    return True
+
+
+def listing(con, config, emp=None, deal=None, date_from=None, date_to=None, with_listens=False):
+    """Звонки с записью для раздела «Звонки»: сотрудника за период или по сделке (deal — ID сделки Б24)."""
+    q, args = "SELECT * FROM call_records WHERE 1=1", []
+    if emp:
+        q += " AND emp=?"
+        args.append(emp)
+    if deal is not None:
+        q += " AND ','||bindings||',' LIKE ?"
+        args.append(f"%,DEAL:{int(deal)},%")
     if date_from:
         q += " AND dt >= ?"
         args.append(str(date_from))
     if date_to:
         q += " AND dt <= ?"
         args.append(str(date_to) + "T23:59:59")
-    return [dict(r) for r in con.execute(q + " ORDER BY dt DESC", args)]
+    rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT 2000", args)]
+    listens = {}
+    if with_listens and rows:
+        ids = [r["id"] for r in rows]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in con.execute(f"SELECT record, COUNT(*) n FROM listen_log WHERE result='ok' AND record IN "
+                                 f"({','.join('?' * len(chunk))}) GROUP BY record", chunk):
+                listens[r["record"]] = r["n"]
+    keep = settings(config)["keep_days"]
+    out = []
+    for r in rows:
+        if r["file"]:
+            audio = "ready"
+        elif r["purged"] or (keep and r["dt"] < (dt.date.today() - dt.timedelta(days=keep)).isoformat()):
+            audio = "purged"
+        elif (r["attempts"] or 0) >= MAX_ATTEMPTS:
+            audio = "error"
+        else:
+            audio = "pending"
+        item = {k: r[k] for k in ("id", "emp", "dt", "direction", "duration", "phone", "client")}
+        item.update(audio=audio, deals=deals_of(r))
+        if with_listens:
+            item["listens"] = listens.get(r["id"], 0)
+        out.append(item)
+    return out
 
 
-def for_deal(con, deal_id):
-    return [dict(r) for r in con.execute("SELECT * FROM call_records WHERE ','||bindings||',' LIKE ? ORDER BY dt DESC",
-                                         (f"%,DEAL:{int(deal_id)},%",))]
+def listen_journal(con, date_from, date_to, login=None, limit=2000):
+    """Журнал прослушиваний за период (новые первыми) со сведениями о звонке."""
+    q = ("SELECT l.ts, l.login, l.record, l.emp, l.ip, l.result, c.dt AS call_dt, c.client, c.direction, c.duration "
+         "FROM listen_log l LEFT JOIN call_records c ON c.id = l.record WHERE l.ts >= ? AND l.ts <= ?")
+    args = [str(date_from), str(date_to) + "T23:59:59"]
+    if login:
+        q += " AND l.login=?"
+        args.append(login)
+    return [dict(r) for r in con.execute(q + " ORDER BY l.ts DESC LIMIT ?", args + [limit])]
 
 
 def resolve_bindings(con, b24):

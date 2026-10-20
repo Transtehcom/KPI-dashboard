@@ -248,6 +248,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .staff-list tbody tr:hover, .staff-list tbody tr:focus-visible { background: var(--surface-2); outline: none; }
 .staff-list tr.sel { background: var(--accent-soft); }
 .staff-list td.nw { white-space: nowrap; }
+.staff-list.calls tbody tr { cursor: default; }
+.staff-list.calls td.n { font-family: var(--mono); }
+.staff-list.calls audio { height: 32px; width: 260px; max-width: 70vw; vertical-align: middle; }
 .staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
 .staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
 .staff-form fieldset { border: 0; margin: 0; padding: 0; }
@@ -570,7 +573,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (!state.month || !months.includes(state.month)) state.month = PREVIEW ? PREVIEW.default_month : b.current_month;
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
-    if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
+    if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
+    else if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
     else if (h === "funnel") { state.view = "funnel"; }
@@ -611,29 +615,31 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
+    const noSide = ["funnel", "staff", "calls"].includes(state.view), noMonth = state.view === "funnel" || state.view === "staff";
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${state.view === "funnel" || state.view === "staff" ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
-          <label class="muted small" for="month" ${state.view === "funnel" || state.view === "staff" ? "hidden" : ""}>Период</label>
-          <select id="month" ${state.view === "funnel" || state.view === "staff" ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
+          <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
+          <select id="month" ${noMonth ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
           <button class="btn" id="rulesBtn" type="button">Методика</button>
           ${isMgr && !PREVIEW ? `<button class="btn" id="syncBtn" type="button">Обновить данные</button>` : ""}
           <span class="small muted">${esc(b.me.name)}</span>
           ${PREVIEW ? "" : `<button class="btn ghost" id="logoutBtn" type="button">Выйти</button>`}
         </div></header>
-      <div class="shell ${isMgr && state.view !== "funnel" && state.view !== "staff" ? "" : "single"}">${isMgr && state.view !== "funnel" && state.view !== "staff" ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
+      <div class="shell ${isMgr && !noSide ? "" : "single"}">${isMgr && !noSide ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
     document.getElementById("month").addEventListener("change", (e) => { state.month = e.target.value; load(); });
     document.getElementById("rulesBtn").addEventListener("click", showRules);
     root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
       ev.preventDefault();
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
+      else if (a.dataset.tab === "calls") { state.view = "calls"; location.hash = "calls"; }
       else if (isMgr) { state.view = "team"; location.hash = "team"; }
       else { state.view = "emp"; location.hash = "kpi"; }
       renderShell(); load();
@@ -685,6 +691,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
       return;
     }
+    if (state.view === "calls") { loadCalls(); return; }
     if (state.view === "funnel") {
       try {
         const [dFrom, dTo] = funnelPeriod();
@@ -965,6 +972,77 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       try { await api("/api/baseline", { emp: d.login, metric: "conversion_last_year", value: +f.querySelector("input").value / 100 }); if (!PREVIEW) { toast("Базовый уровень сохранён"); sideCache = {}; load(); } }
       catch (e) { toast(e.message); }
     }));
+  }
+
+  // ---------- звонки: записи разговоров и журнал прослушиваний
+  const DIR = { out: "Исходящий", in: "Входящий" };
+  const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
+  const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
+  async function loadCalls() {
+    const main = document.getElementById("main"), isMgr = state.boot.me.role === "manager";
+    try {
+      const login = isMgr ? (state.cLogin ?? "") : state.boot.me.login;
+      const deal = (state.cDeal || "").trim();
+      const d = await api(`/api/calls?login=${encodeURIComponent(login)}&month=${state.month}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
+      const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
+      renderCalls(d, log);
+    } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  function renderCalls(d, log) {
+    const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
+    const audio = (c) => {
+      if (c.audio === "ready") return d.can_listen ? `<button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>` : `<span class="muted">прослушивание недоступно</span>`;
+      if (c.audio === "purged") return `<span class="muted">удалена${d.keep_days ? ` (хранится ${d.keep_days} дн.)` : ""}</span>`;
+      if (c.audio === "error") return `<span style="color:var(--bad)">не удалось скачать</span>`;
+      return `<span class="muted">скачивается…</span>`;
+    };
+    const deals = (c) => !c.deals.length ? "—" : c.deals.slice(0, 3).map((id) => d.portal
+      ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
+      (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
+    const emps = b.employees.filter((e) => e.position);
+    const title = d.deal != null ? `по сделке ${d.deal}` : mLabel(d.month).toLowerCase();
+    main.innerHTML = `
+      <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
+        <div class="sub">${isMgr ? "Звонки сотрудников" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
+      <section class="panel"><div class="panel-h"><div class="filters">
+          ${isMgr ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
+          <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
+            <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× весь месяц</button>` : ""}</form></div>
+          ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr><th>Дата</th>${isMgr ? "<th>Сотрудник</th>" : ""}<th>Звонок</th><th>Длит.</th><th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+          ${d.calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${isMgr ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+            <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
+            ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw">${audio(c)}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот месяц"} нет</div>`}
+        <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : "Вы видите только свои звонки. Прослушивания записываются в журнал, его видит администратор."}
+          Записи появляются после синхронизации с Битрикс24${d.keep_days ? ` и хранятся ${d.keep_days} дней` : ""}.</div></section>
+      ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
+        <form class="inline-form" id="cLogForm"><label for="cLogFrom">С</label><input id="cLogFrom" type="date" value="${esc(log ? log.date_from : state.cLogFrom || "")}">
+          <label for="cLogTo">по</label><input id="cLogTo" type="date" value="${esc(log ? log.date_to : state.cLogTo || "")}"><button class="btn" type="submit">Показать</button></form>
+        ${log && log.rows.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Когда</th><th>Кто</th><th>Чей звонок</th><th>Звонок</th><th>Клиент</th><th>IP</th><th>Результат</th></tr></thead><tbody>
+          ${log.rows.map((r) => `<tr><td>${esc(dtLabel(r.ts))}</td><td>${esc(r.name)}</td><td>${esc(r.emp_name || "—")}</td>
+            <td>${r.call_dt ? `${esc(dtLabel(r.call_dt))} · ${DIR[r.direction] || ""} · ${dur(r.duration)}` : esc(r.record)}</td><td>${esc(r.client || "—")}</td>
+            <td>${esc(r.ip || "")}</td><td>${r.result === "ok" ? "прослушал(а)" : `<span style="color:var(--bad)">отказано: нет прав</span>`}</td></tr>`).join("")}
+        </tbody></table></div>` : log ? `<div class="muted small">За период прослушиваний нет.</div>` : ""}
+      </div></details></section>` : ""}`;
+    const sel = document.getElementById("cLogin");
+    if (sel) sel.addEventListener("change", () => { state.cLogin = sel.value; loadCalls(); });
+    document.getElementById("cDealForm").addEventListener("submit", (ev) => { ev.preventDefault(); state.cDeal = document.getElementById("cDeal").value; loadCalls(); });
+    const clr = document.getElementById("cDealClear");
+    if (clr) clr.addEventListener("click", () => { state.cDeal = ""; loadCalls(); });
+    // плеер создаётся только по нажатию: иначе браузер заранее скачал бы записи и они попали бы в журнал как прослушанные
+    main.querySelectorAll("[data-play]").forEach((btn) => btn.addEventListener("click", () => {
+      const cell = btn.parentElement, au = document.createElement("audio");
+      au.controls = true; au.autoplay = true; au.preload = "auto"; au.setAttribute("controlsList", "nodownload");
+      au.src = "/api/call-audio?id=" + encodeURIComponent(btn.dataset.play);
+      au.addEventListener("error", () => { cell.innerHTML = `<span style="color:var(--bad)">не удалось воспроизвести</span>`; });
+      au.addEventListener("play", () => main.querySelectorAll("audio").forEach((a) => { if (a !== au) a.pause(); }));
+      cell.replaceChildren(au);
+    }));
+    const lg = document.getElementById("cLog");
+    if (lg) lg.addEventListener("toggle", () => { if (lg.open !== !!state.cLogOpen) { state.cLogOpen = lg.open; if (lg.open && !log) loadCalls(); } });
+    const lf = document.getElementById("cLogForm");
+    if (lf) lf.addEventListener("submit", (ev) => { ev.preventDefault(); state.cLogFrom = document.getElementById("cLogFrom").value; state.cLogTo = document.getElementById("cLogTo").value; loadCalls(); });
   }
 
   // ---------- воронка сделок

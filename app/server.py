@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import math
+import mimetypes
 import os
 import re
 import secrets
@@ -14,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import b24_calendar, employees, manual, sync
+from . import b24_calendar, call_records, employees, manual, sync
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -155,6 +156,29 @@ class App:
                     people.append({"key": key, "error": f"Битрикс24 не ответил: {e}"})
         return {"date": day.isoformat(), "people": people}
 
+    def calls(self, me, is_mgr, q, month):
+        """Раздел «Звонки». Сотрудник видит только свои звонки, администратор — любого сотрудника или все по сделке."""
+        login = (q.get("login") or None) if is_mgr else me["login"]  # у администратора без login — все сотрудники
+        if login and not self.user(login):
+            raise BadRequest("Сотрудник не найден")
+        deal = None
+        if q.get("deal"):
+            if not str(q["deal"]).strip().isdigit():
+                raise BadRequest("Номер сделки — число (ID сделки в Битрикс24)")
+            deal = int(q["deal"])
+        first, last = month_bounds(month)
+        rows = call_records.listing(self.con, self.config, emp=login, deal=deal,
+                                    date_from=None if deal is not None else first, date_to=None if deal is not None else last,
+                                    with_listens=is_mgr)
+        names = {e["login"]: e["name"] for e in self.config["employees"]}
+        for r in rows:
+            r["emp_name"] = names.get(r["emp"], r["emp"])
+        return {"calls": rows, "login": login, "deal": deal, "month": month,
+                "can_listen": is_mgr or bool(call_records.settings(self.config).get("listen_own", True)),
+                "keep_days": call_records.settings(self.config)["keep_days"],
+                "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
+                "download": call_records.status() if is_mgr else None}
+
     def employee(self, login, month):
         r = self.engine.compute(login, month)
         first, last = month_bounds(month)
@@ -200,6 +224,61 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_call_audio(self, me, record_id):
+        """Аудио записи звонка с проверкой прав; каждое прослушивание и каждый отказ — в журнал (listen_log).
+        Поддерживает Range: браузер запрашивает файл частями при перемотке."""
+        app = self.app
+        with app.lock:
+            row = call_records.get(app.con, record_id)
+            if not row:
+                return self.send_json({"error": "Запись не найдена"}, 404)
+            if not call_records.can_listen(app.config, me, row):
+                call_records.log_listen(app.con, me["login"], row, self.client_ip(), "denied")
+                return self.send_json({"error": "Нет прав на прослушивание этой записи"}, 403)
+            path = call_records.file_path(app.config, row)
+            if not path or not os.path.isfile(path):
+                return self.send_json({"error": "Запись ещё не скачана или удалена по сроку хранения"}, 404)
+            rng = self.headers.get("Range") or ""
+            if not rng or rng.replace(" ", "").startswith("bytes=0-"):  # начало воспроизведения, а не перемотка
+                call_records.log_listen(app.con, me["login"], row, self.client_ip())
+        size = os.path.getsize(path)
+        start, end = 0, size - 1
+        if rng:
+            m = re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", rng)
+            if not m or not (m.group(1) or m.group(2)):
+                start = None
+            elif m.group(1):
+                start, end = int(m.group(1)), min(int(m.group(2) or size - 1), size - 1)
+            else:  # bytes=-N — последние N байт
+                start = max(0, size - int(m.group(2)))
+            if start is None or start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", mimetypes.guess_type(path)[0] or "audio/mpeg")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = f.read(min(1 << 16, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (ConnectionError, BrokenPipeError):
+            pass  # браузер прервал загрузку (перемотка, пауза, закрытие страницы)
 
     def client_ip(self):
         """Адрес клиента. За обратным прокси (server.trust_proxy) все запросы приходят с 127.0.0.1,
@@ -319,6 +398,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/calendar":  # расписание из Битрикс24 на день — запрос в Б24 без общей блокировки базы
                 return self.send_json(app.calendar(me, is_mgr, q))
+            if path == "/api/call-audio":  # аудио отдаётся долго — без общей блокировки базы
+                return self.send_call_audio(me, q.get("id") or "")
 
             with app.lock:
                 if path == "/api/bootstrap":
@@ -347,6 +428,19 @@ class Handler(BaseHTTPRequestHandler):
                     if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
                         return self.send_json({"error": "Сотрудник не найден"}, 404)
                     return self.send_json(app.employee(login, month))
+                if path == "/api/calls":  # звонки с записью: сотрудник — свои, администратор — любого или по сделке
+                    return self.send_json(app.calls(me, is_mgr, q, month))
+                if path == "/api/listen-log":
+                    if not is_mgr:
+                        return self.send_json({"error": "Журнал прослушиваний доступен только администратору"}, 403)
+                    today_ = dt.date.today()
+                    date_from = self.date_param(q.get("date_from")) or (today_ - dt.timedelta(days=30)).isoformat()
+                    date_to = self.date_param(q.get("date_to")) or today_.isoformat()
+                    names = {e["login"]: e["name"] for e in app.config["employees"]}
+                    rows = call_records.listen_journal(app.con, date_from, date_to, q.get("login") or None)
+                    for r in rows:
+                        r["name"], r["emp_name"] = names.get(r["login"], r["login"]), names.get(r["emp"], r["emp"])
+                    return self.send_json({"date_from": date_from, "date_to": date_to, "rows": rows})
                 if path == "/api/staff":  # раздел «Сотрудники»: только администраторы
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только администратору"}, 403)
