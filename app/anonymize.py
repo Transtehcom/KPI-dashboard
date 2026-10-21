@@ -158,11 +158,16 @@ class Pseudonymizer:
         return re.sub(r"(\[[A-ZА-ЯЁ]+_\d+\])(?:\s+\1)+", r"\1", "".join(out))
 
     def restore(self, value):
-        """Подставить исходные значения вместо меток в строках ответа (рекурсивно по спискам и словарям)."""
-        if isinstance(value, str):
-            return re.sub(r"\[[A-ZА-ЯЁ]+_\d+\]", lambda m: self.mapping.get(m.group(), m.group()), value)
-        if isinstance(value, list):
-            return [self.restore(v) for v in value]
-        if isinstance(value, dict):
-            return {k: self.restore(v) for k, v in value.items()}
-        return value
+        return restore(value, self.mapping)
+
+
+def restore(value, mapping):
+    """Подставить исходные значения вместо меток (рекурсивно по спискам и словарям). Без таблицы замен (удалена
+    по сроку хранения) метки остаются как есть."""
+    if isinstance(value, str):
+        return re.sub(r"\[[A-ZА-ЯЁ]+_\d+\]", lambda m: (mapping or {}).get(m.group(), m.group()), value)
+    if isinstance(value, list):
+        return [restore(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {k: restore(v, mapping) for k, v in value.items()}
+    return value

@@ -174,6 +174,19 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(self.log(), [("pm", "call1", "pm", "read"), ("tender", "call1", "pm", "denied")])
         calls = json.loads(self.get("pm", "/api/calls?month=2026-10")[2])["calls"]
         self.assertEqual({c["id"]: c["transcript"] for c in calls}, {"call1": "ready", "call2": None})
+        with db_lock():  # разбор Claude: роли по предложениям, имена — из таблицы замен
+            self.con.execute("INSERT OR REPLACE INTO call_analysis (id, version, call_type, offer, agreement, result, roles, pii) "
+                             "VALUES ('call1', 2, 'продажа', 1, 0, ?, 'К', ?)",
+                             ('{"summary": "[ИМЯ_1] согласен с ценой", "call_type": "продажа", "offer": {"made": true}}',
+                              '{"[ИМЯ_1]": "Иван Петров"}'))
+            self.con.commit()
+        d = json.loads(self.get("pm", "/api/call-transcript?id=call1")[2])
+        self.assertEqual(d["sentences"], [[1.0, "К", "цена устраивает"]])
+        self.assertEqual(d["analysis"]["summary"], "Иван Петров согласен с ценой")
+        self.assertNotIn("roles", d["analysis"])
+        c1 = next(c for c in json.loads(self.get("pm", "/api/calls?month=2026-10")[2])["calls"] if c["id"] == "call1")
+        self.assertEqual(c1["analysis"], {"call_type": "продажа", "offer": True, "agreement": False,
+                                          "summary": "Иван Петров согласен с ценой"})
 
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False

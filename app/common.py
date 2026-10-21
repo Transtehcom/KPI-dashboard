@@ -167,6 +167,15 @@ CREATE TABLE IF NOT EXISTS call_transcripts (
   id TEXT PRIMARY KEY, segments TEXT, text TEXT, duration REAL, engine TEXT, spent REAL, created TEXT,
   error TEXT, attempts INTEGER DEFAULT 0);
 
+-- разбор звонков через Claude (app/call_analysis.py): result — JSON с метками вместо персональных данных,
+-- pii — таблица замен (только на этом компьютере, удаляется вместе с записью по сроку хранения), roles — роль говорящего
+-- по предложениям расшифровки (М — сотрудник, К — собеседник, А — автоответчик, «-» — не определена);
+-- version — версия инструкции для Claude (PROMPT_VERSION): разборы прежней версии делаются заново
+CREATE TABLE IF NOT EXISTS call_analysis (
+  id TEXT PRIMARY KEY, version INTEGER, call_type TEXT, offer INTEGER, agreement INTEGER, result TEXT, roles TEXT,
+  pii TEXT, model TEXT, tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL, spent REAL, created TEXT,
+  error TEXT, attempts INTEGER DEFAULT 0);
+
 -- журнал прослушиваний записей звонков: кто, какую запись (call_records.id), чей звонок, когда, с какого адреса;
 -- result: ok — прослушал, read — открыл расшифровку, denied — запросил чужую запись без прав
 CREATE TABLE IF NOT EXISTS listen_log (

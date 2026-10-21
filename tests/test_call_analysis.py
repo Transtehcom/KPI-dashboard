@@ -48,7 +48,8 @@ class AnonymizeTest(unittest.TestCase):
                          {"a": ["Андрей Петров перезвонит"], "b": 1, "c": "[ИМЯ_9]"})
 
 
-ANSWER = {"turns": [{"from": 1, "to": 1, "who": "М"}, {"from": 2, "to": 2, "who": "К"}, {"from": 3, "to": 3, "who": "М"}], "call_type": "продажа", "summary": "[ИМЯ_1] договорилась выслать КП",
+ANSWER = {"turns": [{"from": 1, "to": 1, "who": "М"}, {"from": 2, "to": 2, "who": "К"}, {"from": 3, "to": 3, "who": "М"},
+                    {"from": 4, "to": 4, "who": "К"}], "call_type": "продажа", "summary": "[ИМЯ_1] договорилась выслать КП",
           "offer": {"made": True, "what": "защитные сооружения", "kp_promised": True, "price_named": False, "sentences": [3]},
           "agreement": {"reached": True, "what": "КП до пятницы", "when": "пятница", "sentences": [3]},
           "prices": [], "deadlines": [], "objections": [], "tone": {"client": "нейтральный", "manager": "позитивный"},
@@ -96,6 +97,73 @@ class AnalyzeTest(unittest.TestCase):
         (res, *_), _ = self.run_with({**ANSWER, "turns": [{"from": 1, "to": 2, "who": "K"}]})  # латиница, без 3-го
         self.assertFalse(res["speakers_ok"])
         self.assertEqual([l[1] for l in res["lines"]], ["К", "К", ""])
+
+
+class QueueTest(unittest.TestCase):
+    """Очередь разбора в дашборде: что отправляется, как хранится, что остаётся после удаления записи."""
+
+    def setUp(self):
+        from app import call_records, transcripts
+        from app.common import connect
+        self.cr, self.tr = call_records, transcripts
+        self.con = connect(":memory:")
+        self.addCleanup(self.con.close)
+        rows = [{"id": f"call{i}", "emp": "pm", "dt": f"2026-10-{10 + i}T10:00:00", "direction": "out", "duration": 60,
+                 "client": "Нытвинский маслозавод, ООО"} for i in range(1, 4)]
+        call_records.upsert(self.con, rows)
+        self.con.execute("UPDATE call_records SET file='x.mp3'")
+        long_segs = [[0.5, 3.0, "Добрый день, Транстехком, Мария Мельникова."],
+                     [3.5, 9.0, "Слушаю вас. Нытвинский маслозавод. Вышлите КП до пятницы, рассмотрим."]]
+        for rid, segs, engine in (("call1", long_segs, transcripts.ENGINE), ("call2", [[0, 1, "Алло?"]], transcripts.ENGINE),
+                                  ("call3", long_segs, "gigaam-v2")):
+            self.con.execute("INSERT INTO call_transcripts (id, segments, text, engine) VALUES (?,?,?,?)",
+                             (rid, json.dumps(segs, ensure_ascii=False), " ".join(s[2] for s in segs), engine))
+        self.con.commit()
+        self.sent = []
+
+    def fake_run(self, answer=None, error=None):
+        def run(cmd, input, **kw):
+            self.sent.append(input)
+            env = {"is_error": bool(error), "result": error or json.dumps(answer or ANSWER, ensure_ascii=False),
+                   "usage": {"output_tokens": 50}}
+            return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
+        return mock.patch.object(call_analysis.subprocess, "run", run)
+
+    def test_queue_sends_only_long_current_transcripts_and_stores_masked(self):
+        with self.fake_run():
+            self.assertEqual(call_analysis.run(self.con, {}, log=lambda *a: None), (2, 0, False))
+        self.assertEqual(len(self.sent), 1)  # call2 — слишком короткий, call3 — старая модель
+        self.assertNotIn("Мельникова", self.sent[0])
+        self.assertNotIn("Нытвинский", self.sent[0])
+        stored = self.con.execute("SELECT result, roles, offer, agreement FROM call_analysis WHERE id='call1'").fetchone()
+        self.assertNotIn("Мельникова", stored["result"])  # в базе — с метками
+        self.assertEqual((stored["roles"], stored["offer"], stored["agreement"]), ("МКМК", 1, 1))
+        self.assertEqual(call_analysis.get(self.con, "call1")["summary"], "Мария Мельникова договорилась выслать КП")
+        self.assertEqual(call_analysis.get(self.con, "call2")["call_type"], "недозвон")
+        with self.fake_run():
+            self.assertEqual(call_analysis.run(self.con, {}, log=lambda *a: None), (0, 0, False))  # всё уже разобрано
+        a = {c["id"]: c["analysis"] for c in self.cr.listing(self.con, {})}
+        self.assertEqual((a["call1"]["offer"], a["call1"]["summary"][:16]), (True, "Мария Мельникова"))
+        self.assertIsNone(a["call3"])
+
+    def test_usage_limit_stops_without_counting_attempt(self):
+        with self.fake_run(error="Claude AI usage limit reached|1761058800"):
+            self.assertEqual(call_analysis.run(self.con, {}, log=lambda *a: None)[2], True)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM call_analysis WHERE id='call1'").fetchone())
+
+    def test_new_prompt_version_redoes_analysis(self):
+        with self.fake_run():
+            call_analysis.run(self.con, {}, log=lambda *a: None)
+        self.con.execute("UPDATE call_analysis SET version = version - 1 WHERE id='call1'")
+        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call1"])
+
+    def test_purge_keeps_flags_but_drops_names(self):
+        with self.fake_run():
+            call_analysis.run(self.con, {}, log=lambda *a: None)
+        self.con.execute("UPDATE call_records SET dt='2020-01-01T10:00:00' WHERE id='call1'")
+        self.cr.purge_old(self.con, {"call_records": {"keep_days": 30}})
+        a = call_analysis.get(self.con, "call1")
+        self.assertEqual((a["offer"]["made"], a["summary"]), (True, "[ИМЯ_1] договорилась выслать КП"))
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import b24_calendar, call_records, employees, manual, sync, transcripts
+from . import b24_calendar, call_analysis, call_records, employees, manual, sync, transcripts
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -476,7 +476,15 @@ class Handler(BaseHTTPRequestHandler):
                     if not tr or not tr.get("engine"):  # нет строки или только неудачные попытки
                         return self.send_json({"error": "Расшифровки ещё нет"}, 404)
                     call_records.log_listen(app.con, me["login"], row, self.client_ip(), "read")
-                    return self.send_json({"id": row["id"], "segments": tr["segments"], "duration": tr["duration"]})
+                    an = call_analysis.get(app.con, row["id"])
+                    sents = call_analysis.sentences(tr["segments"])
+                    roles = an.pop("roles", "") if an else ""
+                    if len(roles) != len(sents):  # разбор сделан по другой расшифровке — роли не подходят
+                        roles = ""
+                    return self.send_json({"id": row["id"], "segments": tr["segments"], "duration": tr["duration"],
+                                           "sentences": [[t, roles[i].replace("-", "") if roles else "", s]
+                                                         for i, (t, s) in enumerate(sents)],
+                                           "analysis": an})
                 if path == "/api/listen-log":
                     if not is_mgr:
                         return self.send_json({"error": "Журнал прослушиваний доступен только администратору"}, 403)

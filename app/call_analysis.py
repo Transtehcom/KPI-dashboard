@@ -4,17 +4,21 @@
 Перед отправкой текст обезличивается (app/anonymize.py), в ответ возвращаются исходные значения. CLI вызывается
 с собственной короткой инструкцией, без инструментов, MCP, настроек и сохранения сессий, из пустой папки —
 служебная часть запроса ~1 тыс. токенов вместо ~39 тыс. (на подписке Pro это лимит, общий с обычной работой)."""
+import datetime as dt
 import json
 import os
 import re
 import subprocess
+import time
 
-from .anonymize import Pseudonymizer
-from .common import ROOT
+from .anonymize import Pseudonymizer, restore
+from .common import ROOT, db_lock
+from .transcripts import ENGINE
 
 MODEL = "sonnet"
 TIMEOUT = 300
-CALL_TYPES = ["продажа", "тендер", "снабжение", "сервис", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
+CALL_TYPES = ["продажа", "тендер", "исполнение", "снабжение", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
+PROMPT_VERSION = 2  # меняется вместе с инструкцией: разборы прежней версии делаются заново
 OBJECTIONS = ["цена", "сроки", "нет потребности", "уже есть поставщик", "нет бюджета", "не ЛПР", "нужно согласование",
               "условия оплаты", "качество", "другое"]
 TONES = ["позитивный", "нейтральный", "негативный"]
@@ -25,10 +29,22 @@ SYSTEM_PROMPT = f"""Ты анализируешь расшифровки тел�
 Персональные данные заменены метками вида [ИМЯ_1], [ОРГ_2], [МЕСТО_1], [ТЕЛЕФОН_1] — используй метки как есть.
 Каждое предложение расшифровки пронумеровано.
 
+Тип звонка (call_type) — ровно один, по главной теме разговора:
+- продажа — ТТК продаёт: поиск и развитие клиента, выявление потребности, предложение продукции, КП вне тендерной процедуры;
+- тендер — работа по закупочной процедуре клиента: запрос ТКП, вопросы по документации, подача и итоги заявки, переторжка;
+- исполнение — по уже заключённому договору или заказу клиента: спецификации, сроки поставки, документы, оплата, отгрузка;
+- снабжение — ТТК покупает: разговор с поставщиком или подрядчиком, в том числе входящее предложение поставщика нам
+  (а «закупка» клиента, в которой покупают у ТТК, — это тендер или исполнение, не снабжение);
+- внутренний — разговор с коллегой из ТТК;
+- недозвон — живой разговор был, но нужного человека нет или не соединили (секретарь, «перезвоните позже»);
+- автоответчик — живого разговора не было: меню, голосовая почта, гудки;
+- личный — не по работе; другое — ничего из перечисленного.
+
 Определения (строго):
-- Предложение (offer.made = true): сотрудник ТТК предложил собеседнику конкретный товар, услугу или решение ТТК
-  (назвал, что именно, — с ценой или без), ИЛИ договорился выслать коммерческое предложение (КП).
-  Не считается: общий рассказ о компании, только вопросы о потребности, предложение, которое делают сотруднику ТТК
+- Предложение (offer.made = true): сотрудник ТТК в этом звонке предложил собеседнику конкретный товар, услугу или
+  решение ТТК (назвал, что именно, — с ценой или без), ИЛИ договорился выслать коммерческое предложение (КП/ТКП).
+  Не считается: общий рассказ о компании, только вопросы о потребности, обсуждение деталей уже отправленного КП или
+  действующего заказа (уточнения, согласование формулировок), предложение, которое делают сотруднику ТТК
   (например, поставщик — нашему снабженцу).
 - Договорённость (agreement.reached = true): разговор закончился конкретным следующим шагом, на который собеседник
   согласился, и у шага есть дата или срок: встреча или ВКС, отправка КП с обещанием рассмотреть, счёт, согласование
@@ -112,25 +128,119 @@ def run_claude(prompt, config, attempts=2):
     raise RuntimeError(f"Claude ответил не JSON: {text[:200]}")
 
 
-def analyze(segments, meta, config, crm_names=()):
-    """Разобрать расшифровку. Возвращает (результат с исходными значениями, таблица замен, сведения о вызове, текст
-    для Claude). В результат добавляются предложения с ролью говорящего: lines = [[секунда, роль, текст]]."""
-    numbered = sentences(segments)
-    ps = Pseudonymizer(crm_names)
-    masked = [(t, ps.mask(s)) for t, s in numbered]
-    prompt = build_prompt(meta, masked)
-    call = run_claude(prompt, config)
-    res = ps.restore(call.pop("result"))
-    roles = [""] * len(numbered)
-    for turn in res.get("turns") or []:
+def roles_of(turns, n):
+    """Роль говорящего для каждого из n предложений по диапазонам из ответа: строка из «М», «К», «А» и «-» (нет роли)."""
+    roles = ["-"] * n
+    for turn in turns or []:
         try:
             a, b = int(turn["from"]), int(turn["to"])
         except (KeyError, TypeError, ValueError):
             continue
         who = {"M": "М", "K": "К", "A": "А"}.get(str(turn.get("who")).upper(), str(turn.get("who")).upper())
         if who in ("М", "К", "А"):
-            for i in range(max(1, a), min(len(numbered), b) + 1):
+            for i in range(max(1, a), min(n, b) + 1):
                 roles[i - 1] = who
-    res["speakers_ok"] = all(roles)  # каждому предложению досталась роль
-    res["lines"] = [[t, roles[i], s] for i, (t, s) in enumerate(numbered)]
-    return res, ps.mapping, call, prompt
+    return "".join(roles)
+
+
+def analyze_masked(segments, meta, config, crm_names=()):
+    """Разобрать расшифровку: (результат с метками вместо персональных данных, роли по предложениям, таблица замен,
+    сведения о вызове, текст для Claude)."""
+    numbered = sentences(segments)
+    ps = Pseudonymizer(crm_names)
+    prompt = build_prompt(meta, [(t, ps.mask(s)) for t, s in numbered])
+    call = run_claude(prompt, config)
+    res = call.pop("result")
+    roles = roles_of(res.pop("turns", None), len(numbered))
+    return res, roles, ps.mapping, call, prompt
+
+
+def analyze(segments, meta, config, crm_names=()):
+    """То же с исходными значениями (для проб): (результат, таблица замен, сведения о вызове, текст для Claude);
+    lines = [[секунда, роль, текст]], speakers_ok — роль есть у каждого предложения."""
+    res, roles, mapping, call, prompt = analyze_masked(segments, meta, config, crm_names)
+    res = restore(res, mapping)
+    res["speakers_ok"] = "-" not in roles
+    res["lines"] = [[t, roles[i].replace("-", ""), s] for i, (t, s) in enumerate(sentences(segments))]
+    return res, mapping, call, prompt
+
+
+# ---------- очередь разбора в дашборде (таблица call_analysis)
+
+DEFAULTS = {"analyze": True, "analyze_per_run": 30, "analyze_min_chars": 80}
+LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|лимит|429|overloaded", re.I)
+MAX_ATTEMPTS = 3
+
+
+def settings(config):
+    return {**DEFAULTS, **(config.get("call_records") or {})}
+
+
+def pending(con, limit):
+    """Расшифрованные текущей моделью звонки без разбора текущей версии инструкции; новые первыми."""
+    return [dict(r) for r in con.execute(
+        "SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
+        "LEFT JOIN call_analysis a ON a.id = c.id WHERE c.file IS NOT NULL AND t.engine = ? "
+        "AND (a.id IS NULL OR (a.version < ? AND a.attempts < ?) OR (a.error IS NOT NULL AND a.attempts < ?)) "
+        "ORDER BY a.id IS NULL DESC, c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, MAX_ATTEMPTS, int(limit)))]
+
+
+def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None):
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    with db_lock():
+        if error:
+            con.execute("INSERT INTO call_analysis (id, version, error, attempts, created) VALUES (?,?,?,1,?) "
+                        "ON CONFLICT(id) DO UPDATE SET error=excluded.error, attempts=attempts+1, created=excluded.created",
+                        (rid, PROMPT_VERSION, error[:300], now))
+        else:
+            call = call or {}
+            con.execute("INSERT OR REPLACE INTO call_analysis (id, version, call_type, offer, agreement, result, roles, pii, "
+                        "model, tokens_in, tokens_out, cost_usd, spent, created, error, attempts) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,0)",
+                        (rid, PROMPT_VERSION, res.get("call_type"), int(bool((res.get("offer") or {}).get("made"))),
+                         int(bool((res.get("agreement") or {}).get("reached"))), json.dumps(res, ensure_ascii=False),
+                         roles, json.dumps(mapping or {}, ensure_ascii=False), call.get("model"), call.get("tokens_in"),
+                         call.get("tokens_out"), call.get("cost_usd"), spent, now))
+        con.commit()
+
+
+def get(con, rid):
+    """Разбор с подставленными исходными значениями или None."""
+    r = con.execute("SELECT * FROM call_analysis WHERE id=? AND result IS NOT NULL", (rid,)).fetchone()
+    if not r:
+        return None
+    res = restore(json.loads(r["result"]), json.loads(r["pii"]) if r["pii"] else None)
+    return {**res, "roles": r["roles"] or "", "version": r["version"], "model": r["model"]}
+
+
+def run(con, config, log=print):
+    """Разобрать очередь. Возвращает (разобрано, ошибок, остановлено_по_лимиту)."""
+    s = settings(config)
+    if not s["analyze"]:
+        return 0, 0, False
+    titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
+    ok = failed = 0
+    for r in pending(con, s["analyze_per_run"]):
+        segs = json.loads(r["segments"] or "[]")
+        if len(r["text"] or "") < int(s["analyze_min_chars"]):  # гудки, «алло» без ответа — без Claude
+            short = {"call_type": "недозвон", "summary": "Разговора нет или он слишком короткий для разбора",
+                     "offer": {"made": False}, "agreement": {"reached": False}, "prices": [], "deadlines": [],
+                     "objections": [], "tone": {}, "next_step": None, "local": True}
+            save(con, r["id"], short, "-" * len(sentences(segs)), {}, {"model": "local"})
+            ok += 1
+            continue
+        t = time.time()
+        try:
+            res, roles, mapping, call, _ = analyze_masked(
+                segs, {"direction": r["direction"], "duration": r["duration"], "position": titles.get(r["emp"])},
+                config, [r["client"] or ""])
+        except Exception as e:  # noqa
+            if LIMIT_RE.search(str(e)):  # лимит подписки — остановиться до следующей синхронизации, попытку не считать
+                log(f"Разбор звонков: лимит Claude ({str(e)[:120]}) — продолжу при следующей синхронизации")
+                return ok, failed, True
+            save(con, r["id"], error=f"{type(e).__name__}: {e}")
+            failed += 1
+            continue
+        save(con, r["id"], res, roles, mapping, call, spent=round(time.time() - t, 1))
+        ok += 1
+    return ok, failed, False

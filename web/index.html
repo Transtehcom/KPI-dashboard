@@ -261,6 +261,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .transcript { max-height: 360px; overflow: auto; max-width: 90ch; font-size: 13px; line-height: 1.5; margin-bottom: 6px; }
 .transcript p { margin: 0 0 4px; }
 .transcript .ts { font: 500 12px var(--mono); margin-right: 6px; }
+.transcript p.rМ { border-left: 3px solid var(--accent); padding-left: 8px; }
+.transcript p.rК { border-left: 3px solid #e08a2b; padding-left: 8px; margin-left: 24px; }
+.transcript p.rА { color: var(--fg-3); padding-left: 11px; }
+.tr-wrap { display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); gap: 12px 20px; align-items: start; }
+@media (max-width: 900px) { .tr-wrap { grid-template-columns: 1fr; } }
+.an-table { font-size: 12px; border-collapse: collapse; width: 100%; }
+.an-table th, .an-table td { text-align: left; vertical-align: top; padding: 3px 6px; border-top: 1px solid var(--line); white-space: normal; }
+.an-table th { color: var(--fg-3); font-weight: 600; width: 110px; }
+.an-table .yes { color: var(--good); } .an-table .no { color: var(--fg-3); }
+.an { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; cursor: help; }
+.an-type { font-size: 12px; }
+.an-flag { font-size: 11px; border-radius: 999px; padding: 0 7px; background: var(--good-soft, #e3f4ea); color: var(--good); }
 .staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
 .staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
 .staff-form fieldset { border: 0; margin: 0; padding: 0; }
@@ -991,6 +1003,31 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const DIR = { out: "Исходящий", in: "Входящий" };
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
+  // разбор звонка Claude: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
+  const anCell = (c) => {
+    const a = c.analysis;
+    if (!a) return c.transcript === "ready" ? `<span class="muted small">разбор позже</span>` : `<span class="muted">—</span>`;
+    return `<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}</span>`;
+  };
+  function analysisHtml(a) {  // полный разбор над расшифровкой
+    if (!a) return `<div class="muted small">Разбора пока нет: он появится после расшифровки, в фоне.</div>`;
+    const yn = (v) => v ? `<b class="yes">да</b>` : `<b class="no">нет</b>`;
+    const list = (xs, f) => (xs || []).length ? xs.map((x) => esc(f(x))).join("<br>") : "—";
+    const o = a.offer || {}, g = a.agreement || {}, tone = a.tone || {};
+    return `<table class="an-table"><tbody>
+      <tr><th>Тип</th><td>${esc(a.call_type || "—")}</td></tr>
+      <tr><th>Суть</th><td>${esc(a.summary || "—")}</td></tr>
+      <tr><th>Предложение</th><td>${yn(o.made)} ${esc(o.what || "")}${o.kp_promised ? " · обещано КП" : ""}${o.price_named ? " · названа цена" : ""}</td></tr>
+      <tr><th>Договорённость</th><td>${yn(g.reached)} ${esc(g.what || "")}${g.when ? ` · срок: ${esc(g.when)}` : ""}</td></tr>
+      ${(a.prices || []).length ? `<tr><th>Цены</th><td>${list(a.prices, (x) => `${x.value} — ${x.what}`)}</td></tr>` : ""}
+      ${(a.deadlines || []).length ? `<tr><th>Сроки</th><td>${list(a.deadlines, (x) => `${x.value} — ${x.what}`)}</td></tr>` : ""}
+      ${(a.objections || []).length ? `<tr><th>Возражения</th><td>${list(a.objections, (x) => `${x.type}: ${x.text}`)}</td></tr>` : ""}
+      ${tone.client ? `<tr><th>Тон</th><td>клиент — ${esc(tone.client)}, сотрудник — ${esc(tone.manager || "—")}</td></tr>` : ""}
+      ${a.next_step ? `<tr><th>Следующий шаг</th><td>${esc(a.next_step)}</td></tr>` : ""}
+    </tbody></table>`;
+  }
+  const ROLE = { "М": "Сотрудник", "К": "Собеседник", "А": "Автоответчик" };
+
   // фильтры «Звонков» отличаются от исходных: текущий месяц, все сотрудники, без сделки, по дате от новых
   function callsFiltered() {
     const p = state.cPer, s = state.cSort;
@@ -1040,9 +1077,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form>
           <button class="btn" type="button" id="cReset" ${callsFiltered() ? "" : "disabled"}>Сбросить фильтры</button></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
-        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
           ${calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
-            <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
+            <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="an-cell">${anCell(c)}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
@@ -1097,9 +1134,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       tr.after(row); btn.setAttribute("aria-expanded", "true");
       try {
         const t = await api("/api/call-transcript?id=" + encodeURIComponent(btn.dataset.text));
-        row.firstElementChild.innerHTML = `<div class="transcript">${t.segments.length ? t.segments.map((s) =>
-          `<p><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${esc(s[2])}</p>`).join("") : `<p class="muted">Речь не распознана</p>`}</div>
-          <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах; реплики менеджера и клиента не размечены.</div>`;
+        const roles = t.sentences.some((s) => s[1]);  // роли есть — показываем по предложениям, иначе по фрагментам
+        const lines = roles ? t.sentences.map((s) => [s[0], s[1], s[2]]) : t.segments.map((s) => [s[0], "", s[2]]);
+        row.firstElementChild.innerHTML = `<div class="tr-wrap">${analysisHtml(t.analysis)}
+          <div class="transcript">${lines.length ? lines.map((s, i) => {
+            const same = roles && i && lines[i - 1][1] === s[1];  // реплика того же говорящего — без повтора подписи
+            return `<p class="${s[1] ? "r" + s[1] : ""}"><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${s[1] && !same ? `<b>${ROLE[s[1]] || ""}:</b> ` : ""}${esc(s[2])}</p>`;
+          }).join("") : `<p class="muted">Речь не распознана</p>`}</div></div>
+          <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах. ${roles ? "Кто говорит — определил Claude по смыслу." : "Реплики не размечены: разбора ещё нет."} Разбор — Claude по обезличенному тексту.</div>`;
         row.querySelectorAll("[data-at]").forEach((b) => b.addEventListener("click", () => player(btn.dataset.text, +b.dataset.at)));
       } catch (e) { if (e.message !== "auth") row.firstElementChild.innerHTML = `<div style="color:var(--bad)">${esc(e.message)}</div>`; }
     }));

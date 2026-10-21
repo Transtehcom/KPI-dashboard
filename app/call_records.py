@@ -5,12 +5,14 @@
 не больше max_per_run файлов: первая выгрузка за полгода растягивается на несколько синхронизаций
 и не задерживает обновление KPI. Там же звонки получают привязки своего дела CRM (сделки, лиды, контакты)."""
 import datetime as dt
+import json
 import os
 import threading
 import time
 import traceback
 import urllib.request
 
+from .anonymize import restore
 from .common import ROOT, db_lock
 
 # dir — папка записей (относительно папки дашборда или абсолютный путь, в т.ч. сетевой);
@@ -144,6 +146,16 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
             for t in con.execute(f"SELECT id, error, attempts, segments IS NOT NULL ready FROM call_transcripts "
                                  f"WHERE id IN ({','.join('?' * len(chunk))})", chunk):
                 tr[t["id"]] = "ready" if t["ready"] else "error" if t["attempts"] >= 3 else "pending"
+    an = {}  # разбор Claude: тип, предложение, договорённость, суть (имена подставляются из таблицы замен)
+    if rows:
+        ids = [r["id"] for r in rows]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for a in con.execute(f"SELECT id, call_type, offer, agreement, result, pii FROM call_analysis "
+                                 f"WHERE result IS NOT NULL AND id IN ({','.join('?' * len(chunk))})", chunk):
+                summary = json.loads(a["result"]).get("summary")
+                an[a["id"]] = {"call_type": a["call_type"], "offer": bool(a["offer"]), "agreement": bool(a["agreement"]),
+                               "summary": restore(summary, json.loads(a["pii"]) if a["pii"] else None)}
     listens = {}
     if with_listens and rows:
         ids = [r["id"] for r in rows]
@@ -165,7 +177,8 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
             audio = "pending"
         item = {k: r[k] for k in ("id", "emp", "dt", "direction", "duration", "phone", "client")}
         item.update(audio=audio, deals=deals_of(r),
-                    transcript=tr.get(r["id"]) or ("pending" if audio == "ready" else None))
+                    transcript=tr.get(r["id"]) or ("pending" if audio == "ready" else None),
+                    analysis=an.get(r["id"]))
         if with_listens:
             item["listens"] = listens.get(r["id"], 0)
         out.append(item)
@@ -294,6 +307,7 @@ def purge_old(con, config):
         with db_lock():
             con.execute("UPDATE call_records SET file=NULL, purged=? WHERE id=?", (_now(), r["id"]))
             con.execute("DELETE FROM call_transcripts WHERE id=?", (r["id"],))
+            con.execute("UPDATE call_analysis SET pii=NULL WHERE id=?", (r["id"],))  # отметки для отчётов остаются
             con.commit()
     return len(rows)
 
@@ -315,6 +329,12 @@ def run(con, b24, config, log=print):
         ok, failed = transcripts.run(con, config, records_dir(config), log)
         if ok or failed:
             msg.append(f"расшифровано: {ok}" + (f", ошибок: {failed}" if failed else ""))
+        _status["message"] = "Записи звонков: " + "; ".join(msg) + "; идёт разбор звонков…"
+        from . import call_analysis
+        ok, failed, limited = call_analysis.run(con, config, log)
+        if ok or failed or limited:
+            msg.append(f"разобрано: {ok}" + (f", ошибок: {failed}" if failed else "")
+                       + ("; лимит Claude — продолжу позже" if limited else ""))
         left = con.execute("SELECT COUNT(*) FROM call_records WHERE file IS NULL AND purged IS NULL AND attempts < ?",
                            (MAX_ATTEMPTS,)).fetchone()[0]
         if left:
