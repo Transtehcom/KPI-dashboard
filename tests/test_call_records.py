@@ -186,6 +186,22 @@ class TranscriptsTest(unittest.TestCase):
         st = {c["id"]: c["transcript"] for c in call_records.listing(self.con, self.config)}
         self.assertEqual(st, {"call1": "ready", "call2": "error", "call3": None})
 
+    def test_ivr_dropped_by_sentence(self):
+        segs = [[0.0, 9.0, "Вас приветствует компания Транстехком. Нажмите 1 для соединения с отделом продаж."],
+                [9.5, 14.0, "Оставайтесь на линии. Алло, здравствуйте! Меня зовут Мария."],
+                [15.0, 18.0, "Продолжая разговор, вы соглашаетесь с обработкой персональных данных"]]
+        self.assertEqual(transcripts.drop_ivr(segs, transcripts.IVR_PHRASES),
+                         [[9.5, 14.0, "Алло, здравствуйте! Меня зовут Мария."]])
+
+    def test_old_engine_transcripts_redone_after_new_records(self):
+        (self.dir / "2026-10" / "call3.mp3").write_bytes(b"x")
+        self.con.execute("UPDATE call_records SET file='2026-10/call3.mp3' WHERE id='call3'")
+        self.con.execute("INSERT INTO call_transcripts (id, segments, text, engine) VALUES ('call1', '[]', '', 'gigaam-v2')")
+        self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call2", "call3", "call1"])
+        self.run_worker()
+        self.assertEqual(transcripts.get(self.con, "call1")["engine"], transcripts.ENGINE)
+        self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call2"])  # ошибка — повторится
+
     def test_transcript_deleted_with_audio(self):
         self.run_worker()
         old = (dt.date.today() - dt.timedelta(days=100)).isoformat() + "T10:00:00"

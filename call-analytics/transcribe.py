@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Локальная расшифровка телефонных звонков (русский язык).
 
-Модели: GigaAM v2 (Сбер, русская речь) + Whisper turbo (пунктуация, сверка).
-Всё работает офлайн после первой загрузки моделей (~1.3 ГБ, один раз).
+Модели: GigaAM v3 с пунктуацией и заглавными буквами (Сбер, русская речь) + Whisper turbo (сверка).
+Всё работает офлайн после первой загрузки моделей (~0,8 ГБ с Whisper, ~170 МБ для --fast; один раз).
+Сравнение на звонках ТТК (21.10.2026): v3 точнее v2, меньше обрывков, 3,7 с на минуту звонка на i3-12100;
+T-one (телефония 8 кГц) — без пунктуации и с бо́льшим числом ошибок.
 
 Установка:  pip install sherpa-onnx soundfile numpy scipy
 Запуск:     python transcribe.py звонок.mp3 [ещё.mp3 ...] [--fast] [--threads=4]
-            --fast  только GigaAM (в 6-7 раз быстрее, без пунктуации)
+            --fast  только GigaAM (в 6-7 раз быстрее Whisper; пунктуацию ставит сама GigaAM v3)
 Результат:  звонок.txt рядом с аудиофайлом
 
 Для дашборда (app/transcripts.py): python transcribe.py --jsonl --fast
@@ -23,7 +25,7 @@ from scipy.signal import resample_poly
 
 MODELS = Path.home() / ".cache" / "call-transcribe"
 BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
-GIGA = "sherpa-onnx-nemo-transducer-giga-am-v2-russian-2025-04-19"
+GIGA = "sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16"
 WHISPER = "sherpa-onnx-whisper-turbo"
 SR = 16000
 
@@ -55,25 +57,34 @@ def load_audio(path):
     return a
 
 
+PAD = 0.25  # запас по краям фрагмента: детектор речи обрезает первые и последние слоги
+
+
 def segments(audio):
+    """Фрагменты речи [(начало в секундах, отсчёты)] — с запасом PAD по краям из исходной записи."""
     vc = so.VadModelConfig()
     vc.silero_vad.model = str(fetch("silero_vad.onnx", archive=False))
-    vc.silero_vad.threshold = 0.4
-    vc.silero_vad.min_silence_duration = 0.4
-    vc.silero_vad.min_speech_duration = 0.2
-    vc.silero_vad.max_speech_duration = 20
+    vc.silero_vad.threshold = 0.35  # телефонная речь тихая: при 0.4 терялись короткие реплики
+    vc.silero_vad.min_silence_duration = 0.5
+    vc.silero_vad.min_speech_duration = 0.15
+    vc.silero_vad.max_speech_duration = 25
     vc.sample_rate = SR
     vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=600)
-    out = []
+    spans = []
     for i in range(0, len(audio), 512):
         vad.accept_waveform(audio[i:i + 512])
         while not vad.empty():
-            out.append((vad.front.start / SR, np.array(vad.front.samples)))
+            spans.append((vad.front.start, vad.front.start + len(vad.front.samples)))
             vad.pop()
     vad.flush()
     while not vad.empty():
-        out.append((vad.front.start / SR, np.array(vad.front.samples)))
+        spans.append((vad.front.start, vad.front.start + len(vad.front.samples)))
         vad.pop()
+    p = int(PAD * SR)
+    out = []
+    for s, e in spans:
+        s, e = max(0, s - p), min(len(audio), e + p)
+        out.append((s / SR, audio[s:e]))
     return out
 
 

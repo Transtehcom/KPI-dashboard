@@ -1,9 +1,10 @@
 """Расшифровка записей звонков на этом компьютере (таблица call_transcripts).
 
-Распознавание — call-analytics/transcribe.py (GigaAM v2 через sherpa-onnx, быстрый режим): отдельный процесс
-с пониженным приоритетом, чтобы дашборд не тормозил и модель (~600 МБ) не держалась в его памяти.
-Запускается из фонового прохода call_records.run после скачивания записей, не больше per_run записей за раз,
-новые первыми. Голосовое меню АТС в начале входящих звонков («нажмите 1 для соединения…») в текст не попадает."""
+Распознавание — call-analytics/transcribe.py (GigaAM v3 с пунктуацией через sherpa-onnx, быстрый режим): отдельный
+процесс с пониженным приоритетом, чтобы дашборд не тормозил и модель не держалась в его памяти.
+Запускается из фонового прохода call_records.run после скачивания записей, не больше per_run записей за раз:
+сначала новые записи, затем расшифрованные прежней моделью (ENGINE сменился — текст делается заново).
+Голосовое меню АТС («нажмите 1 для соединения…») вырезается по предложениям."""
 import datetime as dt
 import json
 import os
@@ -15,13 +16,17 @@ import threading
 from .common import ROOT, db_lock
 
 WORKER = os.path.join(ROOT, "call-analytics", "transcribe.py")
-ENGINE = "gigaam-v2"
+ENGINE = "gigaam-v3-punct"
 MAX_ATTEMPTS = 3
 SILENCE_TIMEOUT = 30 * 60  # нет ни одного результата полчаса — процесс распознавания считается зависшим
 # фразы голосового меню; дополнить можно в config.json → call_records.ivr_phrases
 IVR_PHRASES = ["вас приветствует компания", "для соединения с", "наберите внутренний номер", "оставайтесь на линии",
                "первый свободный сотрудник", "для повторного прослушивания", "ваш звонок очень важен",
-               "все операторы заняты", "разговор может быть записан"]
+               "все операторы заняты", "разговор может быть записан", "продолжая разговор, вы соглашаетесь",
+               "соглашаетесь с обработкой персональных данных",
+               # меню и автоответчики компаний, куда звонят менеджеры
+               "вы позвонили в", "вы обратились в", "разговоры записываются", "наберите добавочный",
+               "добавочный номер сотрудника", "дождитесь ответа", "позиция в очереди", "в тональном режиме"]
 DEFAULTS = {"transcribe": True, "transcribe_per_run": 200, "transcribe_threads": 4}
 
 
@@ -34,10 +39,17 @@ def _now():
 
 
 def drop_ivr(segments, phrases):
-    """Убрать фразы голосового меню: фрагменты, где есть одна из phrases (сравнение без регистра и «ё»)."""
+    """Убрать голосовое меню: предложения, где есть одна из phrases (без регистра и «ё»); фрагмент, от которого
+    ничего не осталось, — целиком. Живая речь в том же фрагменте («…оставайтесь на линии. Алло!») сохраняется."""
     norm = lambda s: re.sub(r"\s+", " ", s.lower().replace("ё", "е")).strip()
     ph = [norm(p) for p in phrases if p]
-    return [s for s in segments if not any(p in norm(s[2]) for p in ph)]
+    out = []
+    for s in segments:
+        sentences = [x for x in re.split(r"(?<=[.!?…])\s+", s[2]) if x.strip()]
+        keep = [x for x in sentences if not any(p in norm(x) for p in ph)]
+        if keep:
+            out.append([s[0], s[1], " ".join(keep)])
+    return out
 
 
 def plain_text(segments):
@@ -54,10 +66,11 @@ def get(con, record_id):
 
 
 def pending(con, limit):
+    """Очередь: ещё не расшифрованные (новые первыми), затем ошибки и тексты прежней модели (попыток < MAX_ATTEMPTS)."""
     return [dict(r) for r in con.execute(
         "SELECT c.id, c.file FROM call_records c LEFT JOIN call_transcripts t ON t.id = c.id "
-        "WHERE c.file IS NOT NULL AND (t.id IS NULL OR (t.error IS NOT NULL AND t.attempts < ?)) "
-        "ORDER BY c.dt DESC LIMIT ?", (MAX_ATTEMPTS, int(limit)))]
+        "WHERE c.file IS NOT NULL AND (t.id IS NULL OR (t.attempts < ? AND (t.error IS NOT NULL OR t.engine <> ?))) "
+        "ORDER BY t.id IS NULL DESC, c.dt DESC LIMIT ?", (MAX_ATTEMPTS, ENGINE, int(limit)))]
 
 
 def save(con, record_id, res, phrases, spent=None):

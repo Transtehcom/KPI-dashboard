@@ -1099,7 +1099,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         const t = await api("/api/call-transcript?id=" + encodeURIComponent(btn.dataset.text));
         row.firstElementChild.innerHTML = `<div class="transcript">${t.segments.length ? t.segments.map((s) =>
           `<p><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${esc(s[2])}</p>`).join("") : `<p class="muted">Речь не распознана</p>`}</div>
-          <div class="muted small">Расшифровка автоматическая: возможны ошибки в отдельных словах, реплики собеседников не разделены.</div>`;
+          <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах; реплики менеджера и клиента не размечены.</div>`;
         row.querySelectorAll("[data-at]").forEach((b) => b.addEventListener("click", () => player(btn.dataset.text, +b.dataset.at)));
       } catch (e) { if (e.message !== "auth") row.firstElementChild.innerHTML = `<div style="color:var(--bad)">${esc(e.message)}</div>`; }
     }));
