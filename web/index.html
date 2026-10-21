@@ -252,6 +252,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .staff-list tr.sel { background: var(--accent-soft); }
 .staff-list td.nw { white-space: nowrap; }
 .staff-list.calls tbody tr { cursor: default; }
+.staff-list.calls .sort-h { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; }
+.staff-list.calls .sort-h:hover, .staff-list.calls .sort-h.on { color: var(--accent); }
 .staff-list.calls td.n { font-family: var(--mono); }
 .staff-list.calls audio { height: 32px; width: 260px; max-width: 70vw; vertical-align: middle; }
 .staff-list.calls .rec-cell { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -1013,6 +1015,12 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
     const emps = d.employees, multi = emps.length > 1;  // администратор или руководитель отдела
     const title = d.deal != null ? `по сделке ${d.deal}` : mLabel(d.month).toLowerCase();
+    // сортировка щелчком по заголовку; при равенстве — новые звонки выше
+    const sort = state.cSort || { key: "dt", dir: -1 };
+    const SORT_KEYS = { dt: (c) => c.dt, emp: (c) => c.emp_name || "", direction: (c) => DIR[c.direction] || "", duration: (c) => c.duration || 0 };
+    const cmp = (a, b) => (typeof a === "number" ? a - b : String(a).localeCompare(String(b), "ru"));
+    const calls = [...d.calls].sort((a, b) => sort.dir * cmp(SORT_KEYS[sort.key](a), SORT_KEYS[sort.key](b)) || cmp(b.dt, a.dt));
+    const th = (key, label) => `<th aria-sort="${sort.key === key ? (sort.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-h${sort.key === key ? " on" : ""}" data-sort="${key}" title="Сортировать">${label}<span aria-hidden="true">${sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</span></button></th>`;
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
         <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
@@ -1021,8 +1029,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
             <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× весь месяц</button>` : ""}</form></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
-        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr><th>Дата</th>${multi ? "<th>Сотрудник</th>" : ""}<th>Звонок</th><th>Длит.</th><th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
-          ${d.calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+          ${calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот месяц"} нет</div>`}
@@ -1037,6 +1045,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <td>${esc(r.ip || "")}</td><td>${r.result === "ok" ? "прослушал(а)" : r.result === "read" ? "открыл(а) расшифровку" : `<span style="color:var(--bad)">отказано: нет прав</span>`}</td></tr>`).join("")}
         </tbody></table></div>` : log ? `<div class="muted small">За период прослушиваний нет.</div>` : ""}
       </div></details></section>` : ""}`;
+    main.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
+      const key = b.dataset.sort;  // первый щелчок: дата и длительность — по убыванию, текст — по алфавиту
+      state.cSort = sort.key === key ? { key, dir: -sort.dir } : { key, dir: key === "dt" || key === "duration" ? -1 : 1 };
+      renderCalls(d, log);
+    }));
     const sel = document.getElementById("cLogin");
     if (sel) sel.addEventListener("change", () => { state.cLogin = sel.value; loadCalls(); });
     document.getElementById("cDealForm").addEventListener("submit", (ev) => { ev.preventDefault(); state.cDeal = document.getElementById("cDeal").value; loadCalls(); });
