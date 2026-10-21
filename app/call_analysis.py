@@ -182,12 +182,12 @@ def settings(config):
 
 
 def pending(con, limit):
-    """Расшифрованные текущей моделью звонки без разбора текущей версии инструкции; новые первыми."""
+    """Расшифрованные текущей моделью звонки без разбора текущей версии инструкции — от новых к старым."""
     return [dict(r) for r in con.execute(
         "SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
         "LEFT JOIN call_analysis a ON a.id = c.id WHERE c.file IS NOT NULL AND t.engine = ? "
         "AND (a.id IS NULL OR (a.version < ? AND a.attempts < ?) OR (a.error IS NOT NULL AND a.attempts < ?)) "
-        "ORDER BY a.id IS NULL DESC, c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, MAX_ATTEMPTS, int(limit)))]
+        "ORDER BY c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, MAX_ATTEMPTS, int(limit)))]
 
 
 def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None):

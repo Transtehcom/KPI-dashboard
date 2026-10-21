@@ -2,8 +2,8 @@
 
 Распознавание — call-analytics/transcribe.py (GigaAM v3 с пунктуацией через sherpa-onnx, быстрый режим): отдельный
 процесс с пониженным приоритетом, чтобы дашборд не тормозил и модель не держалась в его памяти.
-Запускается из фонового прохода call_records.run после скачивания записей, не больше per_run записей за раз:
-сначала новые записи, затем расшифрованные прежней моделью (ENGINE сменился — текст делается заново).
+Запускается из фонового прохода call_records.run после скачивания записей, не больше per_run записей за раз,
+от новых звонков к старым; тексты прежней модели (ENGINE сменился) делаются заново в том же порядке.
 Голосовое меню АТС («нажмите 1 для соединения…») вырезается по предложениям."""
 import datetime as dt
 import json
@@ -66,11 +66,12 @@ def get(con, record_id):
 
 
 def pending(con, limit):
-    """Очередь: ещё не расшифрованные (новые первыми), затем ошибки и тексты прежней модели (попыток < MAX_ATTEMPTS)."""
+    """Очередь: не расшифрованные, ошибки и тексты прежней модели (попыток < MAX_ATTEMPTS) — строго от новых звонков
+    к старым: свежие звонки смотрят чаще, и разбор (только по текстам текущей модели) идёт в том же порядке."""
     return [dict(r) for r in con.execute(
         "SELECT c.id, c.file FROM call_records c LEFT JOIN call_transcripts t ON t.id = c.id "
         "WHERE c.file IS NOT NULL AND (t.id IS NULL OR (t.attempts < ? AND (t.error IS NOT NULL OR t.engine <> ?))) "
-        "ORDER BY t.id IS NULL DESC, c.dt DESC LIMIT ?", (MAX_ATTEMPTS, ENGINE, int(limit)))]
+        "ORDER BY c.dt DESC LIMIT ?", (MAX_ATTEMPTS, ENGINE, int(limit)))]
 
 
 def save(con, record_id, res, phrases, spent=None):

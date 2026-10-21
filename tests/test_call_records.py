@@ -193,11 +193,13 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(transcripts.drop_ivr(segs, transcripts.IVR_PHRASES),
                          [[9.5, 14.0, "Алло, здравствуйте! Меня зовут Мария."]])
 
-    def test_old_engine_transcripts_redone_after_new_records(self):
+    def test_queue_newest_first_including_old_engine(self):
         (self.dir / "2026-10" / "call3.mp3").write_bytes(b"x")
         self.con.execute("UPDATE call_records SET file='2026-10/call3.mp3' WHERE id='call3'")
         self.con.execute("INSERT INTO call_transcripts (id, segments, text, engine) VALUES ('call1', '[]', '', 'gigaam-v2')")
-        self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call2", "call3", "call1"])
+        for rid, day in (("call1", "21"), ("call2", "05"), ("call3", "12")):  # call1 — новее всех, но с текстом старой модели
+            self.con.execute("UPDATE call_records SET dt=? WHERE id=?", (f"2026-10-{day}T10:00:00", rid))
+        self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call1", "call3", "call2"])
         self.run_worker()
         self.assertEqual(transcripts.get(self.con, "call1")["engine"], transcripts.ENGINE)
         self.assertEqual([r["id"] for r in transcripts.pending(self.con, 10)], ["call2"])  # ошибка — повторится
