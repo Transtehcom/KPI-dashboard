@@ -184,6 +184,7 @@ class App:
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_from": call_records.keep_from(self.config),
+                "analyze_hours": call_analysis.settings(self.config).get("analyze_hours"),
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
                 "download": call_records.status() if is_mgr else None}
 

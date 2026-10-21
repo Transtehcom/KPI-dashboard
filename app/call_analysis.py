@@ -172,13 +172,25 @@ def analyze(segments, meta, config, crm_names=()):
 
 # ---------- очередь разбора в дашборде (таблица call_analysis)
 
-DEFAULTS = {"analyze": True, "analyze_per_run": 30, "analyze_min_chars": 80}
+# analyze_hours — когда можно тратить лимит подписки на разбор: [«с», «до»] по местному времени, окно может переходить
+# через полночь; пусто — в любое время
+DEFAULTS = {"analyze": True, "analyze_per_run": 30, "analyze_min_chars": 80, "analyze_hours": ["17:30", "08:00"]}
 LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|лимит|429|overloaded", re.I)
 MAX_ATTEMPTS = 3
 
 
 def settings(config):
     return {**DEFAULTS, **(config.get("call_records") or {})}
+
+
+def in_hours(config, now=None):
+    """Сейчас — разрешённое время для разбора (analyze_hours)."""
+    hours = settings(config).get("analyze_hours")
+    if not hours:
+        return True
+    t = (now or dt.datetime.now()).strftime("%H:%M")
+    start, end = hours
+    return start <= t < end if start <= end else (t >= start or t < end)
 
 
 def pending(con, limit):
@@ -221,11 +233,13 @@ def get(con, rid):
 def run(con, config, log=print):
     """Разобрать очередь. Возвращает (разобрано, ошибок, остановлено_по_лимиту)."""
     s = settings(config)
-    if not s["analyze"]:
+    if not s["analyze"] or not in_hours(config):
         return 0, 0, False
     titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
     ok = failed = 0
     for r in pending(con, s["analyze_per_run"]):
+        if not in_hours(config):  # окно закончилось посреди прохода
+            break
         segs = json.loads(r["segments"] or "[]")
         if len(r["text"] or "") < int(s["analyze_min_chars"]):  # гудки, «алло» без ответа — без Claude
             short = {"call_type": "недозвон", "summary": "Разговора нет или он слишком короткий для разбора",

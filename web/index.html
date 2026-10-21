@@ -1004,9 +1004,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
   // разбор звонка Claude: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
+  let anWhen = "разбор позже";
   const anCell = (c) => {
     const a = c.analysis;
-    if (!a) return c.transcript === "ready" ? `<span class="muted small">разбор позже</span>` : `<span class="muted">—</span>`;
+    if (!a) return c.transcript === "ready" ? `<span class="muted small">${anWhen}</span>` : `<span class="muted">—</span>`;
     return `<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}</span>`;
   };
   function analysisHtml(a) {  // полный разбор над расшифровкой
@@ -1059,7 +1060,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const deals = (c) => !c.deals.length ? "—" : c.deals.slice(0, 3).map((id) => d.portal
       ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
-    const emps = d.employees, multi = emps.length > 1;  // администратор или руководитель отдела
+    const emps = d.employees, multi = emps.length > 1;
+    anWhen = d.analyze_hours ? `разбор с ${d.analyze_hours[0]}` : "разбор позже";  // когда Claude разбирает звонки  // администратор или руководитель отдела
     const title = d.deal != null ? `по сделке ${d.deal}` : periodLabel(d.date_from, d.date_to);
     // сортировка щелчком по заголовку; при равенстве — новые звонки выше
     const sort = state.cSort || { key: "dt", dir: -1 };
