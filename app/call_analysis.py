@@ -72,8 +72,7 @@ def claude_path(config):
     return (config.get("call_records") or {}).get("claude_path") or os.path.expanduser(r"~\.local\bin\claude.exe")
 
 
-def run_claude(prompt, config):
-    """Ответ Claude и сведения о вызове ({"result": dict, "usage": …}). Исключение — если CLI не ответил JSON."""
+def _call_cli(prompt, config):
     work = os.path.join(ROOT, "data", "nlp-work")  # пустая папка: CLI не подхватывает CLAUDE.md и настройки проекта
     os.makedirs(work, exist_ok=True)
     cmd = [claude_path(config), "-p", "--output-format", "json", "--model", MODEL, "--no-session-persistence",
@@ -87,15 +86,30 @@ def run_claude(prompt, config):
         raise RuntimeError(f"Claude CLI: код {p.returncode}, {(p.stderr or p.stdout)[:300]}")
     if env.get("is_error"):
         raise RuntimeError(f"Claude CLI: {str(env.get('result'))[:300]}")
-    text = env.get("result") or ""
-    m = re.search(r"\{.*\}", text, re.S)  # на случай обёртки ```json … ```
-    if not m:
-        raise RuntimeError(f"Claude ответил не JSON: {text[:200]}")
-    usage = env.get("usage") or {}
-    return {"result": json.loads(m.group()), "cost_usd": env.get("total_cost_usd"),
-            "tokens_in": (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0)
-            + (usage.get("cache_read_input_tokens") or 0), "tokens_out": usage.get("output_tokens"),
-            "model": next(iter(env.get("modelUsage") or {}), MODEL)}
+    return env
+
+
+def run_claude(prompt, config, attempts=2):
+    """Ответ Claude и сведения о вызове ({"result": dict, …}). Изредка модель отдаёт JSON с синтаксической ошибкой —
+    тогда запрос повторяется (attempts раз всего); исключение — если CLI так и не ответил разборным JSON."""
+    cost = tokens_in = tokens_out = 0
+    for n in range(attempts):
+        retry_note = "\n\nВажно: ответ должен быть строго корректным JSON."
+        env = _call_cli(prompt if not n else prompt + retry_note, config)
+        usage = env.get("usage") or {}
+        cost += env.get("total_cost_usd") or 0
+        tokens_in += sum(usage.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        tokens_out += usage.get("output_tokens") or 0
+        text = env.get("result") or ""
+        m = re.search(r"\{.*\}", text, re.S)  # на случай обёртки ```json … ```
+        try:
+            result = json.loads(m.group()) if m else None
+        except ValueError:
+            result = None
+        if isinstance(result, dict):
+            return {"result": result, "cost_usd": cost, "tokens_in": tokens_in, "tokens_out": tokens_out,
+                    "model": next(iter(env.get("modelUsage") or {}), MODEL), "attempts": n + 1}
+    raise RuntimeError(f"Claude ответил не JSON: {text[:200]}")
 
 
 def analyze(segments, meta, config, crm_names=()):

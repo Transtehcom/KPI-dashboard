@@ -74,6 +74,16 @@ class AnalyzeTest(unittest.TestCase):
             self.assertIn(flag, sent["cmd"])
         self.assertEqual(sent["cmd"][sent["cmd"].index("--tools") + 1], "")  # без инструментов
 
+    def test_broken_json_is_retried(self):
+        answers = iter(['{"speakers": "МКМ" "call_type": }', json.dumps(ANSWER, ensure_ascii=False)])
+
+        def fake_run(cmd, input, **kw):
+            env = {"is_error": False, "result": next(answers), "total_cost_usd": 0.01, "usage": {"output_tokens": 10}}
+            return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
+        with mock.patch.object(call_analysis.subprocess, "run", fake_run):
+            call = call_analysis.run_claude("текст", {})
+        self.assertEqual((call["attempts"], call["result"]["call_type"], call["tokens_out"]), (2, "продажа", 20))
+
     def test_wrong_speaker_count_is_ignored(self):
         (res, *_), _ = self.run_with({**ANSWER, "speakers": "МК"})
         self.assertFalse(res["speakers_ok"])
