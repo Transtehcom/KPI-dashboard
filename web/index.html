@@ -991,12 +991,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const DIR = { out: "Исходящий", in: "Входящий" };
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
+  // фильтры «Звонков» отличаются от исходных: текущий месяц, все сотрудники, без сделки, по дате от новых
+  function callsFiltered() {
+    const p = state.cPer, s = state.cSort;
+    return !!(state.cLogin || (state.cDeal || "").trim() || (p && !(p.mode === "month" && p.month === state.boot.current_month))
+              || (s && !(s.key === "dt" && s.dir === -1)));
+  }
   async function loadCalls() {
     const main = document.getElementById("main"), isMgr = state.boot.me.role === "manager";
     try {
       const login = state.cLogin ?? "";
       const deal = (state.cDeal || "").trim();
-      if (!state.cPer) state.cPer = { mode: "month", month: state.month };
+      if (!state.cPer) state.cPer = { mode: "month", month: state.boot.current_month };
       const [a, b] = periodRange(state.cPer);
       const per = a || b ? `&date_from=${a}&date_to=${b}` : "&all=1";
       const d = await api(`/api/calls?login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
@@ -1031,7 +1037,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
           <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
-            <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form></div>
+            <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form>
+          <button class="btn" type="button" id="cReset" ${callsFiltered() ? "" : "disabled"}>Сбросить фильтры</button></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
         ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
           ${calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
@@ -1058,6 +1065,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const sel = document.getElementById("cLogin");
     if (sel) sel.addEventListener("change", () => { state.cLogin = sel.value; loadCalls(); });
     document.getElementById("cDealForm").addEventListener("submit", (ev) => { ev.preventDefault(); state.cDeal = document.getElementById("cDeal").value; loadCalls(); });
+    document.getElementById("cReset").addEventListener("click", () => {
+      state.cPer = state.cLogin = state.cDeal = state.cSort = undefined;
+      loadCalls();
+    });
     const clr = document.getElementById("cDealClear");
     if (clr) clr.addEventListener("click", () => { state.cDeal = ""; loadCalls(); });
     // плеер создаётся только по нажатию: иначе браузер заранее скачал бы записи и они попали бы в журнал как прослушанные
