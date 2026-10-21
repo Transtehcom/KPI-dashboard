@@ -120,7 +120,7 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
     if date_to:
         q += " AND dt <= ?"
         args.append(str(date_to) + "T23:59:59")
-    rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT 2000", args)]
+    rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT 5000", args)]
     tr = {}
     if rows:
         ids = [r["id"] for r in rows]

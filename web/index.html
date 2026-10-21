@@ -626,7 +626,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
-    const noSide = ["funnel", "staff", "calls"].includes(state.view), noMonth = state.view === "funnel" || state.view === "staff";
+    const noSide = ["funnel", "staff", "calls"].includes(state.view), noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
@@ -996,7 +996,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     try {
       const login = state.cLogin ?? "";
       const deal = (state.cDeal || "").trim();
-      const d = await api(`/api/calls?login=${encodeURIComponent(login)}&month=${state.month}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
+      if (!state.cPer) state.cPer = { mode: "month", month: state.month };
+      const [a, b] = periodRange(state.cPer);
+      const per = a || b ? `&date_from=${a}&date_to=${b}` : "&all=1";
+      const d = await api(`/api/calls?login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
       renderCalls(d, log);
     } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
@@ -1014,7 +1017,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
     const emps = d.employees, multi = emps.length > 1;  // администратор или руководитель отдела
-    const title = d.deal != null ? `по сделке ${d.deal}` : mLabel(d.month).toLowerCase();
+    const title = d.deal != null ? `по сделке ${d.deal}` : periodLabel(d.date_from, d.date_to);
     // сортировка щелчком по заголовку; при равенстве — новые звонки выше
     const sort = state.cSort || { key: "dt", dir: -1 };
     const SORT_KEYS = { dt: (c) => c.dt, emp: (c) => c.emp_name || "", direction: (c) => DIR[c.direction] || "", duration: (c) => c.duration || 0 };
@@ -1025,15 +1028,16 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
         <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters">
+          ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
           <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
-            <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× весь месяц</button>` : ""}</form></div>
+            <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
         ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
           ${calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
-        </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот месяц"} нет</div>`}
+        </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
           Записи появляются после синхронизации с Битрикс24${d.keep_days ? ` и хранятся ${d.keep_days} дней` : ""}.</div></section>
       ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
@@ -1050,6 +1054,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       state.cSort = sort.key === key ? { key, dir: -sort.dir } : { key, dir: key === "dt" || key === "duration" ? -1 : 1 };
       renderCalls(d, log);
     }));
+    bindPeriod("c", () => state.cPer, (v) => { state.cPer = v; }, loadCalls);
     const sel = document.getElementById("cLogin");
     if (sel) sel.addEventListener("change", () => { state.cLogin = sel.value; loadCalls(); });
     document.getElementById("cDealForm").addEventListener("submit", (ev) => { ev.preventDefault(); state.cDeal = document.getElementById("cDeal").value; loadCalls(); });
@@ -1141,8 +1146,31 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const pad2 = (n) => String(n).padStart(2, "0");
   const isoDay = (x) => `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
   const ruDay = (v) => v.split("-").reverse().join(".");
-  function funnelPeriod() {
-    const p = state.fPer || { mode: "all" };
+  // ---------- выбор периода (воронки, звонки): всё время, день, месяц, год, с … по …
+  const PERIOD_MODES = [["all", "Всё время"], ["day", "День"], ["month", "Месяц"], ["year", "Год"], ["range", "С … по …"]];
+  function periodHtml(per, pfx) {  // поля выбора периода; id — pfx + Mode/Day/Month/Year/From/To
+    return `<label for="${pfx}Mode">Период<select id="${pfx}Mode">${PERIOD_MODES.map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+          ${per.mode === "day" ? `<input type="date" id="${pfx}Day" aria-label="День" value="${esc(per.day || "")}">` : ""}
+          ${per.mode === "month" ? `<input type="month" id="${pfx}Month" aria-label="Месяц" value="${esc(per.month || "")}">` : ""}
+          ${per.mode === "year" ? `<input type="number" id="${pfx}Year" aria-label="Год" min="2000" max="2100" step="1" style="width:90px" value="${esc(String(per.year || ""))}">` : ""}
+          ${per.mode === "range" ? `<label for="${pfx}From">с<input type="date" id="${pfx}From" value="${esc(per.from || "")}"></label><label for="${pfx}To">по<input type="date" id="${pfx}To" value="${esc(per.to || "")}"></label>` : ""}`;
+  }
+  function bindPeriod(pfx, get, set, reload) {
+    const on = (id, fn) => { const el = document.getElementById(pfx + id); if (el) el.addEventListener("change", () => { fn(el.value); reload(); }); };
+    on("Mode", (v) => {
+      const t = new Date(), p = get() || {};
+      set({ ...p, mode: v, day: p.day || isoDay(t), month: p.month || isoDay(t).slice(0, 7), year: p.year || t.getFullYear(),
+            from: p.from || isoDay(t).slice(0, 8) + "01", to: p.to || isoDay(t) });
+    });
+    on("Day", (v) => { get().day = v; });
+    on("Month", (v) => { get().month = v; });
+    on("Year", (v) => { get().year = v; });
+    on("From", (v) => { get().from = v; });
+    on("To", (v) => { get().to = v; });
+  }
+  const periodLabel = (a, b) => !(a || b) ? "всё время" : a && a === b ? ruDay(a) : `${a ? "с " + ruDay(a) : ""}${b ? " по " + ruDay(b) : ""}`.trim();
+  function funnelPeriod() { return periodRange(state.fPer || { mode: "all" }); }
+  function periodRange(p) {  // [с, по] в формате ГГГГ-ММ-ДД; пустая строка — без границы
     if (p.mode === "day" && p.day) return [p.day, p.day];
     if (p.mode === "month" && /^\d{4}-\d{2}$/.test(p.month || "")) {
       const [y, m] = p.month.split("-").map(Number);
@@ -1173,11 +1201,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 
     // --- фильтры: период, ответственные (несколько), воронка сделок
     const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage";
-    const perHtml = PREVIEW ? "" : `<label for="fMode">Период<select id="fMode">${[["all", "Всё время"], ["day", "День"], ["month", "Месяц"], ["year", "Год"], ["range", "С … по …"]].map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-          ${per.mode === "day" ? `<input type="date" id="fDay" aria-label="День" value="${esc(per.day || "")}">` : ""}
-          ${per.mode === "month" ? `<input type="month" id="fMonth" aria-label="Месяц" value="${esc(per.month || "")}">` : ""}
-          ${per.mode === "year" ? `<input type="number" id="fYear" aria-label="Год" min="2000" max="2100" step="1" style="width:90px" value="${esc(String(per.year || ""))}">` : ""}
-          ${per.mode === "range" ? `<label for="fFrom">с<input type="date" id="fFrom" value="${esc(per.from || "")}"></label><label for="fTo">по<input type="date" id="fTo" value="${esc(per.to || "")}"></label>` : ""}
+    const perHtml = PREVIEW ? "" : `${periodHtml(per, "f")}
           ${per.mode !== "all" ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
     const perRange = dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`.trim();
     const perTxt = !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${perRange}.`;
@@ -1310,16 +1334,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     });
     const onChange = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { fn(el.value); load(); }); };
-    onChange("fMode", (v) => {
-      const t = new Date(), p = state.fPer || {};
-      state.fPer = { ...p, mode: v, day: p.day || isoDay(t), month: p.month || isoDay(t).slice(0, 7), year: p.year || t.getFullYear(),
-                     from: p.from || isoDay(t).slice(0, 8) + "01", to: p.to || isoDay(t) };
-    });
-    onChange("fDay", (v) => { state.fPer.day = v; });
-    onChange("fMonth", (v) => { state.fPer.month = v; });
-    onChange("fYear", (v) => { state.fPer.year = v; });
-    onChange("fFrom", (v) => { state.fPer.from = v; });
-    onChange("fTo", (v) => { state.fPer.to = v; });
+    bindPeriod("f", () => state.fPer, (v) => { state.fPer = v; }, load);
     onChange("fField", (v) => { state.fDateField = v; });
     onChange("fCat", (v) => { state.fCat = v; if (PREVIEW) state.fLogins = []; });
     const det = document.getElementById("fResp");

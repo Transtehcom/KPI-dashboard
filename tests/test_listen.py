@@ -131,6 +131,14 @@ class ListenTest(unittest.TestCase):
         self.assertEqual((rows[0]["name"], rows[0]["emp_name"], rows[0]["client"], rows[0]["ip"]),
                          ("ПМ", "ПМ", "Ромашка", "127.0.0.1"))
 
+    def test_calls_period(self):
+        ids = lambda q: [c["id"] for c in json.loads(self.get("pm", "/api/calls?" + q)[2])["calls"]]
+        self.assertEqual(ids("date_from=2026-10-20&date_to=2026-10-20"), ["call1"])
+        self.assertEqual(ids("date_from=2026-10-19"), ["call1", "call2"])
+        self.assertEqual(ids("all=1"), ["call1", "call2"])
+        self.assertEqual(ids("month=2026-09"), [])
+        self.assertEqual(self.get("pm", "/api/calls?date_from=2026-10-20&date_to=2026-10-01")[0], 400)
+
     def test_department_head_listens_to_own_department_only(self):
         d = json.loads(self.get("lead", "/api/calls?month=2026-10")[2])
         self.assertEqual([(c["id"], c["can_listen"]) for c in d["calls"]], [("call3", True)])

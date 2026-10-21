@@ -156,7 +156,7 @@ class App:
                     people.append({"key": key, "error": f"Битрикс24 не ответил: {e}"})
         return {"date": day.isoformat(), "people": people}
 
-    def calls(self, me, is_mgr, q, month):
+    def calls(self, me, is_mgr, q, date_from, date_to):
         """Раздел «Звонки»: сотрудник видит свои звонки, с правом listen_dept — звонки своего отдела,
         администратор — всех. login — один сотрудник из доступных, без него — все доступные."""
         allowed = call_records.audible_logins(self.config, me)
@@ -171,9 +171,9 @@ class App:
             if not str(q["deal"]).strip().isdigit():
                 raise BadRequest("Номер сделки — число (ID сделки в Битрикс24)")
             deal = int(q["deal"])
-        first, last = month_bounds(month)
-        rows = call_records.listing(self.con, self.config, emps=emps, deal=deal,
-                                    date_from=None if deal is not None else first, date_to=None if deal is not None else last,
+        if deal is not None:  # по сделке — все звонки, без периода
+            date_from = date_to = None
+        rows = call_records.listing(self.con, self.config, emps=emps, deal=deal, date_from=date_from, date_to=date_to,
                                     with_listens=is_mgr)
         names = {e["login"]: e["name"] for e in self.config["employees"]}
         for r in rows:
@@ -181,7 +181,7 @@ class App:
             r["can_listen"] = call_records.can_listen(self.config, me, r)
         # кого можно выбрать в фильтре: администратору — сотрудников с KPI, руководителю отдела — свой отдел
         choices = [e for e in self.config["employees"] if (e.get("position") if allowed is None else e["login"] in allowed)]
-        return {"calls": rows, "login": login, "deal": deal, "month": month,
+        return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_days": call_records.settings(self.config)["keep_days"],
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
@@ -457,7 +457,14 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"error": "Сотрудник не найден"}, 404)
                     return self.send_json(app.employee(login, month))
                 if path == "/api/calls":  # звонки с записью: сотрудник — свои, администратор — любого или по сделке
-                    return self.send_json(app.calls(me, is_mgr, q, month))
+                    # период «с … по …» (ГГГГ-ММ-ДД, любая граница может быть пустой); all=1 — всё время; без них — месяц
+                    date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
+                    if not (date_from or date_to) and not q.get("all"):
+                        first, last = month_bounds(month)
+                        date_from, date_to = first.isoformat(), last.isoformat()
+                    if date_from and date_to and date_from > date_to:
+                        raise BadRequest("Начало периода позже его конца")
+                    return self.send_json(app.calls(me, is_mgr, q, date_from, date_to))
                 if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
                     row = call_records.get(app.con, q.get("id") or "")
                     if not row:
