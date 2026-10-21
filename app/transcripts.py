@@ -94,9 +94,20 @@ def run(con, config, records_dir, log=print, worker=None):
                              encoding="utf-8", cwd=ROOT, creationflags=flags)
         timer = threading.Timer(SILENCE_TIMEOUT, p.kill)
         timer.start()
+
+        def feed():
+            # список — в отдельном потоке: процесс берёт файлы по одному и пишет результаты, и если ждать, пока он
+            # примет весь список, оба процесса встанут (канал stdout переполнен, stdin не читается)
+            try:
+                for path in by_path:
+                    p.stdin.write(path + "\n")
+                    p.stdin.flush()
+                p.stdin.close()
+            except OSError:
+                pass  # процесс распознавания завершился раньше — итог видно по его коду возврата
+
+        threading.Thread(target=feed, daemon=True).start()
         try:
-            p.stdin.write("".join(path + "\n" for path in by_path))
-            p.stdin.close()
             started = dt.datetime.now()
             for line in p.stdout:
                 timer.cancel()

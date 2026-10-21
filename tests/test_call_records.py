@@ -4,6 +4,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -163,6 +164,24 @@ class TranscriptsTest(unittest.TestCase):
         self.con.execute("UPDATE call_records SET dt=? WHERE id='call1'", (old,))
         call_records.purge_old(self.con, {"call_records": {"dir": str(self.dir), "keep_days": 90}})
         self.assertIsNone(transcripts.get(self.con, "call1"))
+
+    def test_many_files_with_long_results_do_not_deadlock(self):
+        # 200 файлов и по 50 КБ текста на каждый: каналы stdin/stdout переполняются, если список не подаётся параллельно
+        big = self.dir / "big.py"
+        big.write_text("import json, sys\nsys.stdin.reconfigure(encoding='utf-8')\n"
+                       "for line in sys.stdin:\n"
+                       "    print(json.dumps({'path': line.strip(), 'duration': 1.0, 'segments': [[0, 1, 'слово ' * 8000]]}),"
+                       " flush=True)\n", encoding="utf-8")
+        call_records.upsert(self.con, [rec(i) for i in range(10, 210)])
+        for i in range(10, 210):
+            self.con.execute("UPDATE call_records SET file=? WHERE id=?", (f"2026-10/long-path-name-for-call-{i:04d}.mp3", f"call{i}"))
+        out = []
+        th = threading.Thread(target=lambda: out.append(transcripts.run(
+            self.con, self.config, str(self.dir), log=lambda *a: None, worker=str(big))), daemon=True)
+        th.start()
+        th.join(60)
+        self.assertFalse(th.is_alive(), "расшифровка зависла")
+        self.assertEqual(out[0][0], 200)
 
     def test_disabled(self):
         self.config["call_records"]["transcribe"] = False
