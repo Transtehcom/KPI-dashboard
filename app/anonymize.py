@@ -63,6 +63,11 @@ NOT_ORG = {"кп", "ткп", "нмцк", "ндс", "вкс", "звкс", "упд
            "служба", "скайп", "skype", "zoom", "зум", "телемост", "teams", "whatsapp", "ватсап", "телеграм", "telegram"}
 
 
+# слова с заглавной буквы, которые словарь считает именами или не знает, но это не персональные данные
+KEEP_WORDS = {"битрикс", "битрикс24", "макс", "максе", "max", "авито", "яндекс", "гугл", "google", "excel", "эксель",
+              "ватсапе", "телеграме", "скайпе", "россия", "россии", "рф", "москва", "москве", "алло", "ало", "угу", "ага"}
+
+
 def _not_org(text, morph):
     """Фрагмент — не название организации: только термины из NOT_ORG или в нём есть глагол («Вышлите КП»)."""
     words = re.findall(r"[\w-]+", text.lower())
@@ -107,7 +112,8 @@ class Pseudonymizer:
         for sp in doc.spans:
             if OWN_COMPANY.search(sp.text) or any(s < sp.stop and sp.start < e for s, e, _ in spans):
                 continue
-            if sp.type == "ORG" and _not_org(sp.text, n["morph"]):
+            words = re.findall(r"[\w-]+", sp.text.lower())
+            if (sp.type == "ORG" and _not_org(sp.text, n["morph"])) or all(w in KEEP_WORDS or w in NOT_ORG for w in words):
                 continue
             stem = next((st for st in self.crm_stems for w in sp.text.lower().split() if w.startswith(st)), None)
             if stem:  # клиент из CRM — организация, даже если natasha сочла его именем или местом
@@ -124,6 +130,22 @@ class Pseudonymizer:
             stem = next((st for st in self.crm_stems if w.startswith(st)), None)
             if stem:
                 spans.append((m.start(), m.end(), self._label("ОРГ", f"crm:{self.crm[stem]}", m.group())))
+        # второй проход: слова с заглавной буквы, которые natasha пропустила (часто в начале предложения или искажённые
+        # распознаванием): имя/фамилия/отчество/город/организация по словарю или вовсе незнакомое словарю слово
+        for m in re.finditer(r"\b[A-ZА-ЯЁ][\w-]{2,}", text):
+            w = m.group()
+            if any(s < m.end() and m.start() < e for s, e, _ in spans) or OWN_COMPANY.search(w) \
+                    or w.lower() in NOT_ORG or w.lower() in KEEP_WORDS or w.isupper():
+                continue
+            p = n["morph"].parse(w)[0]
+            g = set(str(p.tag).replace(" ", ",").split(","))
+            if g & {"Name", "Surn", "Patr"}:
+                words, nomn = _normal(w, n["morph"])
+                spans.append((m.start(), m.end(), self._label("ИМЯ", words[0], nomn)))
+            elif "Geox" in g:
+                spans.append((m.start(), m.end(), self._label("МЕСТО", p.normal_form, w)))
+            elif "Orgn" in g or (not p.is_known and len(w) >= 5):
+                spans.append((m.start(), m.end(), self._label("ОРГ", p.normal_form, w)))
         out, pos = [], 0
         for s, e, lab in sorted(spans):
             if s < pos:

@@ -37,7 +37,7 @@ SYSTEM_PROMPT = f"""Ты анализируешь расшифровки тел�
 
 Ответь ОДНИМ JSON-объектом без пояснений и без markdown:
 {{
- "speakers": "строка из букв по одной на каждое предложение по порядку: М — сотрудник ТТК, К — собеседник, А — автоответчик, меню, музыка",
+ "turns": [{{"from": номер, "to": номер, "who": "М"}}] — кто говорит, диапазонами подряд идущих предложений, от первого до последнего без пропусков: М — сотрудник ТТК, К — собеседник, А — автоответчик, меню, музыка,
  "call_type": одно из {json.dumps(CALL_TYPES, ensure_ascii=False)},
  "summary": "суть звонка в 1–2 предложениях",
  "offer": {{"made": true/false, "what": "что предложено или null", "kp_promised": true/false, "price_named": true/false, "sentences": [номера]}},
@@ -121,7 +121,16 @@ def analyze(segments, meta, config, crm_names=()):
     prompt = build_prompt(meta, masked)
     call = run_claude(prompt, config)
     res = ps.restore(call.pop("result"))
-    spk = re.sub(r"[^МКА]", "", str(res.get("speakers") or "").upper().replace("M", "М").replace("K", "К"))
-    res["speakers_ok"] = len(spk) == len(numbered)  # роли верны, только если по одной на каждое предложение
-    res["lines"] = [[t, spk[i] if res["speakers_ok"] else "", s] for i, (t, s) in enumerate(numbered)]
+    roles = [""] * len(numbered)
+    for turn in res.get("turns") or []:
+        try:
+            a, b = int(turn["from"]), int(turn["to"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        who = {"M": "М", "K": "К", "A": "А"}.get(str(turn.get("who")).upper(), str(turn.get("who")).upper())
+        if who in ("М", "К", "А"):
+            for i in range(max(1, a), min(len(numbered), b) + 1):
+                roles[i - 1] = who
+    res["speakers_ok"] = all(roles)  # каждому предложению досталась роль
+    res["lines"] = [[t, roles[i], s] for i, (t, s) in enumerate(numbered)]
     return res, ps.mapping, call, prompt

@@ -33,6 +33,14 @@ class AnonymizeTest(unittest.TestCase):
         self.assertIn(lab, c)
         self.assertEqual(p.restore(f"{lab} предложила КП"), "Мария Мельникова предложила КП")  # именительный, род сохранён
 
+    def test_names_and_orgs_missed_by_natasha(self):
+        p = Pseudonymizer()
+        text = p.mask("Союзгидротрас, Мария. Юрий, здравствуйте. Это Кантех? Пришлите в Битрикс, КП в Max.")
+        for secret in ("Союзгидротрас", "Мария", "Юрий", "Кантех"):
+            self.assertNotIn(secret, text)
+        for kept in ("Битрикс", "КП", "Max", "здравствуйте"):
+            self.assertIn(kept, text)
+
     def test_restore_nested(self):
         p = Pseudonymizer()
         p.mask("Звонил Андрей Петров.")
@@ -40,7 +48,7 @@ class AnonymizeTest(unittest.TestCase):
                          {"a": ["Андрей Петров перезвонит"], "b": 1, "c": "[ИМЯ_9]"})
 
 
-ANSWER = {"speakers": "МКМ", "call_type": "продажа", "summary": "[ИМЯ_1] договорилась выслать КП",
+ANSWER = {"turns": [{"from": 1, "to": 1, "who": "М"}, {"from": 2, "to": 2, "who": "К"}, {"from": 3, "to": 3, "who": "М"}], "call_type": "продажа", "summary": "[ИМЯ_1] договорилась выслать КП",
           "offer": {"made": True, "what": "защитные сооружения", "kp_promised": True, "price_named": False, "sentences": [3]},
           "agreement": {"reached": True, "what": "КП до пятницы", "when": "пятница", "sentences": [3]},
           "prices": [], "deadlines": [], "objections": [], "tone": {"client": "нейтральный", "manager": "позитивный"},
@@ -75,7 +83,7 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(sent["cmd"][sent["cmd"].index("--tools") + 1], "")  # без инструментов
 
     def test_broken_json_is_retried(self):
-        answers = iter(['{"speakers": "МКМ" "call_type": }', json.dumps(ANSWER, ensure_ascii=False)])
+        answers = iter(['{"turns": [] "call_type": }', json.dumps(ANSWER, ensure_ascii=False)])
 
         def fake_run(cmd, input, **kw):
             env = {"is_error": False, "result": next(answers), "total_cost_usd": 0.01, "usage": {"output_tokens": 10}}
@@ -84,10 +92,10 @@ class AnalyzeTest(unittest.TestCase):
             call = call_analysis.run_claude("текст", {})
         self.assertEqual((call["attempts"], call["result"]["call_type"], call["tokens_out"]), (2, "продажа", 20))
 
-    def test_wrong_speaker_count_is_ignored(self):
-        (res, *_), _ = self.run_with({**ANSWER, "speakers": "МК"})
+    def test_partial_turns_leave_gaps(self):
+        (res, *_), _ = self.run_with({**ANSWER, "turns": [{"from": 1, "to": 2, "who": "K"}]})  # латиница, без 3-го
         self.assertFalse(res["speakers_ok"])
-        self.assertEqual([l[1] for l in res["lines"]], ["", "", ""])
+        self.assertEqual([l[1] for l in res["lines"]], ["К", "К", ""])
 
 
 if __name__ == "__main__":
