@@ -1009,7 +1009,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const audio = (c) => {
       if (c.audio === "ready") return c.can_listen ? `<span class="rec-cell"><button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>${c.transcript === "ready"
         ? ` <button class="btn ghost" type="button" data-text="${esc(c.id)}" aria-expanded="false">Текст</button>` : c.transcript === "pending" ? ` <span class="muted small">текст готовится…</span>` : ""}</span>` : `<span class="muted">прослушивание недоступно</span>`;
-      if (c.audio === "purged") return `<span class="muted">удалена${d.keep_days ? ` (хранится ${d.keep_days} дн.)` : ""}</span>`;
+      if (c.audio === "purged") return `<span class="muted">удалена по сроку хранения</span>`;
       if (c.audio === "error") return `<span style="color:var(--bad)">не удалось скачать</span>`;
       return `<span class="muted">скачивается…</span>`;
     };
@@ -1039,7 +1039,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
-          Записи появляются после синхронизации с Битрикс24${d.keep_days ? ` и хранятся ${d.keep_days} дней` : ""}.</div></section>
+          Записи появляются после синхронизации с Битрикс24${d.keep_from ? `. Сейчас хранятся записи с ${ruDay(d.keep_from)}: текущий и прошлый месяц, более старые удаляются 10-го числа` : ""}.</div></section>
       ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
         <form class="inline-form" id="cLogForm"><label for="cLogFrom">С</label><input id="cLogFrom" type="date" value="${esc(log ? log.date_from : state.cLogFrom || "")}">
           <label for="cLogTo">по</label><input id="cLogTo" type="date" value="${esc(log ? log.date_to : state.cLogTo || "")}"><button class="btn" type="submit">Показать</button></form>

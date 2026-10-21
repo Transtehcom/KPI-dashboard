@@ -183,7 +183,7 @@ class App:
         choices = [e for e in self.config["employees"] if (e.get("position") if allowed is None else e["login"] in allowed)]
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
-                "keep_days": call_records.settings(self.config)["keep_days"],
+                "keep_from": call_records.keep_from(self.config),
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
                 "download": call_records.status() if is_mgr else None}
 

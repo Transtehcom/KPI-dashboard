@@ -14,9 +14,12 @@ import urllib.request
 from .common import ROOT, db_lock
 
 # dir — папка записей (относительно папки дашборда или абсолютный путь, в т.ч. сетевой);
-# keep_days — сколько дней хранить аудио (0 — бессрочно); download_days — за сколько последних дней
-# скачивать (0 — за весь период синхронизации); max_per_run — файлов за один проход
-DEFAULTS = {"dir": "data/records", "keep_days": 0, "download_days": 0, "max_per_run": 300}
+# срок хранения аудио и расшифровок: keep_months — сколько прошлых месяцев хранить кроме текущего, а самый старый
+# из лишних удаляется purge_day-го числа (keep_months 1, purge_day 10: 21 октября хранится с 1 сентября,
+# 10 ноября сентябрь удаляется); либо keep_days — сколько последних дней; ни того ни другого — бессрочно;
+# download_days — за сколько последних дней скачивать (0 — за весь период синхронизации); max_per_run — файлов за проход
+DEFAULTS = {"dir": "data/records", "keep_months": None, "purge_day": 1, "keep_days": 0, "download_days": 0,
+            "max_per_run": 300}
 META = ["call_id", "emp", "dt", "direction", "duration", "phone", "crm_entity", "client", "crm_activity_id",
         "record_file_id", "record_url"]
 TYPE_NAMES = {1: "LEAD", 2: "DEAL", 3: "CONTACT", 4: "COMPANY"}
@@ -33,6 +36,18 @@ def _now():
 
 def settings(config):
     return {**DEFAULTS, **(config.get("call_records") or {})}
+
+
+def keep_from(config, today=None):
+    """С какой даты хранятся записи (ГГГГ-ММ-ДД) или None — бессрочно."""
+    s, today = settings(config), today or dt.date.today()
+    if s.get("keep_months") is not None:
+        back = int(s["keep_months"]) + (0 if today.day >= int(s.get("purge_day") or 1) else 1)
+        m = today.year * 12 + today.month - 1 - back
+        return dt.date(m // 12, m % 12 + 1, 1).isoformat()
+    if s.get("keep_days"):
+        return (today - dt.timedelta(days=int(s["keep_days"]))).isoformat()
+    return None
 
 
 def records_dir(config):
@@ -137,12 +152,12 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
             for r in con.execute(f"SELECT record, COUNT(*) n FROM listen_log WHERE result='ok' AND record IN "
                                  f"({','.join('?' * len(chunk))}) GROUP BY record", chunk):
                 listens[r["record"]] = r["n"]
-    keep = settings(config)["keep_days"]
+    keep = keep_from(config)
     out = []
     for r in rows:
         if r["file"]:
             audio = "ready"
-        elif r["purged"] or (keep and r["dt"] < (dt.date.today() - dt.timedelta(days=keep)).isoformat()):
+        elif r["purged"] or (keep and r["dt"] < keep):
             audio = "purged"
         elif (r["attempts"] or 0) >= MAX_ATTEMPTS:
             audio = "error"
@@ -226,10 +241,12 @@ def download_pending(con, b24, config, log=print):
     """Скачать ещё не скачанные записи, новые первыми. Возвращает (скачано, ошибок)."""
     s = settings(config)
     q, args = "SELECT * FROM call_records WHERE file IS NULL AND purged IS NULL AND attempts < ?", [MAX_ATTEMPTS]
-    days = [d for d in (s["download_days"], s["keep_days"]) if d]
-    if days:  # не качать то, что всё равно удалится по сроку хранения
+    # не качать то, что всё равно удалится по сроку хранения
+    since = [d for d in (keep_from(config), s["download_days"] and
+                         (dt.date.today() - dt.timedelta(days=int(s["download_days"]))).isoformat()) if d]
+    if since:
         q += " AND dt >= ?"
-        args.append((dt.date.today() - dt.timedelta(days=min(days))).isoformat())
+        args.append(max(since))
     rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT ?", args + [int(s["max_per_run"])])]
     if not rows:
         return 0, 0
@@ -263,11 +280,11 @@ def download_pending(con, b24, config, log=print):
 
 
 def purge_old(con, config):
-    """Удалить аудио и расшифровку старше keep_days (сведения о звонке остаются, purged — когда удалено)."""
-    keep = settings(config)["keep_days"]
-    if not keep:
+    """Удалить аудио и расшифровку старше срока хранения (keep_from); сведения о звонке остаются,
+    purged — когда удалено."""
+    cutoff = keep_from(config)
+    if not cutoff:
         return 0
-    cutoff = (dt.date.today() - dt.timedelta(days=keep)).isoformat()
     rows = con.execute("SELECT id, file FROM call_records WHERE file IS NOT NULL AND dt < ?", (cutoff,)).fetchall()
     for r in rows:
         try:

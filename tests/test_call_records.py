@@ -95,6 +95,34 @@ class CallRecordsTest(unittest.TestCase):
         self.assertEqual(call_records.download_pending(self.con, FakeB24(lambda m, p: {}), self.config), (0, 1))
         self.assertFalse((self.dir / "records").exists() and any((self.dir / "records").rglob("*.html")))
 
+    def test_keep_current_and_previous_month_purge_on_10th(self):
+        cfg = {"call_records": {"keep_months": 1, "purge_day": 10}}
+        kf = lambda d: call_records.keep_from(cfg, dt.date.fromisoformat(d))
+        self.assertEqual(kf("2026-10-21"), "2026-09-01")  # весь сентябрь и 21 день октября
+        self.assertEqual(kf("2026-11-01"), "2026-09-01")  # ноябрь начался — сентябрь ещё хранится
+        self.assertEqual(kf("2026-11-09"), "2026-09-01")
+        self.assertEqual(kf("2026-11-10"), "2026-10-01")  # 10-го числа позапрошлый месяц удаляется
+        self.assertEqual(kf("2027-01-05"), "2026-11-01")  # через границу года
+        self.assertEqual(kf("2027-01-10"), "2026-12-01")
+        self.assertIsNone(call_records.keep_from({}))  # без настроек — бессрочно
+
+    def test_purge_by_months(self):
+        today = dt.date.today()
+        cutoff = call_records.keep_from({"call_records": {"keep_months": 1, "purge_day": 10}})
+        before = (dt.date.fromisoformat(cutoff) - dt.timedelta(days=1)).isoformat()
+        cfg = {"call_records": {"dir": str(self.dir / "records"), "keep_months": 1, "purge_day": 10}}
+        call_records.upsert(self.con, [rec(1, day=before), rec(2, day=cutoff), rec(3, day=today.isoformat())])
+        b24 = FakeB24(lambda m, p: {"DOWNLOAD_URL": self.audio.as_uri()})
+        self.assertEqual(call_records.download_pending(self.con, b24, cfg), (2, 0))  # старше срока — не качаем
+        self.con.execute("UPDATE call_records SET file='old/call1.mp3' WHERE id='call1'")
+        (self.dir / "records" / "old").mkdir()
+        (self.dir / "records" / "old" / "call1.mp3").write_bytes(b"x")
+        self.assertEqual(call_records.purge_old(self.con, cfg), 1)
+        self.assertIsNone(self.row("call1")["file"])
+        self.assertIsNotNone(self.row("call2")["file"])  # первый день хранимого месяца остаётся
+        st = {c["id"]: c["audio"] for c in call_records.listing(self.con, cfg)}
+        self.assertEqual(st, {"call1": "purged", "call2": "ready", "call3": "ready"})
+
     def test_purge_by_keep_days(self):
         old = (dt.date.today() - dt.timedelta(days=400)).isoformat()
         cfg = {"call_records": {"dir": str(self.dir / "records"), "keep_days": 365}}
