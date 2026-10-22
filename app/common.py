@@ -87,9 +87,10 @@ CREATE TABLE IF NOT EXISTS kp (
 CREATE TABLE IF NOT EXISTS deal_failures (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, title TEXT, client TEXT, stage TEXT, reason TEXT);
 
--- тендеры из 1С (ТТК_Тендер): ведущий менеджер и статус — для конверсии тендерного отдела, как в «Отчёте ОП»
+-- тендеры из 1С (ТТК_Тендер): ведущий менеджер и статус — для конверсии тендерного отдела, как в «Отчёте ОП»;
+-- ordered — на основании тендера создан заказ клиента
 CREATE TABLE IF NOT EXISTS tenders_1c (
-  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, title TEXT, status TEXT, amount REAL);
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, title TEXT, status TEXT, amount REAL, ordered INTEGER);
 
 -- исходящие письма с КП и вложением в карточках сделок Б24 (подтверждение отправки КП)
 CREATE TABLE IF NOT EXISTS kp_letters (
@@ -198,7 +199,7 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
                "deal_failures"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
-ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")],
+ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],

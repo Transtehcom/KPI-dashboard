@@ -187,6 +187,27 @@ class EngineTest(unittest.TestCase):
         it = next(i for i in self.engine.compute("pm", "2026-10")["items"] if i["code"] == "receivables_overdue")
         self.assertEqual((it["pct"], it["payout"]), (None, 0))
 
+    def test_tender_conversion_by_report_columns_from_october(self):
+        # («КП → Заказ» + «Выигран») / («КП» + «Валидные заявки») по столбцам отчёта 1С «Отчёт ОП», за месяц;
+        # «КП» отчёта = КП менеджера + все его тендеры, «КП → Заказ» = КП и тендеры с заказом клиента
+        for emp in ("tender", "lead"):
+            insert(self.con, "kp", [{"id": f"{emp}k1", "emp": emp, "dt": "2026-10-03", "ordered": 1},
+                                    {"id": f"{emp}k2", "emp": emp, "dt": "2026-10-04", "ordered": 0},
+                                    {"id": f"{emp}k3", "emp": emp, "dt": "2026-10-05", "ordered": 0},
+                                    {"id": f"{emp}k0", "emp": emp, "dt": "2026-09-30", "ordered": 1}])  # другой месяц
+            insert(self.con, "tenders_1c", [{"id": f"{emp}t1", "emp": emp, "dt": "2026-10-02", "status": "Действует", "ordered": 0},
+                                            {"id": f"{emp}t2", "emp": emp, "dt": "2026-10-06", "status": "Выиграно", "ordered": 1},
+                                            {"id": f"{emp}t3", "emp": emp, "dt": "2026-10-07", "status": "Отменено", "ordered": 0},
+                                            {"id": f"{emp}t4", "emp": emp, "dt": "2026-10-08", "status": "Черновик", "ordered": 0}])
+            it = self.item(emp, "conversion_kp_tenders", "2026-10")
+            self.assertEqual((it["n"], it["weight"]), (1, 0.25))
+            # КП 3 + тендеров 4 = 7; КП → Заказ 1 + 1 = 2; валидные 2; выигран 1 → (2 + 1) / (7 + 2)
+            self.assertAlmostEqual(it["components"][0]["fact"], 3 / 9)
+            self.assertEqual(it["components"][0]["target"], 0.10)
+            ex = {x["label"]: x["value"] for x in it["extra"]}
+            self.assertEqual((ex["КП, шт."], ex["КП → Заказ, шт."], ex["Валидные заявки, шт."], ex["Выиграно, шт."]), (7, 2, 2, 1))
+            self.assertEqual(self.engine.compute(emp, "2026-09")["items"][0]["code"], "conversion_tender")  # сентябрь — как было
+
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
         r = self.calc("tender", "base_development", "2026-09")

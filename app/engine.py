@@ -365,6 +365,34 @@ class Engine:
             "details": {"columns": ["Тип", "Основание", "Сумма, ₽", "Дата события", "Возврат", "Итог"], "rows": rows},
         }
 
+    def calc_conversion_kp_tenders(self, e, ctx, p):
+        """Тендерный отдел с октября 2026 — по столбцам отчёта 1С «Отчёт ОП» за месяц:
+        («КП → Заказ» + «Выигран») / («КП» + «Валидные заявки»). «КП» отчёта — КП, где сотрудник менеджер, плюс все
+        тендеры, где он ведущий менеджер; «КП → Заказ» — те из них, по которым создан заказ клиента; «Валидные заявки» —
+        тендеры в статусах Действует, Выиграно, Проиграно. Тендеры входят в обе части дважды — так решено (2026-10-22)."""
+        emp, first, last = e["login"], ctx["first"].isoformat(), ctx["last"].isoformat()
+        kps = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt", emp, first, last)
+        tenders = self.q("SELECT * FROM tenders_1c WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt", emp, first, last)
+        known = bool(self.q("SELECT 1 FROM kp WHERE ordered IS NOT NULL LIMIT 1")) or             bool(self.q("SELECT 1 FROM tenders_1c WHERE ordered IS NOT NULL LIMIT 1"))
+        kp_col = len(kps) + len(tenders)
+        kp_ordered = sum(1 for r in kps + tenders if r["ordered"])
+        valid = [r for r in tenders if r["status"] in TENDER_VALID]
+        won = [r for r in tenders if r["status"] == "Выиграно"]
+        den, num = kp_col + len(valid), kp_ordered + len(won)
+        val = num / den if den and known else None
+        return {
+            "components": [comp("Конверсия: (КП → заказ + выигранные) / (КП + валидные заявки)", val, p["target"], "%",
+                                source=SRC_1C)],
+            "extra": [{"label": "КП, шт.", "value": kp_col, "hint": f"КП {len(kps)} + тендеров {len(tenders)}, как в «Отчёте ОП»"},
+                      {"label": "КП → Заказ, шт.", "value": kp_ordered},
+                      {"label": "Валидные заявки, шт.", "value": len(valid), "hint": "статусы Действует, Выиграно, Проиграно"},
+                      {"label": "Выиграно, шт.", "value": len(won)}],
+            "details": {"columns": ["Документ", "Вид", "Клиент", "Дата", "Статус", "Заказ клиента"],
+                        "rows": [[r["doc"], "КП", r["client"], r["dt"], "", "есть" if r["ordered"] else "—"] for r in kps] +
+                                [[r["doc"], "Тендер", r["client"], r["dt"], r["status"], "есть" if r["ordered"] else "—"]
+                                 for r in tenders]},
+        }
+
     def calc_conversion_sales(self, e, ctx, p):
         """Как раздел «Отдел продаж» отчёта 1С «Отчёт ОП»: КП менеджера за месяц, по которым создан заказ клиента
         («КП → Заказ»), делённые на все его КП за месяц."""
