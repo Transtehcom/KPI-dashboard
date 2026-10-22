@@ -132,6 +132,7 @@ class LogisticsMetricsTest(unittest.TestCase):
         r = metrics.logistics(self.con, {"ivanov": "Роман Иванов"}, "2026-10-01", "2026-10-31", since="2026-04-01",
                               today=TODAY)
         self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 2})
+        self.assertEqual(r["statuses"], [["Поступила", 1], ["В работе", 1], ["Запрос информации", 0], ["Отработана", 1]])
         calc = r["stages"][0]
         self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (2, 2, 1, 28))
         self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, False, False, False])

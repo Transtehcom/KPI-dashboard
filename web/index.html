@@ -1284,6 +1284,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">пока только этап «На расчёте»</div></div>
         ${naTile("К отгрузке сегодня")}${naTile("К доставке сегодня")}${naTile("Просрочено")}
       </section>
+      <section class="panel"><div class="panel-h"><h2>Всего заявок за период</h2><span class="muted small">${esc(per)} · в любом статусе</span></div>
+        <div class="scroll"><table class="mt"><thead><tr><th>Показатель</th><th class="n">Всего</th>${d.statuses.map(([st]) => `<th class="n">${esc(st)}</th>`).join("")}</tr></thead><tbody>
+          <tr><th>Всего заявок за период</th><td class="n"><b>${nf(t.total)}</b></td>${d.statuses.map(([, n]) => `<td class="n">${n ? nf(n) : "—"}</td>`).join("")}</tr>
+        </tbody></table></div>${t.deleted ? `<div class="panel-b muted small">Из них с пометкой удаления — ${nf(t.deleted)}.</div>` : ""}</section>
       <section class="panel"><div class="panel-h"><h2>Где находится работа</h2><span class="muted small">одна заявка учитывается только на одном этапе</span></div>
         <div class="scroll"><table class="mt"><thead><tr><th>Этап</th>${ST.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}</tr></thead><tbody>
           ${row("Сейчас, заявок", "now")}${row("Поступило, переходов", "came")}${row("Вышло, переходов", "left")}

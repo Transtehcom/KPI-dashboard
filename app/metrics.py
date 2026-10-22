@@ -220,11 +220,18 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
         p = people.setdefault(r["emp"], {"name": name(r["emp"]), "stages": {}, "total": 0})
         p["stages"]["calc"] = p["stages"].get("calc", 0) + 1
         p["total"] += 1
+    # «Всего заявок за период» по статусам: столбцы — в порядке работы с заявкой, незнакомые — в конце
+    by_status = {}
+    for r in period:
+        st = TRANSPORT_STATUSES.get(r["status"], r["status"] or "—")
+        by_status[st] = by_status.get(st, 0) + 1
+    order = list(TRANSPORT_STATUSES.values())
+    statuses = [[st, by_status.get(st, 0)] for st in order + sorted(x for x in by_status if x not in order)]
     registry = [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": TRANSPORT_STATUSES.get(r["status"], r["status"]),
                  "route": r.get("route") or r.get("address"), "carrier": r.get("carrier"), "logist": name(r["emp"]),
                  "plan": r.get("cost")} for r in period if not r["deleted"]]
     return {"available": bool(allrows), "date_from": date_from, "date_to": date_to, "today": today.isoformat(),
             "tiles": {"total": len(period), "deleted": sum(1 for r in period if r["deleted"]), "in_work": len(queue)},
-            "stages": stages, "sourced": sorted(LOGISTICS_SOURCED),
+            "statuses": statuses, "stages": stages, "sourced": sorted(LOGISTICS_SOURCED),
             "people": sorted(people.values(), key=lambda x: (x["name"] == "Не назначен", -x["total"], x["name"])),
             "registry": registry}
