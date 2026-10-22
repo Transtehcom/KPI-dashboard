@@ -22,7 +22,10 @@
                             просрочено — прошла плановая дата отгрузки; «к отгрузке сегодня» — она сегодня;
   «В пути»                — поручения экспедитору в статусе «В пути»; просрочено — прошла плановая дата поставки
                             (ТТК_ДатаПоставки); «к доставке сегодня» — она сегодня;
-  «На согласовании», «Доставлено, не закрыто» — источника данных пока нет.
+  «Доставлено, не закрыто» — поручения экспедитору в статусе «Готов к выдаче» (плановой даты для просрочки нет);
+  «Доставлено, закрыто»   — поручения в статусах «Выдан», «Завершено»: конечное состояние, поэтому считаются поручения
+                            выбранного периода (по дате поручения), в «в работе» и «всего в работе» не входят;
+  «На согласовании» — источника данных пока нет.
   «Всего заявок за период» — заявки с датой в периоде в любом статусе, включая помеченные на удаление.
   Очередь — на сегодня, по заявкам окна синхронизации (since), без помеченных на удаление.
 """
@@ -36,11 +39,14 @@ SUPPLY_STAGES = [("calc", "На расчёте"), ("handed", "Расчёт пе�
 TRANSPORT_STATUSES = {"Поступила": "Поступила", "ВРаботе": "В работе", "ЗапросИнформации": "Запрос информации",
                       "Отработана": "Отработана"}
 LOGISTICS_STAGES = [("calc", "На расчёте"), ("approve", "На согласовании"), ("prepare", "Подготовка отгрузки"),
-                    ("transit", "В пути"), ("delivered", "Доставлено, не закрыто")]
+                    ("transit", "В пути"), ("delivered", "Доставлено, не закрыто"), ("closed", "Доставлено, закрыто")]
 CALC_STATUSES = {"Поступила", "ВРаботе"}
 # этапы из поручений экспедитору: статусы ТТК_Статус, плановая дата для просрочки (поле forwarder_orders) и её название
 FORWARDER_STAGES = {"prepare": ({"ГотовКОтгрузке", "ПоискТС", "НазначенаМашина"}, "ship_date", "плановая дата отгрузки"),
-                    "transit": ({"ВПути"}, "delivery_date", "плановая дата поставки")}
+                    "transit": ({"ВПути"}, "delivery_date", "плановая дата поставки"),
+                    "delivered": ({"ГотовКВыдачи"}, None, None),
+                    "closed": ({"Выдан", "Завершено"}, None, None)}
+CLOSED_STAGES = {"closed"}  # конечные этапы: поручения периода, не очередь и не «в работе»
 LOGISTICS_SOURCED = {"calc", *FORWARDER_STAGES}  # этапы, для которых в 1С есть данные
 FORWARDER_STATUSES = {"ПредварительнаяЗаявка": "Предварительная заявка", "ГотовКОтгрузке": "Готов к отгрузке",
                       "ПоискТС": "Поиск ТС", "НазначенаМашина": "Назначена машина", "ВПути": "В пути",
@@ -235,18 +241,21 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
     sourced, in_stage = {"calc": calc}, {"calc": queue}
     late = {}  # id поручения → дней просрочки по плановой дате этапа
     for key, (statuses, field, what) in FORWARDER_STAGES.items():
-        items = [r for r in fwd if r["status"] in statuses]
+        final = key in CLOSED_STAGES
+        items = [r for r in fwd if r["status"] in statuses and (not final or date_from <= r["dt"] <= date_to)]
         for r in items:
-            if r[field] and _day(r[field]) < today:
+            if field and r[field] and _day(r[field]) < today:
                 late[r["id"]] = (today - _day(r[field])).days
         in_stage[key] = items
         sourced[key] = {"key": key, "title": dict(LOGISTICS_STAGES)[key], "sourced": True, "now": len(items),
-                        "came": None, "left": None,
-                        "max_days": max(((today - _day(r["created_at"] or r["dt"])).days for r in items), default=None),
-                        "overdue": sum(1 for r in items if r["id"] in late),
-                        "hints": {"came": no_history, "left": no_history,
-                                  "max_days": "С даты поручения: истории статусов в 1С нет",
-                                  "overdue": f"Прошла {what} в поручении"}}
+                        "came": None, "left": None, "final": final,
+                        "max_days": None if final else
+                        max(((today - _day(r["created_at"] or r["dt"])).days for r in items), default=None),
+                        "overdue": None if not field else sum(1 for r in items if r["id"] in late),
+                        "hints": {"now": "Поручения выбранного периода (по дате поручения)" if final else "",
+                                  "came": no_history, "left": no_history,
+                                  "max_days": "Конечный этап" if final else "С даты поручения: истории статусов в 1С нет",
+                                  "overdue": f"Прошла {what} в поручении" if field else "Плановой даты для этого этапа в поручении нет"}}
     stages = [sourced.get(k) or {"key": k, "title": t, "sourced": False} for k, t in LOGISTICS_STAGES]
 
     people = {}
@@ -254,7 +263,7 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
         for r in items:
             p = people.setdefault(r["emp"], {"name": name(r["emp"]), "stages": {}, "total": 0, "overdue": 0})
             p["stages"][key] = p["stages"].get(key, 0) + 1
-            p["total"] += 1
+            p["total"] += key not in CLOSED_STAGES  # «всего в работе» — без закрытых
             p["overdue"] += r.get("id") in late and key != "calc"
     # «Всего заявок за период» по статусам: столбцы — в порядке работы с заявкой, незнакомые — в конце
     by_status = {}
@@ -268,8 +277,8 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
                  "plan": r.get("cost")} for r in period if not r["deleted"]]
     return {"available": bool(allrows), "date_from": date_from, "date_to": date_to, "today": today.isoformat(),
             "tiles": {"total": len(period), "deleted": sum(1 for r in period if r["deleted"]),
-                      "in_work": sum(len(x) for x in in_stage.values()),
-                      "overdue": sum(sourced[k]["overdue"] for k in FORWARDER_STAGES),
+                      "in_work": sum(len(x) for k, x in in_stage.items() if k not in CLOSED_STAGES),
+                      "overdue": sum(sourced[k]["overdue"] or 0 for k in FORWARDER_STAGES),
                       "ship_today": sum(1 for r in in_stage["prepare"] if r["ship_date"] == today.isoformat()),
                       "deliver_today": sum(1 for r in in_stage["transit"] if r["delivery_date"] == today.isoformat())},
             "forwarder_orders": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "stage": dict(LOGISTICS_STAGES)[key],
@@ -277,8 +286,9 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
                                   "logist": name(r["emp"]), "ship_date": r["ship_date"], "delivery_date": r["delivery_date"],
                                   "route": r["route"], "carrier": r["carrier"], "plan": r["plan_sum"],
                                   "late_days": late.get(r["id"], 0)}
-                                 for key in FORWARDER_STAGES
-                                 for r in sorted(in_stage[key], key=lambda r: r[FORWARDER_STAGES[key][1]] or "9999")],
+                                 for key in FORWARDER_STAGES if key not in CLOSED_STAGES
+                                 for r in sorted(in_stage[key],
+                                                 key=lambda r: r[FORWARDER_STAGES[key][1] or "dt"] or "9999")],
             "statuses": statuses, "stages": stages, "sourced": sorted(LOGISTICS_SOURCED),
             "people": sorted(people.values(), key=lambda x: (x["name"] == "Не назначен", -x["total"], x["name"])),
             "registry": registry}
