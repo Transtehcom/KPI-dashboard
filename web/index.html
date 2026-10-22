@@ -269,10 +269,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .an-table { font-size: 12px; border-collapse: collapse; width: 100%; }
 .an-table th, .an-table td { text-align: left; vertical-align: top; padding: 3px 6px; border-top: 1px solid var(--line); white-space: normal; }
 .an-table th { color: var(--fg-3); font-weight: 600; width: 110px; }
-.an-table .yes { color: var(--good); } .an-table .no { color: var(--fg-3); }
+.an-table .yes { color: var(--good); } .an-table .no { color: var(--fg-3); } .an-table .secr { color: var(--warn); }
 .an { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; cursor: help; }
 .an-type { font-size: 12px; }
 .an-flag { font-size: 11px; border-radius: 999px; padding: 0 7px; background: var(--good-soft, #e3f4ea); color: var(--good); }
+.an-flag.warn { background: var(--warn-soft); color: var(--warn); }
 .staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
 .staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
 .staff-form fieldset { border: 0; margin: 0; padding: 0; }
@@ -1040,10 +1041,16 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const anCell = (c) => {
     const a = c.analysis;
     if (!a) return c.transcript === "ready" ? `<span class="muted small">${anWhen}</span>` : `<span class="muted">—</span>`;
-    return `<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}</span>`;
+    return `<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}${a.secretary ? `<span class="an-flag warn" title="${a.secretary_manual ? "Отметил руководитель" : "Определил Claude"}: разговор только с секретарём — в KPI не результативный">секретарь</span>` : ""}</span>`;
   };
-  function analysisHtml(a) {  // полный разбор над расшифровкой
+  function analysisHtml(a, id) {  // полный разбор над расшифровкой; id — звонок (для отметки «секретарь»)
     if (!a) return `<div class="muted small">Разбора пока нет: он появится после расшифровки, в фоне.</div>`;
+    const isMgr = state.boot.me.role === "manager", man = a.secretary_manual, ai = a.secretary_ai;
+    const secr = man ?? ai;
+    const secrText = secr == null ? `<span class="muted">не определено — разбор старой версии</span>`
+      : (secr ? '<b class="secr">секретарь</b> — до нужного человека не дошли' : "нужный человек") +
+        ` <span class="muted small">(${man != null ? "отметил руководитель" : "определил Claude"})</span>`;
+    const secrCtl = isMgr && id ? ` <select data-secr="${esc(id)}" aria-label="Отметка «секретарь»"><option value="" ${man == null ? "selected" : ""}>как определил Claude</option><option value="1" ${man === 1 ? "selected" : ""}>секретарь</option><option value="0" ${man === 0 ? "selected" : ""}>не секретарь</option></select>` : "";
     const yn = (v) => v ? `<b class="yes">да</b>` : `<b class="no">нет</b>`;
     const list = (xs, f) => (xs || []).length ? xs.map((x) => esc(f(x))).join("<br>") : "—";
     const o = a.offer || {}, g = a.agreement || {}, tone = a.tone || {};
@@ -1052,6 +1059,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <tr><th>Суть</th><td>${esc(a.summary || "—")}</td></tr>
       <tr><th>Предложение</th><td>${yn(o.made)} ${esc(o.what || "")}${o.kp_promised ? " · обещано КП" : ""}${o.price_named ? " · названа цена" : ""}</td></tr>
       <tr><th>Договорённость</th><td>${yn(g.reached)} ${esc(g.what || "")}${g.when ? ` · срок: ${esc(g.when)}` : ""}</td></tr>
+      <tr><th>Собеседник</th><td>${secrText}${secrCtl}</td></tr>
       ${(a.prices || []).length ? `<tr><th>Цены</th><td>${list(a.prices, (x) => `${x.value} — ${x.what}`)}</td></tr>` : ""}
       ${(a.deadlines || []).length ? `<tr><th>Сроки</th><td>${list(a.deadlines, (x) => `${x.value} — ${x.what}`)}</td></tr>` : ""}
       ${(a.objections || []).length ? `<tr><th>Возражения</th><td>${list(a.objections, (x) => `${x.type}: ${x.text}`)}</td></tr>` : ""}
@@ -1170,13 +1178,19 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         const t = await api("/api/call-transcript?id=" + encodeURIComponent(btn.dataset.text));
         const roles = t.sentences.some((s) => s[1]);  // роли есть — показываем по предложениям, иначе по фрагментам
         const lines = roles ? t.sentences.map((s) => [s[0], s[1], s[2]]) : t.segments.map((s) => [s[0], "", s[2]]);
-        row.firstElementChild.innerHTML = `<div class="tr-wrap">${analysisHtml(t.analysis)}
+        row.firstElementChild.innerHTML = `<div class="tr-wrap">${analysisHtml(t.analysis, btn.dataset.text)}
           <div class="transcript">${lines.length ? lines.map((s, i) => {
             const same = roles && i && lines[i - 1][1] === s[1];  // реплика того же говорящего — без повтора подписи
             return `<p class="${s[1] ? "r" + s[1] : ""}"><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${s[1] && !same ? `<b>${ROLE[s[1]] || ""}:</b> ` : ""}${esc(s[2])}</p>`;
           }).join("") : `<p class="muted">Речь не распознана</p>`}</div></div>
           <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах. ${roles ? "Кто говорит — определил Claude по смыслу." : "Реплики не размечены: разбора ещё нет."} Разбор — Claude по обезличенному тексту.</div>`;
         row.querySelectorAll("[data-at]").forEach((b) => b.addEventListener("click", () => player(btn.dataset.text, +b.dataset.at)));
+        row.querySelectorAll("[data-secr]").forEach((sel) => sel.addEventListener("change", async () => {
+          try {
+            await api("/api/call-secretary", { id: sel.dataset.secr, value: sel.value === "" ? null : +sel.value });
+            toast("Отметка сохранена — KPI с октября 2026 учитывает её"); sideCache = {}; loadCalls();
+          } catch (e) { if (e.message !== "auth") toast(e.message); }
+        }));
       } catch (e) { if (e.message !== "auth") row.firstElementChild.innerHTML = `<div style="color:var(--bad)">${esc(e.message)}</div>`; }
     }));
     const lg = document.getElementById("cLog");

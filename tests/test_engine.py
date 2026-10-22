@@ -442,6 +442,17 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(r["zero_all"], [])
         self.assertEqual(next(i for i in r["items"] if i["code"] == "receivables_pm")["status"], "fail")
 
+    def test_secretary_by_call_analysis_from_october(self):
+        insert(self.con, "activities", [call(1, "pm", "2026-10-05"), call(2, "pm", "2026-10-06"), call(3, "pm", "2026-10-07"),
+                                        call(4, "pm", "2026-09-07")])
+        for rid, secr in (("cpm1", 1), ("cpm2", 1), ("cpm4", 1)):  # Claude: только секретарь
+            self.con.execute("INSERT INTO call_analysis (id, version, result, secretary) VALUES (?, 4, '{}', ?)", (rid, secr))
+        self.con.execute("INSERT INTO call_marks VALUES ('cpm2', 0, 'boss', '2026-10-08')")  # руководитель: не секретарь
+        steps = dict(self.engine.call_funnel("pm", dt.date(2026, 10, 1), dt.date(2026, 10, 31))["steps"])
+        self.assertEqual(steps["Не секретарь"], 2)  # cpm1 отсеян по разбору, cpm2 вернул руководитель
+        steps = dict(self.engine.call_funnel("pm", dt.date(2026, 9, 1), dt.date(2026, 9, 30))["steps"])
+        self.assertEqual(steps["Не секретарь"], 1)  # сентябрь — только по должности в Битрикс24
+
     def test_receivables_overdue_from_1c_customer_orders(self):
         insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "00ЦБ-000098", "client": "Кедр",
                                           "ship_date": "2026-07-14", "due_date": "2026-10-13", "paid_date": "2026-10-16",

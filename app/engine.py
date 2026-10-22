@@ -3,6 +3,7 @@ import datetime as dt
 
 from .common import (business_days_between, month_add, month_bounds, parse_date,
                      quarter_months, today, weeks_of_month, working_days)
+from .call_analysis import secretary_marks
 from .employees import ABSENCE_KINDS
 
 TENDER_VALID = ("Действует", "Выиграно", "Проиграно")  # «валидные заявки» в «Отчёте ОП» 1С
@@ -115,6 +116,23 @@ class Engine:
             d += dt.timedelta(days=1)
         return out
 
+    def _mark_secretary(self, calls):
+        """С месяца secretary_by_call_analysis_from (правила KPI): звонок секретарю — по должности контакта в Б24
+        или по разбору Claude; отметка руководителя к звонку важнее обоих. В r["secretary_src"] — откуда отметка."""
+        since = self.rules.get("secretary_by_call_analysis_from")
+        if not since:
+            return
+        recent = [r for r in calls if r["dt"][:7] >= since]
+        marks = secretary_marks(self.con, [r["id"] for r in recent])
+        for r in recent:
+            m = marks.get(r["id"]) or {}
+            if m.get("manual") is not None:
+                r["secretary"], r["secretary_src"] = m["manual"], "руководитель"
+            elif r["secretary"]:
+                r["secretary_src"] = "должность в Битрикс24"
+            elif m.get("ai"):
+                r["secretary"], r["secretary_src"] = 1, "разбор Claude"
+
     def _result_calls(self, emp, ctx, require_lpr=True, one_per_contact_day=False):
         """Результативные звонки. require_lpr — нужна информация о ЛПР (тендерные регламенты);
         у ПМ регламент требует только ответ на квалифицирующий вопрос и следующий шаг.
@@ -133,6 +151,7 @@ class Engine:
             return out_
         out = [r for r in rows if r["direction"] == "out"]
         long_ = [r for r in out if (r["duration"] or 0) >= self.min_call]
+        self._mark_secretary(long_)
         not_secr = [r for r in long_ if not r["secretary"]]
         lpr = [r for r in not_secr if r["is_lpr"]] if require_lpr else not_secr
         result = [r for r in lpr if r["next_step"]]

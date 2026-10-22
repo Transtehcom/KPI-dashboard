@@ -18,7 +18,9 @@ from .transcripts import ENGINE
 MODEL = "sonnet"
 TIMEOUT = 300
 CALL_TYPES = ["продажа", "тендер", "исполнение", "снабжение", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
-PROMPT_VERSION = 3  # меняется вместе с инструкцией: разборы прежней версии делаются заново
+PROMPT_VERSION = 4  # меняется вместе с инструкцией: разборы прежней версии делаются заново (см. pending)
+# заново разбираются только звонки для KPI (исходящие от min_call_seconds) с этого дня: v4 добавила «секретарь»
+REDO_SINCE = "2026-10-01"
 OBJECTIONS = ["цена", "сроки", "нет потребности", "уже есть поставщик", "нет бюджета", "не ЛПР", "нужно согласование",
               "условия оплаты", "качество", "другое"]
 TONES = ["позитивный", "нейтральный", "негативный"]
@@ -55,6 +57,13 @@ SYSTEM_PROMPT = f"""Ты анализируешь расшифровки тел�
   договора, заказ, подписание и отправка документов, созвон в названный день. Относится к звонку любого типа,
   в том числе к исполнению договора («подпишем спецификацию и отправим сегодня»). Не считается: «перезвоните как-нибудь» без срока, отказ, «посмотрим»,
   секретарь не соединил, автоответчик, недозвон.
+- Секретарь (secretary = true): сотрудник ТТК говорил только с секретарём, приёмной, ресепшн, канцелярией, дежурным,
+  коммутатором или другим промежуточным собеседником, который не решает вопрос по существу (спрашивает «по какому
+  вопросу», принимает сообщение, просит прислать на почту, говорит, что нужного человека нет), и до нужного человека
+  в этом звонке так и не дошёл. Сюда же — когда только узнали в приёмной или канцелярии, зарегистрировано ли письмо
+  и кому передано, а с адресатом письма не поговорили. Если секретарь соединил и дальше разговор шёл с нужным человеком (специалистом,
+  руководителем, ответственным за закупку) — false. Если с самого начала говорили с нужным человеком — false.
+  Автоответчик, гудки, разговор с коллегой из ТТК — false.
 
 Ответь ОДНИМ JSON-объектом без пояснений и без markdown:
 {{
@@ -67,6 +76,7 @@ SYSTEM_PROMPT = f"""Ты анализируешь расшифровки тел�
  "deadlines": [{{"value": "срок как в разговоре", "what": "что к этому сроку", "sentence": номер}}],
  "objections": [{{"type": одно из {json.dumps(OBJECTIONS, ensure_ascii=False)}, "text": "суть возражения кратко", "sentence": номер}}],
  "tone": {{"client": одно из {json.dumps(TONES, ensure_ascii=False)}, "manager": одно из {json.dumps(TONES, ensure_ascii=False)}}},
+ "secretary": true/false — разговор был только с секретарём, до нужного человека не дошли,
  "next_step": "следующий шаг или null"
 }}"""
 
@@ -193,13 +203,17 @@ def in_hours(config, now=None):
     return start <= t < end if start <= end else (t >= start or t < end)
 
 
-def pending(con, limit):
-    """Расшифрованные текущей моделью звонки без разбора текущей версии инструкции — от новых к старым."""
+def pending(con, limit, min_call=120):
+    """Расшифрованные текущей моделью звонки без разбора — от новых к старым. Разбор прежней версии инструкции
+    переделывается только у звонков для KPI (исходящие от min_call секунд) с REDO_SINCE — лимит подписки не тратится
+    на старые и служебные звонки."""
     return [dict(r) for r in con.execute(
         "SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
         "LEFT JOIN call_analysis a ON a.id = c.id WHERE c.file IS NOT NULL AND t.engine = ? "
-        "AND (a.id IS NULL OR (a.version < ? AND a.attempts < ?) OR (a.error IS NOT NULL AND a.attempts < ?)) "
-        "ORDER BY c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, MAX_ATTEMPTS, int(limit)))]
+        "AND (a.id IS NULL OR (a.version < ? AND a.attempts < ? AND c.dt >= ? AND c.direction = 'out' "
+        "AND c.duration >= ?) OR (a.error IS NOT NULL AND a.attempts < ?)) "
+        "ORDER BY c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, REDO_SINCE, int(min_call), MAX_ATTEMPTS,
+                                      int(limit)))]
 
 
 def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None):
@@ -211,13 +225,40 @@ def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, sp
                         (rid, PROMPT_VERSION, error[:300], now))
         else:
             call = call or {}
+            secr = res.get("secretary")
             con.execute("INSERT OR REPLACE INTO call_analysis (id, version, call_type, offer, agreement, result, roles, pii, "
-                        "model, tokens_in, tokens_out, cost_usd, spent, created, error, attempts) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,0)",
+                        "model, tokens_in, tokens_out, cost_usd, spent, created, error, attempts, secretary) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,0,?)",
                         (rid, PROMPT_VERSION, res.get("call_type"), int(bool((res.get("offer") or {}).get("made"))),
                          int(bool((res.get("agreement") or {}).get("reached"))), json.dumps(res, ensure_ascii=False),
                          roles, json.dumps(mapping or {}, ensure_ascii=False), call.get("model"), call.get("tokens_in"),
-                         call.get("tokens_out"), call.get("cost_usd"), spent, now))
+                         call.get("tokens_out"), call.get("cost_usd"), spent, now,
+                         None if not isinstance(secr, bool) else int(secr)))
+        con.commit()
+
+
+def secretary_marks(con, ids):
+    """Отметки «секретарь» для звонков: {id: {"ai": 1/0/None — разбор Claude v4+, "manual": 1/0/None — руководитель}}."""
+    out = {}
+    ids = list(ids)
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        ph = ",".join("?" * len(chunk))
+        for r in con.execute(f"SELECT id, secretary FROM call_analysis WHERE result IS NOT NULL AND id IN ({ph})", chunk):
+            out.setdefault(r["id"], {"ai": None, "manual": None})["ai"] = r["secretary"]
+        for r in con.execute(f"SELECT id, secretary FROM call_marks WHERE id IN ({ph})", chunk):
+            out.setdefault(r["id"], {"ai": None, "manual": None})["manual"] = r["secretary"]
+    return out
+
+
+def set_secretary(con, rid, value, author):
+    """Отметка руководителя: 1 — секретарь, 0 — не секретарь, None — как определил Claude."""
+    with db_lock():
+        if value is None:
+            con.execute("DELETE FROM call_marks WHERE id=?", (rid,))
+        else:
+            con.execute("INSERT OR REPLACE INTO call_marks VALUES (?,?,?,?)",
+                        (rid, int(bool(value)), author, dt.datetime.now().isoformat(timespec="seconds")))
         con.commit()
 
 
@@ -227,7 +268,9 @@ def get(con, rid):
     if not r:
         return None
     res = restore(json.loads(r["result"]), json.loads(r["pii"]) if r["pii"] else None)
-    return {**res, "roles": r["roles"] or "", "version": r["version"], "model": r["model"]}
+    m = secretary_marks(con, [rid]).get(rid) or {}
+    return {**res, "roles": r["roles"] or "", "version": r["version"], "model": r["model"],
+            "secretary_ai": m.get("ai"), "secretary_manual": m.get("manual")}
 
 
 def run(con, config, log=print):
@@ -237,7 +280,7 @@ def run(con, config, log=print):
         return 0, 0, False
     titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
     ok = failed = 0
-    for r in pending(con, s["analyze_per_run"]):
+    for r in pending(con, s["analyze_per_run"], (config.get("bitrix24") or {}).get("min_call_seconds", 120)):
         if not in_hours(config):  # окно закончилось посреди прохода
             break
         segs = json.loads(r["segments"] or "[]")

@@ -13,6 +13,7 @@ import traceback
 import urllib.request
 
 from .anonymize import restore
+from .call_analysis import secretary_marks
 from .common import ROOT, db_lock
 
 # dir — папка записей (относительно папки дашборда или абсолютный путь, в т.ч. сетевой);
@@ -156,6 +157,11 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
                 summary = json.loads(a["result"]).get("summary")
                 an[a["id"]] = {"call_type": a["call_type"], "offer": bool(a["offer"]), "agreement": bool(a["agreement"]),
                                "summary": restore(summary, json.loads(a["pii"]) if a["pii"] else None)}
+        # отметка «секретарь»: руководитель важнее разбора Claude
+        for rid, m in secretary_marks(con, ids).items():
+            if rid in an and (m["manual"] is not None or m["ai"] is not None):
+                an[rid]["secretary"] = m["manual"] if m["manual"] is not None else m["ai"]
+                an[rid]["secretary_manual"] = m["manual"] is not None
     listens = {}
     if with_listens and rows:
         ids = [r["id"] for r in rows]

@@ -176,7 +176,11 @@ CREATE TABLE IF NOT EXISTS call_transcripts (
 CREATE TABLE IF NOT EXISTS call_analysis (
   id TEXT PRIMARY KEY, version INTEGER, call_type TEXT, offer INTEGER, agreement INTEGER, result TEXT, roles TEXT,
   pii TEXT, model TEXT, tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL, spent REAL, created TEXT,
-  error TEXT, attempts INTEGER DEFAULT 0);
+  error TEXT, attempts INTEGER DEFAULT 0, secretary INTEGER);
+
+-- отметка руководителя к звонку поверх разбора Claude (повторный разбор её не стирает): secretary 1/0
+CREATE TABLE IF NOT EXISTS call_marks (
+  id TEXT PRIMARY KEY, secretary INTEGER, author TEXT, updated TEXT);
 
 -- журнал прослушиваний записей звонков: кто, какую запись (call_records.id), чей звонок, когда, с какого адреса;
 -- result: ok — прослушал, read — открыл расшифровку, denied — запросил чужую запись без прав
@@ -205,7 +209,7 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
                                    ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
-                 "employees": [("listen_dept", "INTEGER")]}
+                 "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")]}
 
 
 def migrate(con):

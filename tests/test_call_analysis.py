@@ -165,11 +165,29 @@ class QueueTest(unittest.TestCase):
             self.assertEqual(call_analysis.run(self.con, ANYTIME, log=lambda *a: None)[2], True)
         self.assertIsNone(self.con.execute("SELECT 1 FROM call_analysis WHERE id='call1'").fetchone())
 
-    def test_new_prompt_version_redoes_analysis(self):
+    def test_new_prompt_version_redoes_only_kpi_calls_since_october(self):
         with self.fake_run():
             call_analysis.run(self.con, ANYTIME, log=lambda *a: None)
-        self.con.execute("UPDATE call_analysis SET version = version - 1 WHERE id='call1'")
-        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call1"])
+        self.con.execute("UPDATE call_analysis SET version = version - 1")
+        self.assertEqual(call_analysis.pending(self.con, 10), [])  # звонок короче 2 минут — не переделывается
+        self.con.execute("UPDATE call_records SET duration = 180")
+        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call2", "call1"])
+        self.con.execute("UPDATE call_records SET dt = '2026-09-30T10:00:00' WHERE id='call1'")  # до REDO_SINCE
+        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call2"])
+
+    def test_secretary_from_claude_and_manager_mark(self):
+        with self.fake_run({**ANSWER, "secretary": True}):
+            call_analysis.run(self.con, ANYTIME, log=lambda *a: None)
+        self.assertEqual(call_analysis.secretary_marks(self.con, ["call1"]), {"call1": {"ai": 1, "manual": None}})
+        call_analysis.set_secretary(self.con, "call1", 0, "boss")
+        a = {c["id"]: c["analysis"] for c in self.cr.listing(self.con, {})}
+        self.assertEqual((a["call1"]["secretary"], a["call1"]["secretary_manual"]), (0, True))
+        g = call_analysis.get(self.con, "call1")
+        self.assertEqual((g["secretary_ai"], g["secretary_manual"]), (1, 0))
+        call_analysis.save(self.con, "call1", {**ANSWER, "secretary": True}, "", {})  # повторный разбор
+        self.assertEqual(call_analysis.secretary_marks(self.con, ["call1"])["call1"]["manual"], 0)  # отметка осталась
+        call_analysis.set_secretary(self.con, "call1", None, "boss")
+        self.assertIsNone(call_analysis.secretary_marks(self.con, ["call1"])["call1"]["manual"])
 
     def test_purge_keeps_flags_but_drops_names(self):
         with self.fake_run():

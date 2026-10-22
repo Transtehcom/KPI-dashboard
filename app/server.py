@@ -594,6 +594,15 @@ class Handler(BaseHTTPRequestHandler):
                         app.con.execute("INSERT OR REPLACE INTO plans VALUES (?,?,?,?)", row)
                         app.con.commit()
                     return self.send_json({"ok": True})
+                if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
+                    b = self.body()
+                    if not call_records.get(app.con, str(b.get("id") or "")):
+                        return self.send_json({"error": "Звонок не найден"}, 404)
+                    v = b.get("value")
+                    if v not in (None, 0, 1, True, False):
+                        raise BadRequest("Ожидается 1, 0 или null")
+                    call_analysis.set_secretary(app.con, b["id"], None if v is None else int(v), me["login"])
+                    return self.send_json({"ok": True})
                 if path == "/api/baseline" and method == "POST":
                     b = self.body()
                     if b.get("metric", "conversion_last_year") != "conversion_last_year":
