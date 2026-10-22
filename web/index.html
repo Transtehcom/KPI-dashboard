@@ -1262,7 +1262,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   }
   function renderLogistics(d) {
     const per = state.lPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
-    const t = d.tiles;
+    const t = d.tiles, ST = d.statuses, byStatus = Object.fromEntries(d.by_status);
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Логистика</h1>
         <div class="sub">Заявки на расчёт транспортных расходов · ${esc(per)}</div></div></div>
@@ -1273,8 +1273,15 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="panel stat"><div class="eyebrow">Всего заявок за период</div><div class="v">${nf(t.total)}</div>
           <div class="h">в любом статусе${t.deleted ? `, из них с пометкой удаления — ${nf(t.deleted)}` : ""}</div></div>
       </section>
-      ${d.by_status.length ? `<section class="panel"><div class="panel-h"><h2>По статусам</h2></div><div class="panel-b">
-        <div class="m-chips">${d.by_status.map(([st, n]) => `<span class="m-chip"><b>${nf(n)}</b>${esc(st)}</span>`).join("")}</div></div></section>` : ""}
+      <section class="panel"><div class="panel-h"><h2>Показатели за период</h2><span class="muted small">${esc(per)}</span></div>
+        <div class="scroll"><table class="mt"><thead><tr><th>Показатель</th><th class="n">Всего</th>${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}</tr></thead><tbody>
+          <tr><th>Всего заявок за период</th><td class="n"><b>${nf(t.total)}</b></td>${ST.map((st) => `<td class="n">${byStatus[st] ? nf(byStatus[st]) : "—"}</td>`).join("")}</tr>
+        </tbody></table></div></section>
+      <section class="panel"><div class="panel-h"><h2>Заявки по логистам</h2><span class="muted small">ответственный логист в заявке</span></div>
+        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Логист</th>${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
+          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${ST.map((st) => `<td class="n">${p.statuses[st] ? nf(p.statuses[st]) : "—"}</td>`).join("")}<td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
+          <tr class="tot"><th>Итого</th>${ST.map((st) => `<td class="n">${nf(byStatus[st] || 0)}</td>`).join("")}<td class="n">${nf(t.total)}</td></tr>
+        </tbody></table></div>` : `<div class="panel-b muted">Заявок за период нет</div>`}</section>
       ${d.requests.length ? `<section class="panel"><details class="more"><summary>Заявки за период · ${nf(d.requests.length)}</summary><div class="more-b">
         <div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Дата</th><th>Номер</th><th>Статус</th><th>Логист</th><th>Менеджер</th><th>Адрес доставки</th></tr></thead><tbody>
         ${d.requests.map((r) => `<tr><td>${ruMoment(r.dt)}</td><td>${esc(r.doc)}${r.deleted ? ` <span class="muted small">удалена</span>` : !r.posted ? ` <span class="muted small">не проведена</span>` : ""}</td><td>${esc(r.status)}</td><td>${esc(r.logist)}</td><td>${esc(r.manager || "—")}</td><td style="white-space:normal;min-width:220px">${esc(r.address || "—")}</td></tr>`).join("")}

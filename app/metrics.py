@@ -179,12 +179,21 @@ def logistics(con, names, date_from, date_to):
         return names.get(login) or login or "Не назначен"
 
     status = lambda r: TRANSPORT_STATUSES.get(r["status"], r["status"] or "—")
-    by_status = {}
+    by_status, people = {}, {}
     for r in rows:
-        by_status[status(r)] = by_status.get(status(r), 0) + 1
+        st = status(r)
+        by_status[st] = by_status.get(st, 0) + 1
+        p = people.setdefault(r["emp"], {"name": name(r["emp"]), "statuses": {}, "total": 0})
+        p["statuses"][st] = p["statuses"].get(st, 0) + 1
+        p["total"] += 1
+    # столбцы статусов — в порядке работы с заявкой, незнакомые статусы — в конце
+    order = list(TRANSPORT_STATUSES.values())
+    statuses = order + sorted(s for s in by_status if s not in order)
     return {"available": loaded, "date_from": date_from, "date_to": date_to,
             "tiles": {"total": len(rows), "deleted": sum(1 for r in rows if r["deleted"])},
+            "statuses": statuses,
             "by_status": sorted(by_status.items(), key=lambda x: -x[1]),
+            "people": sorted(people.values(), key=lambda x: (x["name"] == "Не назначен", -x["total"], x["name"])),
             "requests": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": status(r), "logist": name(r["emp"]),
                           "manager": r["sales_manager"], "address": r["address"], "deleted": bool(r["deleted"]),
                           "posted": bool(r["posted"])} for r in rows]}

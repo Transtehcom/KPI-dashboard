@@ -119,6 +119,10 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.assertEqual(dict(r["by_status"]), {"Отработана": 2, "В работе": 1})
         self.assertEqual([x["logist"] for x in r["requests"]], ["Якимова Алёна", "Не назначен", "Ваганова Наталия"])
         self.assertTrue(r["available"])
+        self.assertEqual(r["statuses"][:4], ["Поступила", "В работе", "Запрос информации", "Отработана"])
+        self.assertEqual([(p["name"], p["statuses"], p["total"]) for p in r["people"]],
+                         [("Ваганова Наталия", {"Отработана": 1}, 1), ("Якимова Алёна", {"Отработана": 1}, 1),
+                          ("Не назначен", {"В работе": 1}, 1)])
 
 
 if __name__ == "__main__":
