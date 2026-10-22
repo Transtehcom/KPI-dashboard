@@ -15,13 +15,14 @@
                              просрочен, если плановая дата («Конечная дата поставки» в заказе клиента) прошла.
   Этап заканчивается поступлением (УПД/ТН по заказу поставщику).
 
-Логистика
-  «Всего заявок за период» — заявки на расчёт транспортных расходов из 1С (таблица transport_requests) с датой
-  в периоде, в любом статусе, включая непроведённые и с пометкой удаления;
-  «На расчёте» — из них сейчас в статусе «Поступила» или «В работе», без пометки удаления.
-Показатели логистики — строки LOGISTICS_ROWS: (ключ, название, пояснение, отбор заявки).
+Логистика — заявки на расчёт транспортных расходов из 1С (таблица transport_requests), этапы как в макете:
+  «На расчёте»            — статус «Поступила» или «В работе»; вход и выход — по истории статусов заявки;
+  «На согласовании», «Подготовка отгрузки», «В пути», «Доставлено, не закрыто» — источника данных пока нет.
+  «Всего заявок за период» — заявки с датой в периоде в любом статусе, включая помеченные на удаление.
+  Очередь — на сегодня, по заявкам окна синхронизации (since), без помеченных на удаление.
 """
 import datetime as dt
+import json
 
 from .onec import UNMAPPED
 
@@ -29,11 +30,10 @@ SUPPLY_STAGES = [("calc", "На расчёте"), ("handed", "Расчёт пе�
                  ("placed", "Заказ размещён"), ("shipping", "Ожидается отгрузка")]
 TRANSPORT_STATUSES = {"Поступила": "Поступила", "ВРаботе": "В работе", "ЗапросИнформации": "Запрос информации",
                       "Отработана": "Отработана"}
-LOGISTICS_ROWS = [
-    ("total", "Всего заявок за период", "в любом статусе, включая помеченные на удаление", lambda r: True),
-    ("on_calc", "На расчёте", "статус «Поступила» или «В работе», без помеченных на удаление",
-     lambda r: r["status"] in ("Поступила", "ВРаботе") and not r["deleted"]),
-]
+LOGISTICS_STAGES = [("calc", "На расчёте"), ("approve", "На согласовании"), ("prepare", "Подготовка отгрузки"),
+                    ("transit", "В пути"), ("delivered", "Доставлено, не закрыто")]
+LOGISTICS_SOURCED = {"calc"}  # этапы, для которых в 1С есть данные
+CALC_STATUSES = {"Поступила", "ВРаботе"}
 DEFAULTS = {"handed_days": 30, "approve_days": 30, "ship_soon_days": 7}
 CLOSED = {"Отработана", "Отменена"}
 STATUS_TITLES = {"Поступила": "Поступила", "ВРаботе": "В работе",
@@ -174,40 +174,57 @@ def supply(con, names, date_from, date_to, today=None, now=None, params=None):
     }
 
 
-def logistics(con, names, date_from, date_to):
-    """Логистика: заявки на расчёт транспортных расходов за период [date_from, date_to]."""
-    rows = [dict(r) for r in con.execute("SELECT * FROM transport_requests WHERE dt>=? AND dt<=? ORDER BY created_at DESC",
-                                         (date_from, date_to))]
-    loaded = bool(con.execute("SELECT 1 FROM transport_requests LIMIT 1").fetchone())
+def calc_spans(r):
+    """Интервалы «На расчёте» по истории статусов: [(вход, выход или None)] — даты ГГГГ-ММ-ДДTчч:мм:сс."""
+    hist = json.loads(r.get("history") or "[]") or [[r["status"], r["created_at"] or r["dt"]]]
+    spans, start = [], None
+    for st, at in hist:
+        inside = st in CALC_STATUSES
+        if inside and start is None:
+            start = at
+        elif not inside and start is not None:
+            spans.append((start, at))
+            start = None
+    if start is not None:
+        spans.append((start, None))
+    return spans
+
+
+def logistics(con, names, date_from, date_to, since=None, today=None):
+    """Логистика по макету: плитки, этапы (сейчас / поступило / вышло / макс. дней / просрочено), очередь по логистам,
+    реестр перевозок. Очередь — на сегодня по заявкам с датой не раньше since (окно синхронизации)."""
+    today = today or dt.date.today()
+    a, b = dt.date.fromisoformat(date_from), dt.date.fromisoformat(date_to)
+    allrows = [dict(r) for r in con.execute("SELECT * FROM transport_requests ORDER BY created_at DESC")]
+    period = [r for r in allrows if date_from <= r["dt"] <= date_to]
 
     def name(login):
         if login and login.startswith(UNMAPPED):
             return login[len(UNMAPPED):] or "Не назначен"
         return names.get(login) or login or "Не назначен"
 
-    status = lambda r: TRANSPORT_STATUSES.get(r["status"], r["status"] or "—")
-    by_status, people = {}, {}
-    table = [{"key": k, "title": t, "hint": h, "total": 0, "statuses": {}} for k, t, h, _ in LOGISTICS_ROWS]
-    for r in rows:
-        st = status(r)
-        by_status[st] = by_status.get(st, 0) + 1
-        p = people.setdefault(r["emp"], {"name": name(r["emp"]), "statuses": {}, "total": 0, "metrics": {}})
-        p["statuses"][st] = p["statuses"].get(st, 0) + 1
+    live = [r for r in allrows if not r["deleted"] and (not since or r["dt"] >= since)]
+    queue = [r for r in live if r["status"] in CALC_STATUSES]
+    came = left = 0
+    for r in live:
+        for start, end in calc_spans(r):
+            came += a <= _day(start) <= b and _day(start) <= today
+            left += bool(end) and a <= _day(end) <= b
+    calc = {"key": "calc", "title": "На расчёте", "sourced": True, "now": len(queue), "came": came, "left": left,
+            "max_days": max(((today - _day(calc_spans(r)[-1][0])).days for r in queue if calc_spans(r)), default=None),
+            "overdue": None}
+    stages = [calc if k == "calc" else {"key": k, "title": t, "sourced": False} for k, t in LOGISTICS_STAGES]
+
+    people = {}
+    for r in queue:
+        p = people.setdefault(r["emp"], {"name": name(r["emp"]), "stages": {}, "total": 0})
+        p["stages"]["calc"] = p["stages"].get("calc", 0) + 1
         p["total"] += 1
-        for row, (key, _, _, fits) in zip(table, LOGISTICS_ROWS):
-            if fits(r):
-                row["total"] += 1
-                row["statuses"][st] = row["statuses"].get(st, 0) + 1
-                p["metrics"][key] = p["metrics"].get(key, 0) + 1
-    # столбцы статусов — в порядке работы с заявкой, незнакомые статусы — в конце
-    order = list(TRANSPORT_STATUSES.values())
-    statuses = order + sorted(s for s in by_status if s not in order)
-    return {"available": loaded, "date_from": date_from, "date_to": date_to,
-            "tiles": {"total": len(rows), "deleted": sum(1 for r in rows if r["deleted"]),
-                      **{row["key"]: row["total"] for row in table}},
-            "rows": table, "statuses": statuses,
-            "by_status": sorted(by_status.items(), key=lambda x: -x[1]),
+    registry = [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": TRANSPORT_STATUSES.get(r["status"], r["status"]),
+                 "route": r.get("route") or r.get("address"), "carrier": r.get("carrier"), "logist": name(r["emp"]),
+                 "plan": r.get("cost")} for r in period if not r["deleted"]]
+    return {"available": bool(allrows), "date_from": date_from, "date_to": date_to, "today": today.isoformat(),
+            "tiles": {"total": len(period), "deleted": sum(1 for r in period if r["deleted"]), "in_work": len(queue)},
+            "stages": stages, "sourced": sorted(LOGISTICS_SOURCED),
             "people": sorted(people.values(), key=lambda x: (x["name"] == "Не назначен", -x["total"], x["name"])),
-            "requests": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": status(r), "logist": name(r["emp"]),
-                          "manager": r["sales_manager"], "address": r["address"], "deleted": bool(r["deleted"]),
-                          "posted": bool(r["posted"])} for r in rows]}
+            "registry": registry}

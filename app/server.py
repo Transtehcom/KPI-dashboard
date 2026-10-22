@@ -467,7 +467,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest("Начало периода позже его конца")
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
                     if q.get("kind") == "logistics":
-                        return self.send_json(metrics.logistics(app.con, names, date_from, date_to))
+                        # очередь — по заявкам окна синхронизации: более старые строки в базе не обновляются
+                        since = month_bounds(month_add(current_month(), -app.config.get("sync", {}).get("months_back", 6)))[0]
+                        return self.send_json(metrics.logistics(app.con, names, date_from, date_to, since.isoformat(), today_))
                     return self.send_json(metrics.supply(app.con, names, date_from, date_to, today=today_,
                                                          params=app.config.get("metrics", {}).get("supply")))
                 if path == "/api/employee":

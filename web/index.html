@@ -381,6 +381,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .mt td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .mt tr.tot th, .mt tr.tot td { font-weight: 700; border-top: 2px solid var(--line-strong); }
 .mt td.late, .dt td.late, .stat .v.late { color: var(--bad); font-weight: 600; }
+.stats.stats5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .stats.stats5 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .m-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .m-chip { display: inline-flex; gap: 8px; align-items: center; padding: 6px 12px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--fg-2); }
 .m-chip b { font-family: var(--mono); color: var(--fg-3); }
@@ -1260,35 +1262,49 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       </div></details></section>`;
     bindPeriod("m", () => state.mPer, (p) => { state.mPer = p; }, loadMetrics);
   }
-  function renderLogistics(d) {
+  function renderLogistics(d) {  // лист «Логистика» из Dashboard_TTK.xlsx; этапы без источника — «нет данных»
     const per = state.lPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
-    const t = d.tiles, ST = d.statuses, byStatus = Object.fromEntries(d.by_status);
-    const MR = d.rows.filter((r) => r.key !== "total");  // показатели, кроме «всего», — столбцы таблицы по логистам
+    const t = d.tiles, ST = d.stages;
+    const NA = `<span class="muted small" title="Источника данных в 1С пока нет">нет данных</span>`;
+    const cell = (s, key, cls = "") => !s.sourced ? `<td class="n">${NA}</td>`
+      : s[key] == null ? `<td class="n muted" title="${key === "overdue" ? "Срок расчёта в заявке 1С не задан" : ""}">—</td>`
+      : `<td class="n${cls && s[key] ? " " + cls : ""}">${nf(s[key])}</td>`;
+    const row = (label, key, cls) => `<tr><th>${label}</th>${ST.map((s) => cell(s, key, cls)).join("")}</tr>`;
+    const tot = (key) => d.people.reduce((x, p) => x + (p.stages[key] || 0), 0);
+    const naTile = (title) => `<div class="panel stat"><div class="eyebrow">${title}</div><div class="v muted">—</div><div class="h">нет данных: нет источника в 1С</div></div>`;
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Логистика</h1>
-        <div class="sub">Заявки на расчёт транспортных расходов · ${esc(per)}</div></div></div>
+        <div class="sub">Период движения: ${esc(per)}. Очередь на дату среза: ${ruDay(d.today)}.</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(state.lPer, "l")}</div>
         <span class="muted small">1С: Продажи → Заявка на расчёт транспортных расходов</span></div></section>
       ${d.available ? "" : `<section class="panel"><div class="panel-b" style="padding-top:16px">Заявок из 1С ещё нет: они загрузятся при следующем «Обновить данные».</div></section>`}
-      <section class="stats">
+      <section class="stats stats5">
         <div class="panel stat"><div class="eyebrow">Всего заявок за период</div><div class="v">${nf(t.total)}</div>
           <div class="h">в любом статусе${t.deleted ? `, из них с пометкой удаления — ${nf(t.deleted)}` : ""}</div></div>
-        <div class="panel stat"><div class="eyebrow">На расчёте</div><div class="v">${nf(t.on_calc)}</div>
-          <div class="h">«Поступила» и «В работе», заявки периода</div></div>
+        <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">пока только этап «На расчёте»</div></div>
+        ${naTile("К отгрузке сегодня")}${naTile("К доставке сегодня")}${naTile("Просрочено")}
       </section>
-      <section class="panel"><div class="panel-h"><h2>Показатели за период</h2><span class="muted small">${esc(per)}</span></div>
-        <div class="scroll"><table class="mt"><thead><tr><th>Показатель</th><th class="n">Всего</th>${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}</tr></thead><tbody>
-          ${d.rows.map((r) => `<tr><th title="${esc(r.hint)}">${esc(r.title)}</th><td class="n"><b>${nf(r.total)}</b></td>${ST.map((st) => `<td class="n">${r.statuses[st] ? nf(r.statuses[st]) : "—"}</td>`).join("")}</tr>`).join("")}
-        </tbody></table></div></section>
-      <section class="panel"><div class="panel-h"><h2>Заявки по логистам</h2><span class="muted small">ответственный логист в заявке</span></div>
-        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Логист</th>${MR.map((r) => `<th class="n" title="${esc(r.hint)}">${esc(r.title)}</th>`).join("")}${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
-          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${MR.map((r) => `<td class="n">${p.metrics[r.key] ? nf(p.metrics[r.key]) : "—"}</td>`).join("")}${ST.map((st) => `<td class="n">${p.statuses[st] ? nf(p.statuses[st]) : "—"}</td>`).join("")}<td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
-          <tr class="tot"><th>Итого</th>${MR.map((r) => `<td class="n">${nf(r.total)}</td>`).join("")}${ST.map((st) => `<td class="n">${nf(byStatus[st] || 0)}</td>`).join("")}<td class="n">${nf(t.total)}</td></tr>
-        </tbody></table></div>` : `<div class="panel-b muted">Заявок за период нет</div>`}</section>
-      ${d.requests.length ? `<section class="panel"><details class="more"><summary>Заявки за период · ${nf(d.requests.length)}</summary><div class="more-b">
-        <div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Дата</th><th>Номер</th><th>Статус</th><th>Логист</th><th>Менеджер</th><th>Адрес доставки</th></tr></thead><tbody>
-        ${d.requests.map((r) => `<tr><td>${ruMoment(r.dt)}</td><td>${esc(r.doc)}${r.deleted ? ` <span class="muted small">удалена</span>` : !r.posted ? ` <span class="muted small">не проведена</span>` : ""}</td><td>${esc(r.status)}</td><td>${esc(r.logist)}</td><td>${esc(r.manager || "—")}</td><td style="white-space:normal;min-width:220px">${esc(r.address || "—")}</td></tr>`).join("")}
-        </tbody></table></div></div></details></section>` : ""}`;
+      <section class="panel"><div class="panel-h"><h2>Где находится работа</h2><span class="muted small">одна заявка учитывается только на одном этапе</span></div>
+        <div class="scroll"><table class="mt"><thead><tr><th>Этап</th>${ST.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}</tr></thead><tbody>
+          ${row("Сейчас, заявок", "now")}${row("Поступило, переходов", "came")}${row("Вышло, переходов", "left")}
+          ${row("Макс. на этапе, дней", "max_days")}${row("Просрочено, заявок", "overdue", "late")}
+        </tbody></table></div>
+        <div class="panel-b muted small">Поступило и вышло — переходы за период, а не уникальные заявки.</div></section>
+      <section class="panel"><div class="panel-h"><h2>Очередь по сотрудникам</h2><span class="muted small">на ${ruDay(d.today)}</span></div>
+        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Сотрудник</th>${ST.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}<th class="n">Просрочено</th><th class="n">Всего</th></tr></thead><tbody>
+          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${ST.map((s) => s.sourced ? `<td class="n">${p.stages[s.key] ? nf(p.stages[s.key]) : "—"}</td>` : `<td class="n">${NA}</td>`).join("")}<td class="n muted">—</td><td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
+          <tr class="tot"><th>Итого</th>${ST.map((s) => s.sourced ? `<td class="n">${nf(tot(s.key))}</td>` : `<td class="n">${NA}</td>`).join("")}<td class="n muted">—</td><td class="n">${nf(t.in_work)}</td></tr>
+        </tbody></table></div>` : `<div class="panel-b muted">Очередь пуста: заявок «На расчёте» нет</div>`}</section>
+      <section class="panel"><div class="panel-h"><h2>Заказы и перевозки — реестр</h2><span class="muted small">${nf(d.registry.length)} заявок за период</span></div>
+        <div class="panel-b">${d.registry.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Перевозка</th><th>Дата</th><th>Маршрут</th><th>Перевозчик</th><th>Сотрудник</th><th>Статус</th><th class="n">План, ₽</th><th class="n">Факт, ₽</th><th>Доставка план</th><th>Доставка факт</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
+          ${d.registry.map((r) => `<tr><td>${esc(r.doc)}</td><td>${ruMoment(r.dt)}</td><td style="white-space:normal;min-width:220px">${esc(r.route || "—")}</td><td>${esc(r.carrier || "—")}</td><td>${esc(r.logist)}</td><td>${esc(r.status || "—")}</td><td class="n">${r.plan ? nf(r.plan) : "—"}</td><td class="n muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="n muted">—</td></tr>`).join("")}
+        </tbody></table></div>` : `<span class="muted">Заявок за период нет</span>`}</div></section>
+      <section class="panel"><details class="more"><summary>Откуда данные</summary><div class="more-b small">
+        <p><b>Заявки</b> — 1С, «Продажи → Заявка на расчёт транспортных расходов». «Всего заявок за период» — заявки с датой в периоде в любом статусе, включая помеченные на удаление.</p>
+        <p><b>На расчёте</b> — статус «Поступила» или «В работе». Вход на этап и выход с него — по истории статусов заявки. Очередь — на сегодня, без помеченных на удаление. Срока расчёта в заявке нет, поэтому просрочка не считается.</p>
+        <p><b>Маршрут, перевозчик, план</b> — из результатов расчёта: варианты, отмеченные флажком (несколько — плечи одной перевозки, стоимость с НДС суммируется).</p>
+        <p><b>Нет данных</b>: «На согласовании», «Подготовка отгрузки», «В пути», «Доставлено, не закрыто», «К отгрузке / к доставке сегодня», фактическая стоимость и даты доставки — в 1С их пока не ведут. Скажите, где они появятся, и их можно подключить.</p>
+      </div></details></section>`;
     bindPeriod("l", () => state.lPer, (p) => { state.lPer = p; }, loadMetrics);
   }
 

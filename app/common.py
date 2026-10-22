@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS supply_funnel (
 -- заявки на расчёт транспортных расходов (app/onec_logistics.py): все статусы, emp — логист («1c:ФИО» не из дашборда)
 CREATE TABLE IF NOT EXISTS transport_requests (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
-  sales_manager TEXT, address TEXT);
+  sales_manager TEXT, address TEXT, history TEXT, route TEXT, carrier TEXT, cost REAL);
 
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
@@ -214,7 +214,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
                                    ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
-                 "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")]}
+                 "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
+                 "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")]}
 
 
 def migrate(con):

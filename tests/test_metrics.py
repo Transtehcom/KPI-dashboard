@@ -105,27 +105,50 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.con.close()
         self.tmp.cleanup()
 
-    def test_all_transport_requests_in_period_any_status(self):
-        rows = [{"id": "t1", "emp": "1c:Ваганова Наталия", "dt": "2026-10-20", "created_at": "2026-10-20T14:07:00",
-                 "doc": "000002338", "status": "Отработана", "posted": 1, "deleted": 0},
-                {"id": "t2", "emp": "1c:", "dt": "2026-10-21", "created_at": "2026-10-21T14:18:21", "doc": "000002345",
-                 "status": "ВРаботе", "posted": 0, "deleted": 0},
-                {"id": "t3", "emp": "1c:Якимова Алёна", "dt": "2026-10-21", "created_at": "2026-10-21T15:00:00",
-                 "doc": "000002341", "status": "Отработана", "posted": 1, "deleted": 1},
-                {"id": "t4", "emp": "1c:Якимова Алёна", "dt": "2026-09-30", "doc": "000002200", "status": "Отработана"}]
+    def test_layout_like_xlsx_with_calc_stage_from_status_history(self):
+        import json
+        h = lambda *xs: json.dumps([list(x) for x in xs], ensure_ascii=False)
+        rows = [
+            # отработана за 3 часа: вошла и вышла в октябре
+            {"id": "t1", "emp": "1c:Ваганова Наталия", "dt": "2026-10-20", "created_at": "2026-10-20T14:07:00",
+             "doc": "000002338", "status": "Отработана", "posted": 1, "deleted": 0, "route": "Миасс → Когалым",
+             "carrier": "да транс", "cost": 81200,
+             "history": h(("Поступила", "2026-10-20T11:00:00"), ("Отработана", "2026-10-20T14:07:00"))},
+            # в работе с 19.10 — в очереди
+            {"id": "t2", "emp": "1c:", "dt": "2026-10-21", "created_at": "2026-10-21T14:18:21", "doc": "ЦБ-000990",
+             "status": "ВРаботе", "posted": 0, "deleted": 0,
+             "history": h(("Поступила", "2026-10-19T09:00:00"), ("ВРаботе", "2026-10-20T10:00:00"))},
+            # помечена на удаление: во «всего за период», но не в очереди и не в реестре
+            {"id": "t3", "emp": "ivanov", "dt": "2026-10-05", "created_at": "2026-10-05T10:43:11", "doc": "000002287",
+             "status": "Поступила", "posted": 1, "deleted": 1, "history": h(("Поступила", "2026-10-05T10:43:11"))},
+            # сентябрьская, но всё ещё «Поступила» — в очереди на сегодня
+            {"id": "t4", "emp": "1c:Якимова Алёна", "dt": "2026-09-24", "created_at": "2026-09-24T10:30:46",
+             "doc": "000002256", "status": "Поступила", "posted": 1, "deleted": 0, "history": None},
+            # старше окна синхронизации — не обновляется, в очередь не попадает
+            {"id": "t5", "emp": "1c:Якимова Алёна", "dt": "2026-03-01", "created_at": "2026-03-01T10:00:00",
+             "doc": "000001000", "status": "Поступила", "posted": 1, "deleted": 0},
+        ]
         replace_rows(self.con, "transport_requests", rows)
-        r = metrics.logistics(self.con, {}, "2026-10-01", "2026-10-31")
-        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "on_calc": 1})  # сентябрьская не в периоде, удалённая считается
-        on_calc = next(x for x in r["rows"] if x["key"] == "on_calc")
-        self.assertEqual((on_calc["total"], on_calc["statuses"]), (1, {"В работе": 1}))
-        self.assertEqual(dict(r["by_status"]), {"Отработана": 2, "В работе": 1})
-        self.assertEqual([x["logist"] for x in r["requests"]], ["Якимова Алёна", "Не назначен", "Ваганова Наталия"])
-        self.assertTrue(r["available"])
-        self.assertEqual(r["statuses"][:4], ["Поступила", "В работе", "Запрос информации", "Отработана"])
-        self.assertEqual([(p["name"], p["statuses"], p["total"]) for p in r["people"]],
-                         [("Ваганова Наталия", {"Отработана": 1}, 1), ("Якимова Алёна", {"Отработана": 1}, 1),
-                          ("Не назначен", {"В работе": 1}, 1)])
-        self.assertEqual(r["people"][2]["metrics"], {"total": 1, "on_calc": 1})
+        r = metrics.logistics(self.con, {"ivanov": "Роман Иванов"}, "2026-10-01", "2026-10-31", since="2026-04-01",
+                              today=TODAY)
+        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 2})
+        calc = r["stages"][0]
+        self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (2, 2, 1, 28))
+        self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, False, False, False])
+        self.assertEqual([(p["name"], p["total"]) for p in r["people"]], [("Якимова Алёна", 1), ("Не назначен", 1)])
+        self.assertEqual([(x["doc"], x["route"], x["plan"]) for x in r["registry"]],
+                         [("ЦБ-000990", None, None), ("000002338", "Миасс → Когалым", 81200)])
+
+    def test_route_from_flagged_results(self):
+        from app.onec_logistics import _route
+        res = [{"Флаг": True, "АдресОтправки": "Миасс", "АдресДоставки": "г. Когалым\nдо 28.02", "ТранспортнаяКомпания": "да транс",
+                "СтоимостьСНДС": 81200},
+               {"Флаг": True, "АдресОтправки": "Челябинск", "АдресДоставки": "г. Когалым", "ТранспортнаяКомпания": "кит ",
+                "СтоимостьСНДС": 11800},
+               {"Флаг": False, "АдресОтправки": "Челябинск", "АдресДоставки": "г. Когалым", "ТранспортнаяКомпания": "байкал",
+                "СтоимостьСНДС": 18800}]
+        self.assertEqual(_route(res), ("Миасс → г. Когалым; Челябинск → г. Когалым", "да транс, кит", 93000))
+        self.assertEqual(_route([]), (None, None, None))
 
 
 if __name__ == "__main__":
