@@ -5,7 +5,7 @@
 заказа, как в отчёте «Карточка расчётов с клиентами»: приход — долг клиента (реализация), расход — оплата
 (поступление денег, возврат). Строка таблицы receivables — этап графика оплаты:
   сумма этапа ограничена отгруженным: пока не отгружено, долга нет и просрочки тоже;
-  срок — дата платежа этапа, но не раньше отгрузки этой суммы;
+  срок оплаты — «Дата платежа» этапа как есть: крайний день оплаты, после него долг просрочен;
   оплачено — день, когда оплаты по заказу покрыли этот этап нарастающим итогом.
 Ответственный — тот, кто ведёт заказ (как у выручки, onec_sales.order_lead), иначе менеджер заказа.
 """
@@ -48,7 +48,7 @@ def stage_rows(stages, moves):
         if target - prev < TOLERANCE:
             continue
         ship = _first_reach(shipped, target)
-        out.append({"n": n, "amount": round(target - prev, 2), "ship_date": ship, "due_date": max(due, ship),
+        out.append({"n": n, "amount": round(target - prev, 2), "ship_date": ship, "due_date": due,
                     "paid_date": _first_reach(paid, target)})
         prev = target
     return out

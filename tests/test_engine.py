@@ -448,6 +448,8 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(it["components"][0]["fact"], 3)  # срок 13.10, оплата 16.10: 3 рабочих дня
         self.assertEqual((it["status"], it["details"]["columns"][0]), ("met", "Заказ клиента"))
         self.assertEqual(self.calc("pm", "receivables_pm", "2026-09")["components"][0]["fact"], None)  # сентябрь — без 1С
+        it = self.item("lead", "receivables_overdue", "2026-10")  # в выгрузке 1С заказов сотрудника нет — просрочки нет
+        self.assertEqual((it["components"][0]["fact"], it["status"]), (0, "met"))
 
     def test_proportional_close_threshold_follows_min_pct(self):
         self.rules["payout"] = {"mode": "proportional", "min_pct": 0.9}

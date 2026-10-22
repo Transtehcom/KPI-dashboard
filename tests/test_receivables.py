@@ -27,11 +27,12 @@ class StageRowsTest(unittest.TestCase):
         moves = [("2026-08-25", "Expense", 200), ("2026-09-05", "Receipt", 1000), ("2026-10-20", "Expense", 800)]
         rows = stage_rows(stages, moves)
         self.assertEqual([(r["amount"], r["due_date"], r["paid_date"]) for r in rows],
-                         [(200, "2026-09-05", "2026-08-25"), (800, "2026-10-15", "2026-10-20")])
+                         [(200, "2026-09-01", "2026-08-25"), (800, "2026-10-15", "2026-10-20")])
 
-    def test_due_not_before_shipment(self):
-        rows = stage_rows([("2026-09-01", 100)], [("2026-09-20", "Receipt", 100)])
-        self.assertEqual(rows[0]["due_date"], "2026-09-20")
+    def test_due_is_payment_date_from_order_rules(self):
+        # срок оплаты — «Дата платежа» из правил оплаты как есть, без поправки на дату отгрузки
+        rows = stage_rows([("2026-10-13", 100)], [("2026-07-14", "Receipt", 100)])
+        self.assertEqual((rows[0]["due_date"], rows[0]["paid_date"]), ("2026-10-13", None))
 
 
 if __name__ == "__main__":

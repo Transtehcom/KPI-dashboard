@@ -568,22 +568,25 @@ class Engine:
         rows, src = self._receivable_rows(e["login"], from_1c=True)
         scale = p.get("scale", [[7, 1.0], [14, 0.5]])
         name = "Самая большая просрочка оплаты"
-        if not rows:  # сроков оплаты нет: «просрочки 0 дн.» было бы ложным выполнением
+        if not rows and src != SRC_1C:  # сроки не введены: «просрочки 0 дн.» было бы ложным выполнением
+            # (в выгрузке 1С отсутствие строк значит, что отгруженных неоплаченных заказов нет)
             return {"components": [comp(name, None, scale[0][0], "раб. дн", op="<=", source=src)]}
         worst, det = 0, []
         for r in rows:  # документы со сроком до конца месяца (или сегодня), не оплаченные до начала месяца
             due = parse_date(r["due_date"])
-            if not due or due > ctx["asof"]:
-                continue
             paid = parse_date(r["paid_date"])
-            if paid and paid < ctx["first"]:
+            if not due or (paid and paid < ctx["first"]):
+                continue
+            if due > ctx["asof"]:
+                if src == SRC_1C and due <= ctx["last"]:  # срок ещё впереди, но в этом месяце — для сведения
+                    det.append([r["doc"], r["client"], r["amount"], r["due_date"], r["paid_date"] or "не оплачено", 0])
                 continue
             end = paid if paid and paid <= ctx["asof"] else ctx["asof"]
             od = business_days_between(due, end, self.holidays, self.workdays)
-            if od > 0:
-                worst = max(worst, od)
+            worst = max(worst, od)
+            if od > 0 or src == SRC_1C:  # из 1С — все заказы месяца со сроком и оплатой, вручную — только просрочки
                 det.append([r["doc"], r["client"], r["amount"], r["due_date"], r["paid_date"] or "не оплачено", od])
-        det.sort(key=lambda x: -x[5])
+        det.sort(key=lambda x: (-x[5], x[3]))
         share = next((s for days, s in scale if worst <= days), 0.0)
         bands = "; ".join(f"до {d} — {round(s * 100)}%" for d, s in scale) + f"; больше {scale[-1][0]} — 0%"
         return {
@@ -591,7 +594,7 @@ class Engine:
             "payout_share": share,
             "extra": [{"label": "Выплата по шкале", "value": f"{round(share * 100)}%", "hint": bands}],
             "details": {"columns": ["Заказ клиента" if src == SRC_1C else "Документ", "Клиент", "Сумма, ₽", "Срок оплаты",
-                                    "Оплачено", "Просрочка, раб. дн"], "rows": det},
+                                    "Оплачено полностью", "Просрочка, раб. дн"], "rows": det},
         }
 
     def calc_receivables_pm(self, e, ctx, p):
