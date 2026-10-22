@@ -93,7 +93,8 @@ REQUEST_STAGES = {"Отработана": "done", "Отменена": "cancelled
 
 def fetch_supply_funnel(onec, ds, date_from, date_to):
     """Заявки в отдел снабжения за период (по дате заявки) с ответственным снабжения.
-    Заявка «перешла в заказ», если есть заказ клиента с тем же основанием (КП или тендер), что и у заявки.
+    Заявка «перешла в заказ», если есть заказ клиента с тем же основанием (КП или тендер), что и у заявки;
+    как в «Отчёте ОП», считаются и заказы с пометкой удаления.
     stage: ordered — отработана и есть заказ клиента; done — отработана без заказа; open — в работе; cancelled — отменена.
     Для раздела «Метрики» сохраняются статус из 1С, время заявки, закрытия, срок отработки и дата первого заказа клиента."""
     requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
@@ -104,7 +105,7 @@ def fetch_supply_funnel(onec, ds, date_from, date_to):
                    "ОтветственныйСнабжение/Description"})
     orders = {}
     for c in onec._odata("Document_ЗаказКлиента", {
-            "$format": "json", "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}'",
+            "$format": "json", "$filter": f"Date ge datetime'{_when(date_from)}'",  # с пометкой удаления — тоже, как в «Отчёте ОП»
             "$select": "Number,Date,ДокументОснование"}):
         if c.get("ДокументОснование") and c["ДокументОснование"] != EMPTY:
             orders.setdefault(c["ДокументОснование"], []).append((c["Date"][:10], c["Number"].strip()))
