@@ -722,6 +722,24 @@ class Engine:
         }
 
     # ------------------------------------------------------------------ assembly
+    @staticmethod
+    def items_for(pos, month):
+        """Пункты KPI должности, действующие в месяце ГГГГ-ММ: from / until — первый и последний месяц действия
+        (включительно), weights — {«с какого месяца»: вес} поверх weight. Номера n — по порядку действующих пунктов:
+        прошлые месяцы считаются по правилам того времени, а не задним числом."""
+        out = []
+        for it in pos["items"]:
+            if (it.get("from") and month < it["from"]) or (it.get("until") and month > it["until"]):
+                continue
+            w = it["weight"]
+            for since, v in sorted((it.get("weights") or {}).items()):
+                if month >= since:
+                    w = v
+            out.append({**it, "weight": w})
+        for n, it in enumerate(out, 1):
+            it["n"] = n
+        return out
+
     def compute(self, login, month):
         e = self.employee(login)
         pos = self.rules["positions"][e["position"]]
@@ -731,7 +749,7 @@ class Engine:
         items, zero_all, warnings = [], [], []
         absence = self._absence(e, ctx)
         absent = ctx["wd"] > 0 and absence["days"] >= ctx["wd"]  # весь месяц не работал: KPI не считается
-        for it in pos["items"]:
+        for it in self.items_for(pos, month):
             if absent:
                 items.append({**{k: it[k] for k in ("code", "n", "title", "weight", "period", "target_text", "description")},
                               "amount": round(bonus * it["weight"]), "pct": None, "status": "absent", "payout": 0, "components": []})
@@ -811,7 +829,8 @@ class Engine:
         for key, pos in self.rules["positions"].items():
             if key in groups:
                 out.append({"position": key, "title": pos["title"], "department": pos["department"],
-                            "columns": [{"n": i["n"], "title": i["title"], "weight": i["weight"]} for i in pos["items"]],
+                            "columns": [{"n": i["n"], "title": i["title"], "weight": i["weight"]}
+                                        for i in self.items_for(pos, month)],
                             "employees": groups[key]})
         all_emps = [x for g in out for x in g["employees"] if not x["absent"]]  # не работавшие весь месяц — вне итогов
         return {

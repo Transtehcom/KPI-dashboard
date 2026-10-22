@@ -117,7 +117,7 @@ class App:
             "positions": {k: {"title": v["title"], "department": v["department"], "salary": v["salary"],
                               "kpi_bonus": v["kpi_bonus"], "doc": v.get("doc"),
                               "items": [{x: i.get(x) for x in ("n", "title", "weight", "period", "target_text", "description")}
-                                        for i in v["items"]]}
+                                        for i in Engine.items_for(v, cm)]}  # регламент текущего месяца
                           for k, v in self.rules["positions"].items()},
             "months": [month_add(cm, -k) for k in range(0, 12)],
             "current_month": cm,

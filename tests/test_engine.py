@@ -136,6 +136,21 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(lead["steps"][-1], ("Зафиксирован след. шаг", 1))
         self.assertIsNone(self.engine.call_funnel("nobody", d1, d2))
 
+    def test_exec_discipline_removed_from_october_weight_moved_to_receivables(self):
+        for login, code in (("pm", "receivables_pm"), ("tender", "tender_receivables"), ("lead", "tender_receivables")):
+            sep = self.engine.compute(login, "2026-09")["items"]
+            octo = self.engine.compute(login, "2026-10")["items"]
+            self.assertIn("exec_discipline", [i["code"] for i in sep])  # прошлые месяцы — по правилам того времени
+            self.assertNotIn("exec_discipline", [i["code"] for i in octo])
+            rec_sep, rec_oct = (next(i for i in items if i["code"] == code) for items in (sep, octo))
+            self.assertEqual((rec_sep["n"], rec_sep["weight"], rec_sep["amount"]), (6, 0.10, 1000))
+            self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
+            self.assertAlmostEqual(sum(i["weight"] for i in octo), 1.0)
+        supply = [i["code"] for i in self.engine.compute("supply", "2026-10")["items"]]
+        self.assertIn("exec_discipline", supply)  # у снабженца пункт остаётся
+        cols = next(g for g in self.engine.overview("2026-10")["groups"] if g["position"] == "pm")["columns"]
+        self.assertEqual([c["n"] for c in cols], [1, 2, 3, 4, 5])
+
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
         r = self.calc("tender", "base_development", "2026-09")
