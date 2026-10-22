@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import b24_calendar, call_analysis, call_records, employees, manual, sync, transcripts
+from . import b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -452,6 +452,21 @@ class Handler(BaseHTTPRequestHandler):
                                                              dt.date.fromisoformat(date_to)))
                     return self.send_json({"date_from": date_from, "date_to": date_to, "min_call": app.engine.min_call,
                                            "people": people})
+                if path == "/api/metrics":  # «Метрики»: где сейчас находится работа отдела — только руководителю
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    if q.get("kind") == "logistics":
+                        return self.send_json(metrics.logistics())
+                    if q.get("kind") != "supply":
+                        raise BadRequest("Неизвестный раздел метрик")
+                    today_ = dt.date.today()
+                    date_from = self.date_param(q.get("date_from")) or today_.replace(day=1).isoformat()
+                    date_to = self.date_param(q.get("date_to")) or today_.isoformat()
+                    if date_from > date_to:
+                        raise BadRequest("Начало периода позже его конца")
+                    names = {e["login"]: e["name"] for e in app.config["employees"]}
+                    return self.send_json(metrics.supply(app.con, names, date_from, date_to, today=today_,
+                                                         params=app.config.get("metrics", {}).get("supply")))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:

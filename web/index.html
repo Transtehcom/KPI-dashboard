@@ -360,6 +360,29 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .tabs a { padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); text-decoration: none; white-space: nowrap; }
 .tabs a:hover { color: var(--fg); }
 .tabs a.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
+.tab-menu { position: relative; }
+.tab-menu summary { list-style: none; cursor: pointer; padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); white-space: nowrap; }
+.tab-menu summary::-webkit-details-marker { display: none; }
+.tab-menu summary::after { content: "▾"; margin-left: 6px; font-size: 11px; color: var(--fg-3); }
+.tab-menu summary:hover, .tab-menu[open] summary { color: var(--fg); }
+.tab-menu.on summary { background: var(--surface); color: var(--fg); box-shadow: inset 0 -2px 0 var(--teal), var(--shadow); }
+.tab-menu-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 170px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
+.tabs .tab-menu-pop a { display: block; }
+.tabs .tab-menu-pop a:hover { background: var(--surface-2); }
+.tabs .tab-menu-pop a.on { background: var(--accent-soft); box-shadow: none; }
+/* --- метрики отделов */
+.mt { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mt th, .mt td { padding: 8px 12px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.mt thead th { border-top: 0; font-size: 12px; font-weight: 600; color: var(--fg-3); }
+.mt tbody th { font-weight: 500; }
+.mt td.n, .mt th.n { text-align: right; }
+.mt td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mt tr.tot th, .mt tr.tot td { font-weight: 700; border-top: 2px solid var(--line-strong); }
+.mt td.late, .dt td.late, .stat .v.late { color: var(--bad); font-weight: 600; }
+.m-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.m-chip { display: inline-flex; gap: 8px; align-items: center; padding: 6px 12px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--fg-2); }
+.m-chip b { font-family: var(--mono); color: var(--fg-3); }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .filters label { font-size: 12px; color: var(--fg-3); display: flex; gap: 6px; align-items: center; }
 .fn { display: flex; flex-direction: column; }
@@ -602,6 +625,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else if (h === "staff") { state.view = "staff"; }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
     else if (h === "funnel") { state.view = "funnel"; }
+    else if (metricsView(h) && !PREVIEW) { state.view = metricsView(h); }
     else { state.view = "team"; }
     renderShell();
     load();
@@ -639,14 +663,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
-    const noSide = ["funnel", "staff", "calls"].includes(state.view), noMonth = noSide;
+    const noSide = ["funnel", "staff", "calls"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -664,6 +688,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
       else if (a.dataset.tab === "calls") { state.view = "calls"; location.hash = "calls"; }
+      else if (METRICS[a.dataset.tab]) { state.view = a.dataset.tab; location.hash = METRICS[a.dataset.tab].hash; }
       else if (isMgr) { state.view = "team"; location.hash = "team"; }
       else { state.view = "emp"; location.hash = "kpi"; }
       renderShell(); load();
@@ -716,6 +741,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       return;
     }
     if (state.view === "calls") { loadCalls(); return; }
+    if (METRICS[state.view]) { loadMetrics(); return; }
     if (state.view === "funnel") {
       try {
         const [dFrom, dTo] = funnelPeriod();
@@ -1003,6 +1029,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 
   // ---------- звонки: записи разговоров и журнал прослушиваний
   const DIR = { out: "Исходящий", in: "Входящий" };
+  // раздел «Метрики» (только руководителю): вид → адрес и страница
+  const METRICS = { "m-supply": { hash: "metrics-supply", title: "Снабжение", kind: "supply" },
+                    "m-logistics": { hash: "metrics-logistics", title: "Логистика", kind: "logistics" } };
+  const metricsView = (h) => Object.keys(METRICS).find((v) => METRICS[v].hash === h);
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
   // разбор звонка Claude: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
@@ -1155,6 +1185,74 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (lf) lf.addEventListener("submit", (ev) => { ev.preventDefault(); state.cLogFrom = document.getElementById("cLogFrom").value; state.cLogTo = document.getElementById("cLogTo").value; loadCalls(); });
   }
 
+  // ---------- метрики отделов: где сейчас находится работа (макет Dashboard_TTK.xlsx)
+  async function loadMetrics() {
+    const main = document.getElementById("main"), m = METRICS[state.view];
+    try {
+      if (m.kind === "logistics") { renderLogistics(await api("/api/metrics?kind=logistics")); return; }
+      if (!state.mPer) state.mPer = { mode: "month", month: state.boot.current_month };
+      const [a, b] = periodRange(state.mPer);
+      renderSupply(await api(`/api/metrics?kind=supply&date_from=${a || "2000-01-01"}&date_to=${b}`));
+    } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  const ruMoment = (v) => (v ? ruDay(v.slice(0, 10)) + (v.length > 10 ? " " + v.slice(11, 16) : "") : "—");
+  const lateCell = (n) => (n == null ? `<td class="n muted">нет даты</td>` : `<td class="n${n > 0 ? " late" : ""}">${n > 0 ? nf(n) : "—"}</td>`);
+  function renderSupply(d) {
+    const main = document.getElementById("main"), t = d.tiles, ST = d.stages;
+    const per = state.mPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
+    const row = (label, key, fmt = nf, cls = "") => `<tr><th>${label}</th>${ST.map((s) => `<td class="n${cls && s[key] ? " " + cls : ""}">${s[key] == null ? "—" : fmt(s[key])}</td>`).join("")}</tr>`;
+    const tot = (key) => d.people.reduce((x, p) => x + p.stages[key], 0);
+    main.innerHTML = `
+      <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Снабжение</h1>
+        <div class="sub">Очередь — на ${ruDay(d.today)}. Движение — ${esc(per)}.</div></div></div>
+      <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(state.mPer, "m")}</div>
+        <span class="muted small">Период влияет на «поступило», «вышло», «получено» и «завершено»; очередь — всегда на сегодня</span></div></section>
+      <section class="stats">
+        <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">заявок и заказов на всех этапах</div></div>
+        <div class="panel stat"><div class="eyebrow">Получено за период</div><div class="v">${nf(t.received)}</div><div class="h">заявок в отдел снабжения</div></div>
+        <div class="panel stat"><div class="eyebrow">Завершено за период</div><div class="v">${nf(t.done_calc)} <small>/ ${nf(t.done_orders)}</small></div><div class="h">отработано заявок / поставлено заказов</div></div>
+        <div class="panel stat"><div class="eyebrow">Просрочено</div><div class="v${t.overdue ? " late" : ""}">${nf(t.overdue)}</div><div class="h">прошёл срок отработки или поставки</div></div>
+      </section>
+      <section class="panel"><div class="panel-h"><h2>Где находится работа</h2><span class="muted small">каждая заявка или заказ — только на одном этапе</span></div>
+        <div class="scroll"><table class="mt"><thead><tr><th>Этап</th>${ST.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}</tr></thead><tbody>
+          ${row("Сейчас", "now")}${row("Поступило за период", "came")}${row("Вышло за период", "left")}
+          ${row("Макс. на этапе, дней", "max_days")}${row("Просрочено сейчас", "overdue", nf, "late")}
+        </tbody></table></div></section>
+      <section class="panel"><div class="panel-h"><h2>Очередь по сотрудникам</h2><span class="muted small">на ${ruDay(d.today)}</span></div>
+        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Сотрудник</th>${ST.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}<th class="n">Просрочено</th><th class="n">Всего</th></tr></thead><tbody>
+          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${ST.map((s) => `<td class="n">${p.stages[s.key] ? nf(p.stages[s.key]) : "—"}</td>`).join("")}<td class="n${p.overdue ? " late" : ""}">${p.overdue ? nf(p.overdue) : "—"}</td><td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
+          <tr class="tot"><th>Итого</th>${ST.map((s) => `<td class="n">${nf(tot(s.key))}</td>`).join("")}<td class="n">${nf(t.overdue)}</td><td class="n">${nf(t.in_work)}</td></tr>
+        </tbody></table></div>` : `<div class="panel-b muted">Очередь пуста</div>`}</section>
+      <section class="panel"><div class="panel-h"><h2>Заявки на расчёте</h2><span class="muted small">${nf(d.requests.length)} · сначала просроченные</span></div>
+        <div class="panel-b">${d.requests.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Заявка</th><th>Сотрудник</th><th>Статус</th><th>Поступила</th><th>Срок отработки</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
+          ${d.requests.map((r) => `<tr><td>${esc(r.doc)}</td><td>${esc(r.emp)}</td><td>${esc(r.status)}</td><td>${ruMoment(r.created)}</td><td>${ruMoment(r.due)}</td>${lateCell(r.late_days)}</tr>`).join("")}
+        </tbody></table></div>` : `<span class="muted">Заявок на расчёте нет</span>`}</div></section>
+      <section class="panel"><div class="panel-h"><h2>Заказы поставщикам</h2><span class="muted small">${nf(d.orders.length)} · не поставленные и поставленные за период</span></div>
+        <div class="panel-b">${d.orders.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Заказ</th><th>Поставщик</th><th>Сотрудник</th><th class="n">Закупка без НДС, ₽</th><th>Размещён</th><th>План поставки</th><th>Факт поставки</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
+          ${d.orders.map((o) => `<tr><td>${esc(o.doc)}</td><td>${esc(o.supplier || "—")}</td><td>${esc(o.emp)}</td><td class="n">${nf(o.amount)}</td><td>${ruMoment(o.dt)}</td><td>${ruMoment(o.plan)}</td><td>${ruMoment(o.fact)}</td>${lateCell(o.late_days)}</tr>`).join("")}
+        </tbody></table></div>` : `<span class="muted">Заказов нет</span>`}</div></section>
+      <section class="panel"><details class="more"><summary>Как считаются этапы</summary><div class="more-b small">
+        <p><b>На расчёте</b> — заявка в отдел снабжения со статусом «Поступила», «В работе» или «Запрос проектной документации». Просрочена, если прошёл «Срок отработки до».</p>
+        <p><b>Расчёт передан</b> — заявка отработана, заказа клиента по её основанию (КП или тендеру) ещё нет. Через ${d.params.handed_days} дн. без заказа заявка уходит из очереди.</p>
+        <p><b>Закупка согласуется</b> — заказ клиента есть, заказа поставщику по нему ещё нет. Через ${d.params.approve_days} дн. уходит из очереди: заказ мог быть закрыт со склада.</p>
+        <p><b>Заказ размещён</b> — заказ поставщику без поступления, до плановой даты больше ${d.params.ship_soon_days} дн. или она не задана.</p>
+        <p><b>Ожидается отгрузка</b> — до плановой даты ${d.params.ship_soon_days} дн. или меньше, поступления ещё нет. Просрочен, если плановая дата прошла. Плановая дата — «Конечная дата поставки» в заказе клиента (или введённая в KPI), факт — первое поступление (УПД/ТН) по заказу.</p>
+        <p>«Поступило» и «Вышло» — переходы на этап и с этапа за период, а не уникальные заявки. Просрочка — в календарных днях.</p>
+      </div></details></section>`;
+    bindPeriod("m", () => state.mPer, (p) => { state.mPer = p; }, loadMetrics);
+  }
+  function renderLogistics(d) {
+    document.getElementById("main").innerHTML = `
+      <div class="head"><div><div class="eyebrow">Метрики</div><h1>Логистика</h1>
+        <div class="sub">Где сейчас находятся перевозки: этапы, очередь по сотрудникам, реестр перевозок</div></div></div>
+      <section class="panel"><div class="panel-h"><h2>Источник данных не подключён</h2></div><div class="panel-b">
+        <p>Перевозки пока не ведутся ни в 1С, ни в Битрикс24 в том виде, который читает дашборд. Как только появится источник —
+        документ 1С, смарт-процесс Битрикс24 или таблица, — здесь будет такая же панель, как в «Снабжении».</p>
+        <div class="m-chips">${d.stages.map((s, i) => `<span class="m-chip"><b>${i + 1}</b>${esc(s)}</span>`).join("")}</div>
+        <p class="muted small">Для каждой перевозки понадобятся: ответственный логист, маршрут, стоимость план/факт, плановая и фактическая даты отгрузки и доставки, текущий этап.</p>
+      </div></section>`;
+  }
+
   // ---------- воронка сделок
   const money = (v) => {
     if (v == null) return "—";
@@ -1240,7 +1338,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }
     return ["", ""];
   }
-  document.addEventListener("click", (e) => {  // список ответственных закрывается по клику мимо него
+  document.addEventListener("click", (e) => {  // список ответственных и меню «Метрики» закрываются по клику мимо них
+    const mm = document.getElementById("mMenu");
+    if (mm && mm.open && !mm.contains(e.target)) mm.open = false;
     const det = document.getElementById("fResp");
     if (det && det.open && !det.contains(e.target)) { det.open = false; state.fRespOpen = false; }
   });
@@ -1657,6 +1757,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
+    else if (metricsView(h) && state.view !== metricsView(h)) { state.view = metricsView(h); renderShell(); load(); }
   });
   start();
 })();

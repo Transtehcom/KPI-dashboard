@@ -24,6 +24,10 @@ DATASETS = {
     "supply_funnel": ("supply_funnel", "dt"),
     "tenders_1c": ("tenders_1c", "dt"),
 }
+# таблицы, где нужен весь отдел (раздел «Метрики»): строки с ответственным не из дашборда сохраняются
+# с emp = «1c:ФИО» — KPI их не видит, он выбирает строки по логину сотрудника
+KEEP_UNMAPPED = {"supply_funnel", "supplier_orders"}
+UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified"}
 NUM_FIELDS = {"revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
@@ -152,7 +156,10 @@ class OneC:
             cols = set(table_columns(con, table))
             rows = []
             for i, r in enumerate(raw):
-                login = managers.get(str(r.get("manager") or r.get("emp") or "").strip().lower())
+                who = str(r.get("manager") or r.get("emp") or "").strip()
+                login = managers.get(who.lower())
+                if not login and table in KEEP_UNMAPPED:
+                    login = UNMAPPED + who
                 if not login:
                     continue
                 row = {"emp": login}

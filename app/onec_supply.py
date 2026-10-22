@@ -24,6 +24,10 @@ def _date(v):
     return None if not v or str(v).startswith("0001") else str(v)[:10]
 
 
+def _moment(v):
+    return None if not v or str(v).startswith("0001") else str(v)[:19]
+
+
 def fetch_supplier_orders(onec, ds, date_from, date_to):
     """onec: OneC; ds: настройки набора. Возвращает строки для таблицы supplier_orders с полем manager (ФИО)."""
     lookback = date_from - dt.timedelta(days=ds.get("lookback_days", 365))
@@ -90,25 +94,30 @@ REQUEST_STAGES = {"Отработана": "done", "Отменена": "cancelled
 def fetch_supply_funnel(onec, ds, date_from, date_to):
     """Заявки в отдел снабжения за период (по дате заявки) с ответственным снабжения.
     Заявка «перешла в заказ», если есть заказ клиента с тем же основанием (КП или тендер), что и у заявки.
-    stage: ordered — отработана и есть заказ клиента; done — отработана без заказа; open — в работе; cancelled — отменена."""
+    stage: ordered — отработана и есть заказ клиента; done — отработана без заказа; open — в работе; cancelled — отменена.
+    Для раздела «Метрики» сохраняются статус из 1С, время заявки, закрытия, срок отработки и дата первого заказа клиента."""
     requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
         "$format": "json", "$expand": "ОтветственныйСнабжение",
         "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}' "
                    f"and Date le datetime'{date_to.isoformat()}T23:59:59'",
-        "$select": "Ref_Key,Number,Date,ДокументОснования,СтатусЗаявки,ОтветственныйСнабжение/Description"})
+        "$select": "Ref_Key,Number,Date,ДокументОснования,СтатусЗаявки,ДатаЗакрытияЗаявки,СрокОтработкиДо,"
+                   "ОтветственныйСнабжение/Description"})
     orders = {}
     for c in onec._odata("Document_ЗаказКлиента", {
             "$format": "json", "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}'",
-            "$select": "Number,ДокументОснование"}):
+            "$select": "Number,Date,ДокументОснование"}):
         if c.get("ДокументОснование") and c["ДокументОснование"] != EMPTY:
-            orders.setdefault(c["ДокументОснование"], []).append(c["Number"].strip())
+            orders.setdefault(c["ДокументОснование"], []).append((c["Date"][:10], c["Number"].strip()))
     out = []
     for r in requests:
         stage = REQUEST_STAGES.get(r.get("СтатусЗаявки"), "open")
-        nums = orders.get(r.get("ДокументОснования")) or []
+        found = sorted(orders.get(r.get("ДокументОснования")) or [])
+        nums = [n for _, n in found]
         if stage == "done" and nums:
             stage = "ordered"
         out.append({"id": r["Ref_Key"], "manager": (r.get("ОтветственныйСнабжение") or {}).get("Description"),
                     "dt": r["Date"][:10], "doc": r["Number"].strip(), "customer_order": ", ".join(nums) or None,
-                    "stage": stage})
+                    "stage": stage, "status": r.get("СтатусЗаявки"), "created_at": r["Date"][:19],
+                    "closed_at": _moment(r.get("ДатаЗакрытияЗаявки")), "due_at": _moment(r.get("СрокОтработкиДо")),
+                    "order_dt": found[0][0] if found else None})
     return out

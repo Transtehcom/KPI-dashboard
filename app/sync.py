@@ -7,7 +7,7 @@ from . import call_records, demo, employees, manual
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
-from .onec import DATASETS, OneC
+from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
                    "leads": "qualified_date", "clients": None, "tasks": "deadline", "deal_failures": "dt"}
@@ -135,7 +135,11 @@ def run(con, config, force_demo=False):
                             if table == "leads":
                                 rows = qualify_leads(con, rows)
                             # воронки сделок и лидов — срез по всем ответственным, заменяется целиком
-                            replace_rows(con, table, rows, emps=None if table == "crm_deals" else logins, date_field=date_field,
+                            owners = logins
+                            if table in KEEP_UNMAPPED:  # и ответственные не из дашборда («1c:ФИО»)
+                                owners = logins + [r[0] for r in con.execute(
+                                    f"SELECT DISTINCT emp FROM {table} WHERE emp LIKE ?", (UNMAPPED + "%",))]
+                            replace_rows(con, table, rows, emps=None if table == "crm_deals" else owners, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
                         if any(table == "clients" for _, table, _, _ in writes):

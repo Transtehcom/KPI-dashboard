@@ -122,7 +122,8 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
   single_source INTEGER, emergency INTEGER, justified INTEGER, customer_order TEXT);
 
 CREATE TABLE IF NOT EXISTS supply_funnel (
-  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, customer_order TEXT, client TEXT, stage TEXT, doc TEXT);
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, customer_order TEXT, client TEXT, stage TEXT, doc TEXT,
+  status TEXT, created_at TEXT, closed_at TEXT, due_at TEXT, order_dt TEXT);
 
 -- значения, которые руководитель вводит вручную к записям из 1С (срок и дата оплаты реализации, брак, отсрочка…);
 -- после каждой синхронизации заново накладываются на таблицу (app/manual.py)
@@ -202,7 +203,8 @@ SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients"
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
-                 "supply_funnel": [("doc", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
+                 "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
+                                   ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")]}
 
 
