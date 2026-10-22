@@ -149,12 +149,14 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 8, "overdue": 2, "ship_today": 1,
                                       "deliver_today": 1})
         self.assertEqual(r["statuses"], [["Поступила", 1], ["В работе", 1], ["Запрос информации", 0], ["Отработана", 1]])
-        calc, prep, transit = r["stages"][0], r["stages"][2], r["stages"][3]
+        self.assertEqual([s["title"] for s in r["stages"]], ["На расчёте", "Подготовка отгрузки", "В пути",
+                                                            "Доставлено, не закрыто", "Доставлено, закрыто"])
+        calc, prep, transit = r["stages"][0], r["stages"][1], r["stages"][2]
         self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (3, 2, 1, 100))  # «Тест 3» — 100 дней с даты заявки, а не с 2024 года
         self.assertEqual((prep["now"], prep["came"], prep["left"], prep["max_days"], prep["overdue"]), (2, None, None, 7, 1))
         self.assertEqual((transit["now"], transit["overdue"]), (2, 1))
-        self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, True, True, True, True])
-        delivered, closed = r["stages"][4], r["stages"][5]
+        self.assertEqual([s["sourced"] for s in r["stages"]], [True] * 5)
+        delivered, closed = r["stages"][3], r["stages"][4]
         self.assertEqual((delivered["now"], delivered["overdue"], closed["now"], closed["final"]), (1, None, 1, True))
         self.assertEqual([(p["name"], p["total"], p["overdue"]) for p in r["people"]],
                          [("Якимова Алёна", 3, 0), ("Ваганова Наталия", 2, 2), ("СтажерЛогистика", 2, 0), ("Не назначен", 1, 0)])
