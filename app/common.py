@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS transport_requests (
 -- поручения экспедитору (app/onec_logistics.py): статус ТТК_Статус, плановая отгрузка, emp — ответственный логист
 CREATE TABLE IF NOT EXISTS forwarder_orders (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
-  ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT);
+  ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL);
 
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
@@ -220,7 +220,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
                                    ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
-                 "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")]}
+                 "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")],
+                 "forwarder_orders": [("fact_sum", "REAL")]}
 
 
 def migrate(con):

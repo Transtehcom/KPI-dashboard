@@ -299,7 +299,7 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
             "forwarder_orders": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "stage": dict(LOGISTICS_STAGES)[key],
                                   "status": FORWARDER_STATUSES.get(r["status"], r["status"] or "—"),
                                   "logist": name(r["emp"]), "ship_date": r["ship_date"], "delivery_date": r["delivery_date"],
-                                  "route": r["route"], "carrier": r["carrier"], "plan": r["plan_sum"],
+                                  "route": r["route"], "carrier": r["carrier"], "plan": r["plan_sum"], "fact": r.get("fact_sum"),
                                   "late_days": late.get(r["id"], 0)}
                                  for key in FORWARDER_STAGES if key not in CLOSED_STAGES
                                  for r in sorted(in_stage[key],
