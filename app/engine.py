@@ -402,17 +402,22 @@ class Engine:
         known = bool(self.q("SELECT 1 FROM kp WHERE ordered IS NOT NULL LIMIT 1"))
         won = [r for r in rows if r["ordered"]]
         val = len(won) / len(rows) if rows and known else None
-        base = self.q("SELECT value FROM baselines WHERE emp=? AND metric='conversion_last_year'", emp)
+        # норма от прошлого года — только в правилах до октября 2026 (параметр growth_vs_last_year), потом — просто target
+        by_base = "growth_vs_last_year" in p
+        base = self.q("SELECT value FROM baselines WHERE emp=? AND metric='conversion_last_year'", emp) if by_base else []
         if base and base[0]["value"]:
             target = base[0]["value"] * (1 + p.get("growth_vs_last_year", 0.1))
             rule = f"Базовый уровень прошлого года {base[0]['value'] * 100:.1f}% + {p.get('growth_vs_last_year', 0.1) * 100:.0f}%"
-        else:
+        elif by_base:
             target = p["target"]
             rule = "Базовый уровень прошлого года не задан — используется целевая конверсия из регламента"
+        else:
+            target, rule = p["target"], None
         return {
             "components": [comp("Конверсия КП в заказ клиента", val, target, "%", source=SRC_1C)],
-            "extra": [{"label": "КП за месяц", "value": len(rows)}, {"label": "КП → заказ клиента", "value": len(won)},
-                      {"label": "Как задана цель", "value": rule}],
+            "extra": [{"label": "КП за месяц", "value": len(rows)}, {"label": "КП → заказ клиента", "value": len(won)}] +
+                     ([{"label": "Как задана цель", "value": rule}] if rule else []),
+            "baseline": by_base,
             "details": {"columns": ["КП", "Клиент", "Дата", "Сумма, ₽", "Заказ клиента"],
                         "rows": [[r["doc"], r["client"], r["dt"], r["amount"], "есть" if r["ordered"] else "—"] for r in rows]},
         }

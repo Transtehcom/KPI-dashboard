@@ -964,7 +964,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <h3>${esc(i.title)}</h3><div class="tgt"><span class="chip ${st[1]}">${st[0]}</span> &nbsp;${esc(i.target_text)}</div></div>
           <div class="card-b">${i.components.map((c) => compRow(c, inProg)).join("")}
             ${i.plan && isMgr ? `<form class="inline-form" data-plan="${i.plan.metric}"><label for="plan-${i.n}">План на ${MONTHS[+d.month.slice(5) - 1].toLowerCase()}, ₽</label><input id="plan-${i.n}" type="number" min="0" step="10000" value="${i.plan.value ?? ""}"><button class="btn" type="submit">Сохранить план</button>${i.plan.is_default ? `<span class="muted">сейчас — план по умолчанию</span>` : ""}</form>` : ""}
-            ${i.code === "conversion_sales" && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}
+            ${i.code === "conversion_sales" && i.baseline && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}
             ${i.manual ? manualBlock(d, i) : ""}
             ${i.entry ? entryBlock(d, i) : ""}
             ${i.penalties ? penaltyBlock(d, i) : ""}

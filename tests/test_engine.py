@@ -388,6 +388,15 @@ class EngineTest(unittest.TestCase):
         self.assertAlmostEqual(r["components"][0]["fact"], 2 / 61)  # 3,28%, как в «Отчёте ОП»
         self.assertEqual(r["components"][0]["target"], 0.07)
 
+    def test_pm_conversion_target_is_10_percent_from_october(self):
+        self.con.execute("INSERT OR REPLACE INTO baselines VALUES ('pm', 'conversion_last_year', 0.2)")
+        insert(self.con, "kp", [{"id": f"k{i}", "emp": "pm", "dt": "2026-10-10", "ordered": int(i < 1)} for i in range(10)])
+        r = self.item("pm", "conversion_sales", "2026-10")
+        self.assertEqual(r["components"][0]["target"], 0.10)  # норма прошлого года больше не действует
+        self.assertFalse(r["baseline"])
+        self.assertEqual(r["target_text"], "Конверсия 10%")
+        self.assertAlmostEqual(self.item("pm", "conversion_sales", "2026-09")["components"][0]["target"], 0.22)
+
     def test_company_need_and_strategy_text_fields(self):
         from app.bitrix24 import Bitrix24
         yes = ["Да", " да ", "ДА.", "да, проект модернизации", "Y", "1", True]
