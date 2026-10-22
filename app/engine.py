@@ -740,15 +740,20 @@ class Engine:
 
     def calc_supply_funnel(self, e, ctx, p):
         """Конверсия заявок в отдел снабжения в заказы клиентов, как в отчёте 1С «Отчёт ОП» (раздел ОС):
-        заявки месяца, по которым есть заказ клиента / отработанные заявки месяца."""
+        отработанные заявки, по основанию которых есть заказ клиента / отработанные заявки, по дате заявки.
+        window_months — сколько месяцев берётся, считая отчётный (2 — прошлый и текущий: заказ клиента обычно
+        появляется позже заявки, и заявки конца прошлого месяца не теряются)."""
+        window = int(p.get("window_months", 1))
+        first = month_bounds(month_add(ctx["month"], -(window - 1)))[0]
         rows = self.q("SELECT * FROM supply_funnel WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt",
-                      e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
+                      e["login"], first.isoformat(), ctx["last"].isoformat())
         done = [r for r in rows if r["stage"] in ("done", "ordered")]
         ordered = [r for r in done if r["stage"] == "ordered"]
         val = len(ordered) / len(done) if done else None
         status = {"ordered": "Отработана, есть заказ клиента", "done": "Отработана", "open": "В работе", "cancelled": "Отменена"}
         return {
             "components": [comp("Конверсия: заявки → заказ клиента", val, p.get("target"), "%", source=SRC_1C)],
+            "extra": [{"label": "Заявки за период", "value": f"{first.strftime('%d.%m.%Y')} – {ctx['last'].strftime('%d.%m.%Y')}"}],
             "funnel": {"title": "Заявки в отдел снабжения", "steps": [
                 ("Всего заявок", len(rows)), ("Отработано", len(done)), ("Заявки → заказ клиента", len(ordered))]},
             "details": {"columns": ["Заявка", "Дата", "Статус", "Заказ клиента"],
@@ -759,17 +764,21 @@ class Engine:
     @staticmethod
     def items_for(pos, month):
         """Пункты KPI должности, действующие в месяце ГГГГ-ММ: from / until — первый и последний месяц действия
-        (включительно), weights — {«с какого месяца»: вес} поверх weight. Номера n — по порядку действующих пунктов:
+        (включительно), weights — {«с какого месяца»: вес} поверх weight, params_from — {«с какого месяца»: {параметры}}
+        поверх params. Номера n — по порядку действующих пунктов:
         прошлые месяцы считаются по правилам того времени, а не задним числом."""
         out = []
         for it in pos["items"]:
             if (it.get("from") and month < it["from"]) or (it.get("until") and month > it["until"]):
                 continue
-            w = it["weight"]
+            w, params = it["weight"], dict(it.get("params") or {})
             for since, v in sorted((it.get("weights") or {}).items()):
                 if month >= since:
                     w = v
-            out.append({**it, "weight": w})
+            for since, v in sorted((it.get("params_from") or {}).items()):
+                if month >= since:
+                    params.update(v)
+            out.append({**it, "weight": w, "params": params})
         for n, it in enumerate(out, 1):
             it["n"] = n
         return out

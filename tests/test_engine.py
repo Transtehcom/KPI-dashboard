@@ -187,6 +187,21 @@ class EngineTest(unittest.TestCase):
         it = next(i for i in self.engine.compute("pm", "2026-10")["items"] if i["code"] == "receivables_overdue")
         self.assertEqual((it["pct"], it["payout"]), (None, 0))
 
+    def test_supply_conversion_over_previous_and_current_month_from_october(self):
+        # как отчёт 1С «Отчёт ОП» (ОС), сформированный с 1 сентября: заявки → заказ / отработанные заявки
+        def req(i, dt_, stage):
+            return {"id": f"r{i}", "emp": "supply", "dt": dt_, "doc": f"З-{i}", "stage": stage,
+                    "customer_order": "ЗК-1" if stage == "ordered" else None}
+        insert(self.con, "supply_funnel", [req(1, "2026-08-20", "ordered"), req(2, "2026-09-05", "ordered"),
+                                           req(3, "2026-09-10", "done"), req(4, "2026-09-12", "done"),
+                                           req(5, "2026-10-02", "done"), req(6, "2026-10-03", "open"),
+                                           req(7, "2026-10-04", "cancelled")])
+        octo = self.item("supply", "supply_funnel", "2026-10")
+        self.assertAlmostEqual(octo["components"][0]["fact"], 1 / 4)  # сентябрь + октябрь: 1 в заказ из 4 отработанных
+        self.assertEqual([s[1] for s in octo["funnel"]["steps"]], [6, 4, 1])
+        sep = self.item("supply", "supply_funnel", "2026-09")  # сентябрь — по прежнему правилу, только месяц
+        self.assertAlmostEqual(sep["components"][0]["fact"], 1 / 3)
+
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
         r = self.calc("tender", "base_development", "2026-09")
