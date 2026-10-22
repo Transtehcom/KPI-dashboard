@@ -96,5 +96,30 @@ class SupplyMetricsTest(unittest.TestCase):
         self.assertEqual(res["tiles"]["in_work"], 0)
 
 
+class LogisticsMetricsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.con = connect(os.path.join(self.tmp.name, "kpi.sqlite"))
+
+    def tearDown(self):
+        self.con.close()
+        self.tmp.cleanup()
+
+    def test_all_transport_requests_in_period_any_status(self):
+        rows = [{"id": "t1", "emp": "1c:Ваганова Наталия", "dt": "2026-10-20", "created_at": "2026-10-20T14:07:00",
+                 "doc": "000002338", "status": "Отработана", "posted": 1, "deleted": 0},
+                {"id": "t2", "emp": "1c:", "dt": "2026-10-21", "created_at": "2026-10-21T14:18:21", "doc": "000002345",
+                 "status": "ВРаботе", "posted": 0, "deleted": 0},
+                {"id": "t3", "emp": "1c:Якимова Алёна", "dt": "2026-10-21", "created_at": "2026-10-21T15:00:00",
+                 "doc": "000002341", "status": "Отработана", "posted": 1, "deleted": 1},
+                {"id": "t4", "emp": "1c:Якимова Алёна", "dt": "2026-09-30", "doc": "000002200", "status": "Отработана"}]
+        replace_rows(self.con, "transport_requests", rows)
+        r = metrics.logistics(self.con, {}, "2026-10-01", "2026-10-31")
+        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1})  # сентябрьская не в периоде, удалённая считается
+        self.assertEqual(dict(r["by_status"]), {"Отработана": 2, "В работе": 1})
+        self.assertEqual([x["logist"] for x in r["requests"]], ["Якимова Алёна", "Не назначен", "Ваганова Наталия"])
+        self.assertTrue(r["available"])
+
+
 if __name__ == "__main__":
     unittest.main()

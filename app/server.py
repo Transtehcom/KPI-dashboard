@@ -458,9 +458,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/metrics":  # «Метрики»: где сейчас находится работа отдела — только руководителю
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    if q.get("kind") == "logistics":
-                        return self.send_json(metrics.logistics())
-                    if q.get("kind") != "supply":
+                    if q.get("kind") not in ("supply", "logistics"):
                         raise BadRequest("Неизвестный раздел метрик")
                     today_ = dt.date.today()
                     date_from = self.date_param(q.get("date_from")) or today_.replace(day=1).isoformat()
@@ -468,6 +466,8 @@ class Handler(BaseHTTPRequestHandler):
                     if date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
+                    if q.get("kind") == "logistics":
+                        return self.send_json(metrics.logistics(app.con, names, date_from, date_to))
                     return self.send_json(metrics.supply(app.con, names, date_from, date_to, today=today_,
                                                          params=app.config.get("metrics", {}).get("supply")))
                 if path == "/api/employee":

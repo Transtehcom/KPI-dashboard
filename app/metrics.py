@@ -15,7 +15,9 @@
                              просрочен, если плановая дата («Конечная дата поставки» в заказе клиента) прошла.
   Этап заканчивается поступлением (УПД/ТН по заказу поставщику).
 
-Логистика — источника данных пока нет.
+Логистика
+  «Всего заявок за период» — заявки на расчёт транспортных расходов из 1С (таблица transport_requests) с датой
+  в периоде, в любом статусе, включая непроведённые и с пометкой удаления.
 """
 import datetime as dt
 
@@ -23,7 +25,8 @@ from .onec import UNMAPPED
 
 SUPPLY_STAGES = [("calc", "На расчёте"), ("handed", "Расчёт передан"), ("approve", "Закупка согласуется"),
                  ("placed", "Заказ размещён"), ("shipping", "Ожидается отгрузка")]
-LOGISTICS_STAGES = ["На расчёте", "На согласовании", "Подготовка отгрузки", "В пути", "Доставлено, не закрыто"]
+TRANSPORT_STATUSES = {"Поступила": "Поступила", "ВРаботе": "В работе", "ЗапросИнформации": "Запрос информации",
+                      "Отработана": "Отработана"}
 DEFAULTS = {"handed_days": 30, "approve_days": 30, "ship_soon_days": 7}
 CLOSED = {"Отработана", "Отменена"}
 STATUS_TITLES = {"Поступила": "Поступила", "ВРаботе": "В работе",
@@ -164,5 +167,24 @@ def supply(con, names, date_from, date_to, today=None, now=None, params=None):
     }
 
 
-def logistics():
-    return {"available": False, "stages": LOGISTICS_STAGES}
+def logistics(con, names, date_from, date_to):
+    """Логистика: заявки на расчёт транспортных расходов за период [date_from, date_to]."""
+    rows = [dict(r) for r in con.execute("SELECT * FROM transport_requests WHERE dt>=? AND dt<=? ORDER BY created_at DESC",
+                                         (date_from, date_to))]
+    loaded = bool(con.execute("SELECT 1 FROM transport_requests LIMIT 1").fetchone())
+
+    def name(login):
+        if login and login.startswith(UNMAPPED):
+            return login[len(UNMAPPED):] or "Не назначен"
+        return names.get(login) or login or "Не назначен"
+
+    status = lambda r: TRANSPORT_STATUSES.get(r["status"], r["status"] or "—")
+    by_status = {}
+    for r in rows:
+        by_status[status(r)] = by_status.get(status(r), 0) + 1
+    return {"available": loaded, "date_from": date_from, "date_to": date_to,
+            "tiles": {"total": len(rows), "deleted": sum(1 for r in rows if r["deleted"])},
+            "by_status": sorted(by_status.items(), key=lambda x: -x[1]),
+            "requests": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": status(r), "logist": name(r["emp"]),
+                          "manager": r["sales_manager"], "address": r["address"], "deleted": bool(r["deleted"]),
+                          "posted": bool(r["posted"])} for r in rows]}

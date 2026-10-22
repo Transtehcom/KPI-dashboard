@@ -23,13 +23,14 @@ DATASETS = {
     "supplier_orders": ("supplier_orders", "dt"),
     "supply_funnel": ("supply_funnel", "dt"),
     "tenders_1c": ("tenders_1c", "dt"),
+    "transport_requests": ("transport_requests", "dt"),
 }
 # таблицы, где нужен весь отдел (раздел «Метрики»): строки с ответственным не из дашборда сохраняются
 # с emp = «1c:ФИО» — KPI их не видит, он выбирает строки по логину сотрудника
-KEEP_UNMAPPED = {"supply_funnel", "supplier_orders"}
+KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests"}
 UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
-               "affiliated", "single_source", "emergency", "justified"}
+               "affiliated", "single_source", "emergency", "justified", "posted", "deleted"}
 NUM_FIELDS = {"revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
 DATE_FIELDS = {"dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
 
@@ -135,6 +136,9 @@ class OneC:
         if src == "order_payments":  # дебиторка по заказам клиентов: правила оплаты и расчёты с клиентами (УТ 11)
             from .onec_receivables import fetch_receivables
             return fetch_receivables(self, ds, date_from, date_to)
+        if src == "transport_requests":  # заявки на расчёт транспортных расходов (ТТК) — «Метрики → Логистика»
+            from .onec_logistics import fetch_transport_requests
+            return fetch_transport_requests(self, ds, date_from, date_to)
         if src == "kp_orders":  # КП с признаком «есть заказ клиента» (Отчёт ОП, ТТК)
             from .onec_report import fetch_kp
             return fetch_kp(self, ds, date_from, date_to)

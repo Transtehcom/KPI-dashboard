@@ -1203,7 +1203,12 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   async function loadMetrics() {
     const main = document.getElementById("main"), m = METRICS[state.view];
     try {
-      if (m.kind === "logistics") { renderLogistics(await api("/api/metrics?kind=logistics")); return; }
+      if (m.kind === "logistics") {
+        if (!state.lPer) state.lPer = { mode: "month", month: state.boot.current_month };
+        const [a, b] = periodRange(state.lPer);
+        renderLogistics(await api(`/api/metrics?kind=logistics&date_from=${a || "2000-01-01"}&date_to=${b}`));
+        return;
+      }
       if (!state.mPer) state.mPer = { mode: "month", month: state.boot.current_month };
       const [a, b] = periodRange(state.mPer);
       renderSupply(await api(`/api/metrics?kind=supply&date_from=${a || "2000-01-01"}&date_to=${b}`));
@@ -1256,15 +1261,25 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     bindPeriod("m", () => state.mPer, (p) => { state.mPer = p; }, loadMetrics);
   }
   function renderLogistics(d) {
+    const per = state.lPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
+    const t = d.tiles;
     document.getElementById("main").innerHTML = `
-      <div class="head"><div><div class="eyebrow">Метрики</div><h1>Логистика</h1>
-        <div class="sub">Где сейчас находятся перевозки: этапы, очередь по сотрудникам, реестр перевозок</div></div></div>
-      <section class="panel"><div class="panel-h"><h2>Источник данных не подключён</h2></div><div class="panel-b">
-        <p>Перевозки пока не ведутся ни в 1С, ни в Битрикс24 в том виде, который читает дашборд. Как только появится источник —
-        документ 1С, смарт-процесс Битрикс24 или таблица, — здесь будет такая же панель, как в «Снабжении».</p>
-        <div class="m-chips">${d.stages.map((s, i) => `<span class="m-chip"><b>${i + 1}</b>${esc(s)}</span>`).join("")}</div>
-        <p class="muted small">Для каждой перевозки понадобятся: ответственный логист, маршрут, стоимость план/факт, плановая и фактическая даты отгрузки и доставки, текущий этап.</p>
-      </div></section>`;
+      <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Логистика</h1>
+        <div class="sub">Заявки на расчёт транспортных расходов · ${esc(per)}</div></div></div>
+      <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(state.lPer, "l")}</div>
+        <span class="muted small">1С: Продажи → Заявка на расчёт транспортных расходов</span></div></section>
+      ${d.available ? "" : `<section class="panel"><div class="panel-b" style="padding-top:16px">Заявок из 1С ещё нет: они загрузятся при следующем «Обновить данные».</div></section>`}
+      <section class="stats">
+        <div class="panel stat"><div class="eyebrow">Всего заявок за период</div><div class="v">${nf(t.total)}</div>
+          <div class="h">в любом статусе${t.deleted ? `, из них с пометкой удаления — ${nf(t.deleted)}` : ""}</div></div>
+      </section>
+      ${d.by_status.length ? `<section class="panel"><div class="panel-h"><h2>По статусам</h2></div><div class="panel-b">
+        <div class="m-chips">${d.by_status.map(([st, n]) => `<span class="m-chip"><b>${nf(n)}</b>${esc(st)}</span>`).join("")}</div></div></section>` : ""}
+      ${d.requests.length ? `<section class="panel"><details class="more"><summary>Заявки за период · ${nf(d.requests.length)}</summary><div class="more-b">
+        <div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Дата</th><th>Номер</th><th>Статус</th><th>Логист</th><th>Менеджер</th><th>Адрес доставки</th></tr></thead><tbody>
+        ${d.requests.map((r) => `<tr><td>${ruMoment(r.dt)}</td><td>${esc(r.doc)}${r.deleted ? ` <span class="muted small">удалена</span>` : !r.posted ? ` <span class="muted small">не проведена</span>` : ""}</td><td>${esc(r.status)}</td><td>${esc(r.logist)}</td><td>${esc(r.manager || "—")}</td><td style="white-space:normal;min-width:220px">${esc(r.address || "—")}</td></tr>`).join("")}
+        </tbody></table></div></div></details></section>` : ""}`;
+    bindPeriod("l", () => state.lPer, (p) => { state.lPer = p; }, loadMetrics);
   }
 
   // ---------- воронка сделок

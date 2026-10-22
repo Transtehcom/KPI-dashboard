@@ -127,6 +127,11 @@ CREATE TABLE IF NOT EXISTS supply_funnel (
 
 -- значения, которые руководитель вводит вручную к записям из 1С (срок и дата оплаты реализации, брак, отсрочка…);
 -- после каждой синхронизации заново накладываются на таблицу (app/manual.py)
+-- заявки на расчёт транспортных расходов (app/onec_logistics.py): все статусы, emp — логист («1c:ФИО» не из дашборда)
+CREATE TABLE IF NOT EXISTS transport_requests (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
+  sales_manager TEXT, address TEXT);
+
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (tbl, ref, field));
@@ -200,7 +205,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
-               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "tenders_1c",
+               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "tenders_1c",
                "deal_failures"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
