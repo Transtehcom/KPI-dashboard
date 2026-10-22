@@ -434,11 +434,13 @@ class EngineTest(unittest.TestCase):
         self.con.execute("INSERT INTO plans VALUES ('tender', '2026-09', 'revenue', 7000000)")
         self.assertEqual(self.calc("tender", "gross_profit", "2026-09")["plan"]["value"], 7_000_000)
 
-    def test_pm_overdue_over_14_days_zeroes_all_kpi(self):
-        # до октября 2026 сроки и даты оплаты реализаций вводит руководитель
+    def test_pm_overdue_over_14_days_fails_only_receivables(self):
+        # до октября 2026 сроки и даты оплаты реализаций вводит руководитель; дебиторка не обнуляет весь KPI
         insert(self.con, "sales", [{"id": "s1", "emp": "pm", "doc": "УПД", "dt": "2026-08-01", "due_date": "2026-09-01",
                                     "paid_date": "2026-09-20", "revenue": 1}])
-        self.assertTrue(self.engine.compute("pm", "2026-09")["zero_all"])
+        r = self.engine.compute("pm", "2026-09")
+        self.assertEqual(r["zero_all"], [])
+        self.assertEqual(next(i for i in r["items"] if i["code"] == "receivables_pm")["status"], "fail")
 
     def test_receivables_overdue_from_1c_customer_orders(self):
         insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "00ЦБ-000098", "client": "Кедр",
