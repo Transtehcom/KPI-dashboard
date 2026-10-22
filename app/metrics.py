@@ -175,10 +175,13 @@ def supply(con, names, date_from, date_to, today=None, now=None, params=None):
 
 
 def calc_spans(r):
-    """Интервалы «На расчёте» по истории статусов: [(вход, выход или None)] — даты ГГГГ-ММ-ДДTчч:мм:сс."""
-    hist = json.loads(r.get("history") or "[]") or [[r["status"], r["created_at"] or r["dt"]]]
+    """Интервалы «На расчёте» по истории статусов: [(вход, выход или None)] — даты ГГГГ-ММ-ДДTчч:мм:сс.
+    В скопированной заявке история приходит из исходной, с датами раньше самой заявки: они сдвигаются на дату заявки."""
+    born = r["created_at"] or r["dt"]
+    hist = json.loads(r.get("history") or "[]") or [[r["status"], born]]
     spans, start = [], None
     for st, at in hist:
+        at = max(at, born)
         inside = st in CALC_STATUSES
         if inside and start is None:
             start = at

@@ -24,7 +24,7 @@ def _route(results):
         return None, None, None
     legs, carriers = [], []
     for x in chosen:
-        src, dst = _text(x.get("АдресОтправки")), _text((x.get("АдресДоставки") or "").strip().split("\n")[0])
+        src, dst = _text(x.get("АдресОтправки")), _text(x.get("АдресДоставки"))
         leg = " → ".join(p for p in (src, dst) if p)
         if leg and leg not in legs:
             legs.append(leg)

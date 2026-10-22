@@ -115,9 +115,13 @@ class LogisticsMetricsTest(unittest.TestCase):
              "carrier": "да транс", "cost": 81200,
              "history": h(("Поступила", "2026-10-20T11:00:00"), ("Отработана", "2026-10-20T14:07:00"))},
             # в работе с 19.10 — в очереди
-            {"id": "t2", "emp": "1c:", "dt": "2026-10-21", "created_at": "2026-10-21T14:18:21", "doc": "ЦБ-000990",
+            {"id": "t2", "emp": "1c:", "dt": "2026-10-21", "created_at": "2026-10-19T09:00:00", "doc": "ЦБ-000990",
              "status": "ВРаботе", "posted": 0, "deleted": 0,
              "history": h(("Поступила", "2026-10-19T09:00:00"), ("ВРаботе", "2026-10-20T10:00:00"))},
+            # копия заявки: история из исходной, 2024 год — вход на этап считается с даты заявки
+            {"id": "t6", "emp": "1c:СтажерЛогистика", "dt": "2026-07-14", "created_at": "2026-07-14T11:35:50",
+             "doc": "Тест 3", "status": "Поступила", "posted": 1, "deleted": 0,
+             "history": h(("Поступила", "2024-09-10T11:04:09"))},
             # помечена на удаление: во «всего за период», но не в очереди и не в реестре
             {"id": "t3", "emp": "ivanov", "dt": "2026-10-05", "created_at": "2026-10-05T10:43:11", "doc": "000002287",
              "status": "Поступила", "posted": 1, "deleted": 1, "history": h(("Поступила", "2026-10-05T10:43:11"))},
@@ -131,14 +135,14 @@ class LogisticsMetricsTest(unittest.TestCase):
         replace_rows(self.con, "transport_requests", rows)
         r = metrics.logistics(self.con, {"ivanov": "Роман Иванов"}, "2026-10-01", "2026-10-31", since="2026-04-01",
                               today=TODAY)
-        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 2})
+        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 3})
         self.assertEqual(r["statuses"], [["Поступила", 1], ["В работе", 1], ["Запрос информации", 0], ["Отработана", 1]])
         calc = r["stages"][0]
-        self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (2, 2, 1, 28))
+        self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (3, 2, 1, 100))  # «Тест 3» — 100 дней с даты заявки, а не с 2024 года
         self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, False, False, False])
-        self.assertEqual([(p["name"], p["total"]) for p in r["people"]], [("Якимова Алёна", 1), ("Не назначен", 1)])
+        self.assertEqual([(p["name"], p["total"]) for p in r["people"]], [("СтажерЛогистика", 1), ("Якимова Алёна", 1), ("Не назначен", 1)])
         self.assertEqual([(x["doc"], x["route"], x["plan"]) for x in r["registry"]],
-                         [("ЦБ-000990", None, None), ("000002338", "Миасс → Когалым", 81200)])
+                         [("000002338", "Миасс → Когалым", 81200), ("ЦБ-000990", None, None)])
 
     def test_route_from_flagged_results(self):
         from app.onec_logistics import _route
@@ -148,7 +152,7 @@ class LogisticsMetricsTest(unittest.TestCase):
                 "СтоимостьСНДС": 11800},
                {"Флаг": False, "АдресОтправки": "Челябинск", "АдресДоставки": "г. Когалым", "ТранспортнаяКомпания": "байкал",
                 "СтоимостьСНДС": 18800}]
-        self.assertEqual(_route(res), ("Миасс → г. Когалым; Челябинск → г. Когалым", "да транс, кит", 93000))
+        self.assertEqual(_route(res), ("Миасс → г. Когалым до 28.02; Челябинск → г. Когалым", "да транс, кит", 93000))
         self.assertEqual(_route([]), (None, None, None))
 
 
