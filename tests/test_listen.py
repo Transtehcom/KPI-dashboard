@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -31,7 +32,8 @@ class ListenTest(unittest.TestCase):
         config = {"holidays": [], "call_records": {"dir": str(rec_dir), "keep_days": 90},
                   "bitrix24": {"webhook": "https://portal.example.test/rest/1/secret/"},
                   "employees": [{"login": "boss", "name": "Руководитель", "role": "manager"},
-                                {"login": "pm", "name": "ПМ", "position": "pm", "role": "employee", "department": "ОП"},
+                                {"login": "pm", "name": "ПМ", "position": "pm", "role": "employee", "department": "ОП",
+                                 "b24_user_id": 14},
                                 {"login": "tender", "name": "Тендерный", "position": "tender", "role": "employee",
                                  "department": "ОС"},
                                 {"login": "lead", "name": "Руководитель ОС", "position": "tender_lead", "role": "employee",
@@ -187,6 +189,18 @@ class ListenTest(unittest.TestCase):
         c1 = next(c for c in json.loads(self.get("pm", "/api/calls?month=2026-10")[2])["calls"] if c["id"] == "call1")
         self.assertEqual(c1["analysis"], {"call_type": "продажа", "offer": True, "agreement": False,
                                           "summary": "Иван Петров согласен с ценой"})
+
+    def test_funnel_department_param(self):
+        with db_lock():
+            self.con.execute("INSERT OR REPLACE INTO crm_deals (id, entity, emp, responsible_id, responsible, category_id, "
+                             "category, stage_id, stage, semantic) VALUES "
+                             "('d1','deal','pm','14','ПМ','0','Продажи','S','В работе','P'),"
+                             "('d2','deal',NULL,'99','Чужой','0','Продажи','S','В работе','P')")
+            self.con.commit()
+        total = lambda q: json.loads(self.get("boss", "/api/funnel?kind=deals" + q)[2])["total"]
+        op = urllib.parse.quote("ОП")
+        self.assertEqual((total(""), total("&department=" + op), total("&department=_none"), total(f"&department={op},_none")),
+                         (2, 1, 1, 2))
 
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False

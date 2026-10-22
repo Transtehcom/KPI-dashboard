@@ -720,7 +720,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       try {
         const [dFrom, dTo] = funnelPeriod();
         const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
-        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}`);
+        const dep = state.fDep == null ? "" : `&department=${encodeURIComponent(state.fDep || "_none")}`;
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}${dep}`);
         const logins = (state.fLogins || []).join(",");
         const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
           logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
@@ -1271,6 +1272,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const chosen = (state.fLogins || []).filter((v) => resp.has(v));
     const chosenNames = chosen.map((v) => resp.get(v).name);
     const respLabel = !chosen.length ? "Все" : chosen.length === 1 ? chosenNames[0] : `Выбрано: ${chosen.length}`;
+    // отделы — из обеих воронок в одном списке, счётчики складываются
+    const depMap = new Map();
+    FUNNELS.forEach((x) => (d[x.kind].filters.departments || []).forEach((o) => {
+      const v = depMap.get(o.value) || { value: o.value, name: o.name, count: 0 };
+      v.count += o.count; depMap.set(o.value, v);
+    }));
+    const deps = [...depMap.values()].sort((a, b) => (a.value === "") - (b.value === "") || a.name.localeCompare(b.name, "ru"));
+    const depName = state.fDep == null ? "" : (depMap.get(state.fDep) || {}).name || "";
     const cats = d.deals.filters.categories, catName = (cats.find((c) => c.value === d.deals.applied.category) || {}).name;
 
     // --- графика: ширина (длина) — количество, насыщенность цвета и толщина полосы — сумма
@@ -1339,6 +1348,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <table class="pr pr-params"><tbody>
           <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td></tr>
           <tr><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки</td></tr>
+          <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td></tr>
           <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td></tr>
           <tr><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
           <tr><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
@@ -1354,6 +1364,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
         <div class="filters">
           ${perHtml}
+          ${PREVIEW ? "" : `<label for="fDep">Отдел<select id="fDep"><option value="__all">Все</option>${deps.map((x) => `<option value="${esc(x.value)}" ${state.fDep === x.value ? "selected" : ""}>${esc(x.name)} (${x.count})</option>`).join("")}</select></label>`}
           <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
             <div class="msel-pop">${respList.map((r) => `<label><input type="checkbox" value="${esc(r.value)}" ${chosen.includes(r.value) ? "checked" : ""}>${esc(r.name)} <span class="muted">(${r.count})</span></label>`).join("")}
               <button type="button" class="linkish" id="fRespClear">Сбросить выбор</button></div></details></div>
@@ -1393,6 +1404,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     bindPeriod("f", () => state.fPer, (v) => { state.fPer = v; }, load);
     onChange("fField", (v) => { state.fDateField = v; });
     onChange("fCat", (v) => { state.fCat = v; if (PREVIEW) state.fLogins = []; });
+    onChange("fDep", (v) => { state.fDep = v === "__all" ? undefined : v; state.fLogins = []; });  // ответственные — заново, из отдела
     const det = document.getElementById("fResp");
     det.addEventListener("toggle", () => { state.fRespOpen = det.open; });
     const setLogins = (list, keepOpen) => { state.fLogins = list; state.fRespOpen = keepOpen; if (PREVIEW && list.length) state.fCat = ""; load(); };

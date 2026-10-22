@@ -428,8 +428,10 @@ class Handler(BaseHTTPRequestHandler):
                     if date_from and date_to and date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
                     logins = [x for x in (q.get("login") or "").split(",") if x]  # несколько ответственных через запятую
+                    # отделы через запятую; «_none» — ответственные без отдела (нет в разделе «Сотрудники»)
+                    deps = [("" if x == "_none" else x) for x in q["department"].split(",") if x] if q.get("department") else None
                     return self.send_json(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
-                                                      date_from, date_to, date_field))
+                                                      date_from, date_to, date_field, deps))
                 if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
                     if not date_from and not date_to:  # период не выбран — текущий месяц, как в KPI

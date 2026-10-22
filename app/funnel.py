@@ -1,6 +1,8 @@
 """Воронки сделок и лидов: текущий срез открытых записей CRM, разложенный по секциям из config.deal_funnel / lead_funnel."""
 import datetime as dt
 
+from .common import load_rules
+
 DEFAULT_SECTIONS = {
     "deals": [
         {"key": "work", "title": "В работе", "all_open": True},
@@ -26,10 +28,13 @@ def _days(since, now):
         return None
 
 
-def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created"):
+def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created",
+                departments=None):
     """login — ключ ответственного (логин сотрудника или «id:<ID в Б24>») либо список таких ключей.
     date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
-    в период: created — дата создания, stage — дата перехода на текущую стадию."""
+    в период: created — дата создания, stage — дата перехода на текущую стадию.
+    departments — отделы ответственных из раздела «Сотрудники» (по логину, а без KPI — по ID в Б24);
+    «» — ответственные, которых в разделе нет («Без отдела»)."""
     entity, cfg_key = KINDS[kind]
     fcfg = config.get(cfg_key, {})
     sections_cfg = fcfg.get("sections") or DEFAULT_SECTIONS[kind]
@@ -38,9 +43,21 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         all_rows = [r for r in all_rows if r["semantic"] not in ("S", "F")]
     snap = max((r["snapshot"] for r in all_rows if r["snapshot"]), default=None)
 
+    by_login = {e["login"]: e.get("department") or "" for e in config.get("employees", [])}
+    by_b24 = {str(e["b24_user_id"]): e.get("department") or "" for e in config.get("employees", []) if e.get("b24_user_id")}
+    dep_of = lambda r: by_login.get(r["emp"]) if r["emp"] in by_login else by_b24.get(str(r["responsible_id"] or ""), "")
+    titles = load_rules().get("departments", {})
+    deps_chosen = None if departments is None else set(departments)
+
     # варианты фильтров — по всему срезу (чтобы выбранный вариант не пропадал из списка), счётчики — по периоду
+    deps = {}
+    for r in all_rows:
+        d = dep_of(r)
+        deps.setdefault(d, {"value": d, "name": titles.get(d, d) if d else "Без отдела", "count": 0})
     resp = {}
     for r in all_rows:
+        if deps_chosen is not None and dep_of(r) not in deps_chosen:
+            continue  # в списке ответственных — только из выбранных отделов
         key = r["emp"] or ("id:" + (r["responsible_id"] or ""))
         resp.setdefault(key, {"value": key, "name": r["responsible"] or "Без ответственного", "count": 0})
     cats = {}
@@ -52,10 +69,13 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         all_rows = [r for r in all_rows if r[col] and (not date_from or r[col][:10] >= date_from)
                     and (not date_to or r[col][:10] <= date_to)]
     for r in all_rows:
-        resp[r["emp"] or ("id:" + (r["responsible_id"] or ""))]["count"] += 1
+        deps[dep_of(r)]["count"] += 1
         cats[r["category_id"]]["count"] += 1
+        key = r["emp"] or ("id:" + (r["responsible_id"] or ""))
+        if key in resp:
+            resp[key]["count"] += 1
 
-    rows = all_rows
+    rows = all_rows if deps_chosen is None else [r for r in all_rows if dep_of(r) in deps_chosen]
     logins = {login} if isinstance(login, str) else set(login or [])  # один ответственный или несколько
     logins.discard("")
     if logins:
@@ -132,8 +152,11 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         "other_stages": [{"category": c, "stage": s, "count": n} for (c, s), n in sorted(other.items(), key=lambda x: -x[1])],
         "filters": {
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),
+            # отделы по алфавиту, «Без отдела» — последним
+            "departments": sorted(deps.values(), key=lambda x: (x["value"] == "", x["name"])),
             "categories": sorted(cats.values(), key=lambda x: x["name"]),
         },
         "applied": {"login": ",".join(sorted(logins)), "logins": sorted(logins), "category": "" if category is None else str(category),
+                    "departments": sorted(deps_chosen) if deps_chosen is not None else [],
                     "date_from": date_from or "", "date_to": date_to or "", "date_field": date_field},
     }

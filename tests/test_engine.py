@@ -14,6 +14,7 @@ from app.engine import Engine  # noqa: E402
 from app.funnel import deal_funnel  # noqa: E402
 
 TODAY = dt.date(2026, 10, 20)
+EXAMPLE_RULES_DEP = load_rules()["departments"]["ОП"]  # «Отдел продаж (ОП)»
 EXAMPLE = load_json("config.example.json")
 CONFIG = {
     "holidays": EXAMPLE["holidays"],
@@ -479,6 +480,32 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(leads["sections"][0]["share_of_total"], 1.0)  # «Поступило» — сумма трёх этапов ниже
         self.assertEqual(leads["total_amount"], 300)
         self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
+
+    def test_funnel_department_filter(self):
+        def row(i, emp, rid):
+            return {"id": f"d{i}", "entity": "deal", "emp": emp, "responsible_id": rid, "responsible": f"Сотрудник {i}",
+                    "category_id": "0", "category": "Отдел продаж", "stage_id": "PREPARATION", "stage": "Подготовка КП",
+                    "semantic": "P", "amount": 1, "created": "2026-10-01T10:00:00", "stage_since": "2026-10-01T10:00:00"}
+        replace_rows(self.con, "crm_deals", [row(1, "pm", "14"), row(2, "tender", "15"),
+                                             row(3, None, "25"),  # в дашборде без KPI — узнаётся по ID в Б24
+                                             row(4, None, "99")])  # нет в разделе «Сотрудники»
+        cfg = {**EXAMPLE, "employees": [{"login": "pm", "name": "ПМ", "department": "ОП", "b24_user_id": 14},
+                                        {"login": "tender", "name": "Т", "department": "ОП", "b24_user_id": 15},
+                                        {"login": "boss", "name": "Р", "department": "Администрация", "b24_user_id": 25}]}
+        total = lambda **kw: deal_funnel(self.con, cfg, **kw)["total"]
+        self.assertEqual(total(), 4)
+        self.assertEqual(total(departments=["ОП"]), 2)
+        self.assertEqual(total(departments=["Администрация"]), 1)
+        self.assertEqual(total(departments=[""]), 1)  # «Без отдела»
+        self.assertEqual(total(departments=["ОП", "Администрация"]), 3)
+        f = deal_funnel(self.con, cfg, departments=["ОП"])
+        self.assertEqual({d["value"]: d["count"] for d in f["filters"]["departments"]}, {"ОП": 2, "Администрация": 1, "": 1})
+        names = {d["value"]: d["name"] for d in f["filters"]["departments"]}
+        self.assertEqual((names["ОП"], names[""]), (EXAMPLE_RULES_DEP, "Без отдела"))  # полное название из kpi_rules.json
+        self.assertEqual(f["filters"]["departments"][-1]["value"], "")  # «Без отдела» — последним
+        self.assertEqual(sorted(r["value"] for r in f["filters"]["responsibles"]), ["pm", "tender"])  # ответственные отдела
+        self.assertEqual(total(departments=["ОП"], login="pm"), 1)  # с выбором ответственного — пересечение
+        self.assertEqual(f["applied"]["departments"], ["ОП"])
 
     def test_funnel_period_filters_by_created_or_stage_date(self):
         def row(i, created, since):
