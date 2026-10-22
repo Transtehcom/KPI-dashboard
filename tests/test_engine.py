@@ -142,7 +142,8 @@ class EngineTest(unittest.TestCase):
             octo = self.engine.compute(login, "2026-10")["items"]
             self.assertIn("exec_discipline", [i["code"] for i in sep])  # прошлые месяцы — по правилам того времени
             self.assertNotIn("exec_discipline", [i["code"] for i in octo])
-            rec_sep, rec_oct = (next(i for i in items if i["code"] == code) for items in (sep, octo))
+            rec_sep = next(i for i in sep if i["code"] == code)
+            rec_oct = next(i for i in octo if i["code"] == "receivables_overdue")  # с октября — шкала по просрочке
             self.assertEqual((rec_sep["n"], rec_sep["weight"], rec_sep["amount"]), (6, 0.10, 1000))
             self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
             self.assertAlmostEqual(sum(i["weight"] for i in octo), 1.0)
@@ -150,6 +151,40 @@ class EngineTest(unittest.TestCase):
         self.assertIn("exec_discipline", supply)  # у снабженца пункт остаётся
         cols = next(g for g in self.engine.overview("2026-10")["groups"] if g["position"] == "pm")["columns"]
         self.assertEqual([c["n"] for c in cols], [1, 2, 3, 4, 5])
+
+    def test_receivables_overdue_scale_from_october(self):
+        # просрочка в рабочих днях → доля выплаты: до 7 — 100%, 8–14 — 50%, от 15 — 0%; только этот пункт
+        cases = [("2026-10-01", "2026-10-01", 0, 1.0, "met"),  # оплачено в срок
+                 ("2026-10-01", "2026-10-12", 7, 1.0, "met"),
+                 ("2026-10-01", "2026-10-13", 8, 0.5, "partial"),
+                 ("2026-09-30", "2026-10-20", 14, 0.5, "partial"),
+                 ("2026-09-29", "2026-10-20", 15, 0.0, "progress_fail")]  # октябрь ещё идёт (сегодня 20.10)
+        for login in ("pm", "tender", "lead"):
+            for due, paid, days, share, status in cases:
+                with self.subTest(login=login, days=days):
+                    replace_rows(self.con, "sales", [{"id": f"s-{login}", "emp": login, "dt": "2026-09-15", "doc": "РТУ-1",
+                                                      "client": "Клиент", "revenue": 1000, "due_date": due, "paid_date": paid}],
+                                 emps=[login])
+                    r = self.engine.compute(login, "2026-10")
+                    it = next(i for i in r["items"] if i["code"] == "receivables_overdue")
+                    self.assertEqual((it["n"], it["amount"], it["components"][0]["fact"]), (5, 2000, days))
+                    self.assertEqual((it["pct"], it["payout"], it["status"]), (share, round(2000 * share), status))
+                    self.assertEqual(r["zero_all"], [])  # весь KPI не обнуляется
+        # сентябрь — по прежним пунктам (у менеджера ОП просрочка > 14 дней обнуляла весь KPI)
+        self.assertEqual([i["code"] for i in self.engine.compute("tender", "2026-09")["items"]][-1], "tender_receivables")
+        self.assertEqual([i["code"] for i in self.engine.compute("pm", "2026-09")["items"]][-1], "receivables_pm")
+
+    def test_receivables_overdue_dates_entered_by_manager(self):
+        from app.common import month_bounds as mb
+        replace_rows(self.con, "sales", [{"id": "s1", "emp": "tender", "dt": "2026-10-05", "doc": "РТУ-7", "client": "К",
+                                          "revenue": 500}], emps=["tender"])
+        manual.set_value(self.con, "sales", "s1", "due_date", "2026-10-06", "boss")
+        self.assertEqual(manual.entry(self.con, "receivables_overdue", "tender", *mb("2026-10"))["rows"][0]["values"]["due_date"],
+                         "2026-10-06")
+
+    def test_receivables_overdue_without_due_dates_is_no_data(self):
+        it = next(i for i in self.engine.compute("pm", "2026-10")["items"] if i["code"] == "receivables_overdue")
+        self.assertEqual((it["pct"], it["payout"]), (None, 0))
 
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])

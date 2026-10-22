@@ -33,6 +33,7 @@ FIELDS = {
 # пункт KPI → таблица и поля, которые вводятся в его карточке
 ENTRY = {
     "receivables_pm": ("sales", ["due_date", "paid_date"]),
+    "receivables_overdue": ("sales", ["due_date", "paid_date"]),  # с октября 2026 — у менеджера ОП и тендерного отдела
     "on_time_delivery": ("supplier_orders", ["planned_date", "defect", "mis_sort"]),
     "deferred_payment": ("supplier_orders", ["deferred_share", "deferral_days"]),
     "competitive_purchases": ("supplier_orders", ["lot", "kp_count", "relevant", "evidence", "single_source",

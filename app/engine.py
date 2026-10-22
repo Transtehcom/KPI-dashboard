@@ -516,14 +516,48 @@ class Engine:
             "details": {"columns": ["Дата", "Клиент", "Тип", "Комментарий"], "rows": det},
         }
 
-    def calc_receivables_pm(self, e, ctx, p):
+    def _receivable_rows(self, emp):
+        """Документы со сроком оплаты: из 1С (receivables) или реализации со сроком, введённым руководителем."""
         if self.q("SELECT 1 FROM receivables LIMIT 1"):
-            rows, src = self.q("SELECT * FROM receivables WHERE emp=?", e["login"]), SRC_1C
-        else:
-            # в 1С сроки оплаты не ведутся: срок и дату оплаты реализаций вводит руководитель
-            rows = self.q("SELECT id, doc, client, dt AS ship_date, due_date, paid_date, revenue AS amount FROM sales "
-                          "WHERE emp=? AND due_date IS NOT NULL", e["login"])
-            src = SRC_INPUT
+            return self.q("SELECT * FROM receivables WHERE emp=?", emp), SRC_1C
+        # в 1С сроки оплаты не ведутся: срок и дату оплаты реализаций вводит руководитель
+        return self.q("SELECT id, doc, client, dt AS ship_date, due_date, paid_date, revenue AS amount FROM sales "
+                      "WHERE emp=? AND due_date IS NOT NULL", emp), SRC_INPUT
+
+    def calc_receivables_overdue(self, e, ctx, p):
+        """С октября 2026: самая большая просрочка оплаты за месяц в рабочих днях → доля выплаты пункта по шкале
+        scale [[до N раб. дн. включительно, доля], …]; больше последнего порога — 0. Весь KPI не обнуляется."""
+        rows, src = self._receivable_rows(e["login"])
+        scale = p.get("scale", [[7, 1.0], [14, 0.5]])
+        name = "Самая большая просрочка оплаты"
+        if not rows:  # сроков оплаты нет: «просрочки 0 дн.» было бы ложным выполнением
+            return {"components": [comp(name, None, scale[0][0], "раб. дн", op="<=", source=src)]}
+        worst, det = 0, []
+        for r in rows:  # документы со сроком до конца месяца (или сегодня), не оплаченные до начала месяца
+            due = parse_date(r["due_date"])
+            if not due or due > ctx["asof"]:
+                continue
+            paid = parse_date(r["paid_date"])
+            if paid and paid < ctx["first"]:
+                continue
+            end = paid if paid and paid <= ctx["asof"] else ctx["asof"]
+            od = business_days_between(due, end, self.holidays, self.workdays)
+            if od > 0:
+                worst = max(worst, od)
+                det.append([r["doc"], r["client"], r["amount"], r["due_date"], r["paid_date"] or "не оплачено", od])
+        det.sort(key=lambda x: -x[5])
+        share = next((s for days, s in scale if worst <= days), 0.0)
+        bands = "; ".join(f"до {d} — {round(s * 100)}%" for d, s in scale) + f"; больше {scale[-1][0]} — 0%"
+        return {
+            "components": [comp(name, worst, scale[0][0], "раб. дн", op="<=", source=src)],
+            "payout_share": share,
+            "extra": [{"label": "Выплата по шкале", "value": f"{round(share * 100)}%", "hint": bands}],
+            "details": {"columns": ["Документ", "Клиент", "Сумма, ₽", "Срок оплаты", "Оплачено", "Просрочка, раб. дн"],
+                        "rows": det},
+        }
+
+    def calc_receivables_pm(self, e, ctx, p):
+        rows, src = self._receivable_rows(e["login"])
         if not rows:
             # сроков оплаты нет: «просрочки 0 дн.» было бы ложным выполнением
             return {"components": [comp("Оплачено в срок (по отгрузкам со сроком в месяце)", None, 1.0, "%", source=src),
@@ -777,6 +811,10 @@ class Engine:
                 status = "met" if met else ("close" if pct >= close_pct - EPS else "fail")
                 if missing:
                     status = "awaiting" if awaiting_manual else status
+                if r.get("payout_share") is not None and not missing:  # пункт со шкалой: долю выплаты задал расчёт
+                    share = r["payout_share"]
+                    pct, payout = share, amount * share
+                    status = "met" if share >= 1 - EPS else ("partial" if share > EPS else "fail")
             if ctx["in_progress"] and status in ("fail", "close", "nodata"):
                 status = "progress_" + status
             if r.get("zero_all"):
