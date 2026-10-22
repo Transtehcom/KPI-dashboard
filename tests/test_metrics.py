@@ -115,7 +115,9 @@ class LogisticsMetricsTest(unittest.TestCase):
                 {"id": "t4", "emp": "1c:Якимова Алёна", "dt": "2026-09-30", "doc": "000002200", "status": "Отработана"}]
         replace_rows(self.con, "transport_requests", rows)
         r = metrics.logistics(self.con, {}, "2026-10-01", "2026-10-31")
-        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1})  # сентябрьская не в периоде, удалённая считается
+        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "on_calc": 1})  # сентябрьская не в периоде, удалённая считается
+        on_calc = next(x for x in r["rows"] if x["key"] == "on_calc")
+        self.assertEqual((on_calc["total"], on_calc["statuses"]), (1, {"В работе": 1}))
         self.assertEqual(dict(r["by_status"]), {"Отработана": 2, "В работе": 1})
         self.assertEqual([x["logist"] for x in r["requests"]], ["Якимова Алёна", "Не назначен", "Ваганова Наталия"])
         self.assertTrue(r["available"])
@@ -123,6 +125,7 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.assertEqual([(p["name"], p["statuses"], p["total"]) for p in r["people"]],
                          [("Ваганова Наталия", {"Отработана": 1}, 1), ("Якимова Алёна", {"Отработана": 1}, 1),
                           ("Не назначен", {"В работе": 1}, 1)])
+        self.assertEqual(r["people"][2]["metrics"], {"total": 1, "on_calc": 1})
 
 
 if __name__ == "__main__":

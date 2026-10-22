@@ -1263,6 +1263,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderLogistics(d) {
     const per = state.lPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
     const t = d.tiles, ST = d.statuses, byStatus = Object.fromEntries(d.by_status);
+    const MR = d.rows.filter((r) => r.key !== "total");  // показатели, кроме «всего», — столбцы таблицы по логистам
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Логистика</h1>
         <div class="sub">Заявки на расчёт транспортных расходов · ${esc(per)}</div></div></div>
@@ -1272,15 +1273,17 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <section class="stats">
         <div class="panel stat"><div class="eyebrow">Всего заявок за период</div><div class="v">${nf(t.total)}</div>
           <div class="h">в любом статусе${t.deleted ? `, из них с пометкой удаления — ${nf(t.deleted)}` : ""}</div></div>
+        <div class="panel stat"><div class="eyebrow">На расчёте</div><div class="v">${nf(t.on_calc)}</div>
+          <div class="h">«Поступила» и «В работе», заявки периода</div></div>
       </section>
       <section class="panel"><div class="panel-h"><h2>Показатели за период</h2><span class="muted small">${esc(per)}</span></div>
         <div class="scroll"><table class="mt"><thead><tr><th>Показатель</th><th class="n">Всего</th>${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}</tr></thead><tbody>
-          <tr><th>Всего заявок за период</th><td class="n"><b>${nf(t.total)}</b></td>${ST.map((st) => `<td class="n">${byStatus[st] ? nf(byStatus[st]) : "—"}</td>`).join("")}</tr>
+          ${d.rows.map((r) => `<tr><th title="${esc(r.hint)}">${esc(r.title)}</th><td class="n"><b>${nf(r.total)}</b></td>${ST.map((st) => `<td class="n">${r.statuses[st] ? nf(r.statuses[st]) : "—"}</td>`).join("")}</tr>`).join("")}
         </tbody></table></div></section>
       <section class="panel"><div class="panel-h"><h2>Заявки по логистам</h2><span class="muted small">ответственный логист в заявке</span></div>
-        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Логист</th>${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
-          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${ST.map((st) => `<td class="n">${p.statuses[st] ? nf(p.statuses[st]) : "—"}</td>`).join("")}<td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
-          <tr class="tot"><th>Итого</th>${ST.map((st) => `<td class="n">${nf(byStatus[st] || 0)}</td>`).join("")}<td class="n">${nf(t.total)}</td></tr>
+        ${d.people.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Логист</th>${MR.map((r) => `<th class="n" title="${esc(r.hint)}">${esc(r.title)}</th>`).join("")}${ST.map((st) => `<th class="n">${esc(st)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
+          ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${MR.map((r) => `<td class="n">${p.metrics[r.key] ? nf(p.metrics[r.key]) : "—"}</td>`).join("")}${ST.map((st) => `<td class="n">${p.statuses[st] ? nf(p.statuses[st]) : "—"}</td>`).join("")}<td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
+          <tr class="tot"><th>Итого</th>${MR.map((r) => `<td class="n">${nf(r.total)}</td>`).join("")}${ST.map((st) => `<td class="n">${nf(byStatus[st] || 0)}</td>`).join("")}<td class="n">${nf(t.total)}</td></tr>
         </tbody></table></div>` : `<div class="panel-b muted">Заявок за период нет</div>`}</section>
       ${d.requests.length ? `<section class="panel"><details class="more"><summary>Заявки за период · ${nf(d.requests.length)}</summary><div class="more-b">
         <div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Дата</th><th>Номер</th><th>Статус</th><th>Логист</th><th>Менеджер</th><th>Адрес доставки</th></tr></thead><tbody>
