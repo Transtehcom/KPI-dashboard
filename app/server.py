@@ -192,7 +192,9 @@ class App:
         r = self.engine.compute(login, month)
         first, last = month_bounds(month)
         for it in r["items"]:
-            if it["code"] in manual.ENTRY:
+            if it["code"] == "receivables_overdue" and self.engine.has_1c_receivables():
+                pass  # сроки и оплаты пришли из 1С — ручной ввод не нужен
+            elif it["code"] in manual.ENTRY:
                 it["entry"] = manual.entry(self.con, it["code"], login, first, last)
             if it["code"] == "tender_receivables":
                 it["penalties"] = manual.penalties_block(self.con, login, month)

@@ -110,8 +110,11 @@ def run(con, config, force_demo=False):
                         owners = {k: [(by_uid[u], d) for u, d in v if u in by_uid] for k, v in b24.order_owners(field).items()}
                         owners = {k: v for k, v in owners.items() if v}
                         log.append(f"Б24: сделок с номером заказа 1С — {len(owners)}")
-                        onec_cfg = {**onec_cfg, "datasets": {**onec_cfg["datasets"],
-                                                              "sales": {**sales_ds, "order_managers": owners}}}
+                        # те же владельцы заказов — для дебиторки по заказам клиентов
+                        onec_cfg = {**onec_cfg, "datasets": {
+                            **onec_cfg["datasets"],
+                            **{k: {**ds, "order_managers": owners} for k, ds in onec_cfg["datasets"].items()
+                               if k in ("sales", "receivables") and isinstance(ds, dict)}}}
                     onec = OneC(onec_cfg, log=log.append)
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)

@@ -117,7 +117,7 @@
     "datasets": {
       "sales":           { "source": "http", "path": "hs/kpi/sales" },
       "kp":              { "source": "http", "path": "hs/kpi/kp" },
-      "receivables":     { "source": "http", "path": "hs/kpi/receivables" },
+      "receivables":     { "source": "order_payments", "lookback_days": 365 },
       "guarantees":      { "source": "http", "path": "hs/kpi/guarantees" },
       "penalties":       { "source": "http", "path": "hs/kpi/penalties" },
       "supplier_orders": { "source": "http", "path": "hs/kpi/supplier_orders" },

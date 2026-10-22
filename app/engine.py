@@ -549,18 +549,23 @@ class Engine:
             "details": {"columns": ["Дата", "Клиент", "Тип", "Комментарий"], "rows": det},
         }
 
-    def _receivable_rows(self, emp):
-        """Документы со сроком оплаты: из 1С (receivables) или реализации со сроком, введённым руководителем."""
-        if self.q("SELECT 1 FROM receivables LIMIT 1"):
+    def _receivable_rows(self, emp, from_1c=False):
+        """Документы со сроком оплаты: этапы оплаты заказов клиентов из 1С (receivables, только from_1c — пункт
+        с октября 2026; прошлые месяцы остаются на ручном вводе) или реализации со сроком, введённым руководителем."""
+        if from_1c and self.has_1c_receivables():
             return self.q("SELECT * FROM receivables WHERE emp=?", emp), SRC_1C
         # в 1С сроки оплаты не ведутся: срок и дату оплаты реализаций вводит руководитель
         return self.q("SELECT id, doc, client, dt AS ship_date, due_date, paid_date, revenue AS amount FROM sales "
                       "WHERE emp=? AND due_date IS NOT NULL", emp), SRC_INPUT
 
+    def has_1c_receivables(self):
+        return bool(self.q("SELECT 1 FROM receivables LIMIT 1"))
+
     def calc_receivables_overdue(self, e, ctx, p):
         """С октября 2026: самая большая просрочка оплаты за месяц в рабочих днях → доля выплаты пункта по шкале
-        scale [[до N раб. дн. включительно, доля], …]; больше последнего порога — 0. Весь KPI не обнуляется."""
-        rows, src = self._receivable_rows(e["login"])
+        scale [[до N раб. дн. включительно, доля], …]; больше последнего порога — 0. Весь KPI не обнуляется.
+        Сроки и оплаты — из 1С по заказам клиентов (правила оплаты и расчёты с клиентами)."""
+        rows, src = self._receivable_rows(e["login"], from_1c=True)
         scale = p.get("scale", [[7, 1.0], [14, 0.5]])
         name = "Самая большая просрочка оплаты"
         if not rows:  # сроков оплаты нет: «просрочки 0 дн.» было бы ложным выполнением
@@ -585,8 +590,8 @@ class Engine:
             "components": [comp(name, worst, scale[0][0], "раб. дн", op="<=", source=src)],
             "payout_share": share,
             "extra": [{"label": "Выплата по шкале", "value": f"{round(share * 100)}%", "hint": bands}],
-            "details": {"columns": ["Документ", "Клиент", "Сумма, ₽", "Срок оплаты", "Оплачено", "Просрочка, раб. дн"],
-                        "rows": det},
+            "details": {"columns": ["Заказ клиента" if src == SRC_1C else "Документ", "Клиент", "Сумма, ₽", "Срок оплаты",
+                                    "Оплачено", "Просрочка, раб. дн"], "rows": det},
         }
 
     def calc_receivables_pm(self, e, ctx, p):

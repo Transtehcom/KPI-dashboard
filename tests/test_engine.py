@@ -435,9 +435,19 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.calc("tender", "gross_profit", "2026-09")["plan"]["value"], 7_000_000)
 
     def test_pm_overdue_over_14_days_zeroes_all_kpi(self):
-        insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "УПД", "due_date": "2026-09-01",
-                                          "paid_date": "2026-09-20", "amount": 1}])
+        # до октября 2026 сроки и даты оплаты реализаций вводит руководитель
+        insert(self.con, "sales", [{"id": "s1", "emp": "pm", "doc": "УПД", "dt": "2026-08-01", "due_date": "2026-09-01",
+                                    "paid_date": "2026-09-20", "revenue": 1}])
         self.assertTrue(self.engine.compute("pm", "2026-09")["zero_all"])
+
+    def test_receivables_overdue_from_1c_customer_orders(self):
+        insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "00ЦБ-000098", "client": "Кедр",
+                                          "ship_date": "2026-07-14", "due_date": "2026-10-13", "paid_date": "2026-10-16",
+                                          "amount": 50153.16}])
+        it = self.item("pm", "receivables_overdue", "2026-10")
+        self.assertEqual(it["components"][0]["fact"], 3)  # срок 13.10, оплата 16.10: 3 рабочих дня
+        self.assertEqual((it["status"], it["details"]["columns"][0]), ("met", "Заказ клиента"))
+        self.assertEqual(self.calc("pm", "receivables_pm", "2026-09")["components"][0]["fact"], None)  # сентябрь — без 1С
 
     def test_proportional_close_threshold_follows_min_pct(self):
         self.rules["payout"] = {"mode": "proportional", "min_pct": 0.9}

@@ -132,6 +132,9 @@ class OneC:
         if src == "supply_request_funnel":  # заявки в отдел снабжения → заказы клиентов (УТ 11, ТТК)
             from .onec_supply import fetch_supply_funnel
             return fetch_supply_funnel(self, ds, date_from, date_to)
+        if src == "order_payments":  # дебиторка по заказам клиентов: правила оплаты и расчёты с клиентами (УТ 11)
+            from .onec_receivables import fetch_receivables
+            return fetch_receivables(self, ds, date_from, date_to)
         if src == "kp_orders":  # КП с признаком «есть заказ клиента» (Отчёт ОП, ТТК)
             from .onec_report import fetch_kp
             return fetch_kp(self, ds, date_from, date_to)

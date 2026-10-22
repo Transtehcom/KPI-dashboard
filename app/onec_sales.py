@@ -29,7 +29,26 @@ def fetch_sales(onec, ds, date_from, date_to):
     orders = {c["Ref_Key"]: c for c in onec._odata("Document_ЗаказКлиента", {
         "$format": "json", "$select": "Ref_Key,Number,Date,ДокументОснование",
         "$filter": f"Date ge datetime'{_when(lookback)}'"})}
+    lead_of = order_lead(onec, ds)
+    out = []
+    for s in sales:
+        order = orders.get(s.get("ЗаказКлиента")) or {}
+        lead = lead_of(order)
+        out.append({
+            "id": s["Ref_Key"], "manager": lead or (s.get("Менеджер") or {}).get("Description"),
+            "dt": s["Date"][:10], "doc": s["Number"].strip(), "client": (s.get("Контрагент") or {}).get("Description"),
+            "signed": s.get("ТТК_ОригиналУПД"), "revenue": revenue.get(s["Ref_Key"]),
+        })
+    return out
+
+
+def order_lead(onec, ds):
+    """Кто ведёт заказ клиента: ответственный за сделку Б24 с номером заказа (ds["order_managers"]), иначе ведущий
+    менеджер тендера-основания. Возвращает функцию заказ (Number, Date, ДокументОснование) → ФИО или None."""
     by_deal = ds.get("order_managers") or {}  # номер заказа (order_key) → [(ФИО ответственного за сделку Б24, дата сделки)]
+    tenders = {t["Ref_Key"]: (t.get("ВедущийМенеджер") or {}).get("Description") for t in onec._odata(
+        "Document_ТТК_Тендер", {"$format": "json", "$expand": "ВедущийМенеджер",
+                                "$select": "Ref_Key,ВедущийМенеджер/Description"})}
 
     def deal_owner(order):
         # номера заказов каждый год начинаются заново: заказ должен быть создан не раньше чем за 60 дней до сделки
@@ -39,16 +58,5 @@ def fetch_sales(onec, ds, date_from, date_to):
         fit = [(d, who) for who, d in by_deal.get(order_key(order["Number"]), [])
                if od >= dt.date.fromisoformat(d) - dt.timedelta(days=60)]
         return max(fit)[1] if fit else None
-    tenders = {t["Ref_Key"]: (t.get("ВедущийМенеджер") or {}).get("Description") for t in onec._odata(
-        "Document_ТТК_Тендер", {"$format": "json", "$expand": "ВедущийМенеджер",
-                                "$select": "Ref_Key,ВедущийМенеджер/Description"})}
-    out = []
-    for s in sales:
-        order = orders.get(s.get("ЗаказКлиента")) or {}
-        lead = deal_owner(order) or tenders.get(order.get("ДокументОснование"))
-        out.append({
-            "id": s["Ref_Key"], "manager": lead or (s.get("Менеджер") or {}).get("Description"),
-            "dt": s["Date"][:10], "doc": s["Number"].strip(), "client": (s.get("Контрагент") or {}).get("Description"),
-            "signed": s.get("ТТК_ОригиналУПД"), "revenue": revenue.get(s["Ref_Key"]),
-        })
-    return out
+
+    return lambda order: deal_owner(order) or tenders.get(order.get("ДокументОснование"))
