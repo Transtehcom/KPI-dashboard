@@ -1271,7 +1271,6 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       : `<td class="n${cls && s[key] ? " " + cls : ""}">${nf(s[key])}</td>`;
     const row = (label, key, cls) => `<tr><th>${label}</th>${ST.map((s) => cell(s, key, cls)).join("")}</tr>`;
     const tot = (key) => d.people.reduce((x, p) => x + (p.stages[key] || 0), 0);
-    const naTile = (title) => `<div class="panel stat"><div class="eyebrow">${title}</div><div class="v muted">—</div><div class="h">нет данных: нет источника в 1С</div></div>`;
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · данные 1С</div><h1>Логистика</h1>
         <div class="sub">Период движения: ${esc(per)}. Очередь на дату среза: ${ruDay(d.today)}.</div></div></div>
@@ -1281,10 +1280,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <section class="stats stats5">
         <div class="panel stat"><div class="eyebrow">Всего заявок за период</div><div class="v">${nf(t.total)}</div>
           <div class="h">в любом статусе${t.deleted ? `, из них с пометкой удаления — ${nf(t.deleted)}` : ""}</div></div>
-        <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">этапы «На расчёте» и «Подготовка отгрузки»</div></div>
+        <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">«На расчёте», «Подготовка отгрузки», «В пути»</div></div>
         <div class="panel stat"><div class="eyebrow">К отгрузке сегодня</div><div class="v">${nf(t.ship_today)}</div><div class="h">плановая отгрузка в поручении — сегодня</div></div>
-        ${naTile("К доставке сегодня")}
-        <div class="panel stat"><div class="eyebrow">Просрочено</div><div class="v${t.overdue ? " late" : ""}">${nf(t.overdue)}</div><div class="h">прошла плановая дата отгрузки</div></div>
+        <div class="panel stat"><div class="eyebrow">К доставке сегодня</div><div class="v">${nf(t.deliver_today)}</div><div class="h">поручения «в пути» с плановой поставкой сегодня</div></div>
+        <div class="panel stat"><div class="eyebrow">Просрочено</div><div class="v${t.overdue ? " late" : ""}">${nf(t.overdue)}</div><div class="h">прошла плановая дата отгрузки или поставки</div></div>
       </section>
       <section class="panel"><div class="panel-h"><h2>Всего заявок за период</h2><span class="muted small">${esc(per)} · в любом статусе</span></div>
         <div class="scroll"><table class="mt"><thead><tr><th>Показатель</th><th class="n">Всего</th>${d.statuses.map(([st]) => `<th class="n">${esc(st)}</th>`).join("")}</tr></thead><tbody>
@@ -1301,10 +1300,10 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           ${d.people.map((p) => `<tr><th>${esc(p.name)}</th>${ST.map((s) => s.sourced ? `<td class="n">${p.stages[s.key] ? nf(p.stages[s.key]) : "—"}</td>` : `<td class="n">${NA}</td>`).join("")}<td class="n${p.overdue ? " late" : ""}">${p.overdue ? nf(p.overdue) : "—"}</td><td class="n"><b>${nf(p.total)}</b></td></tr>`).join("")}
           <tr class="tot"><th>Итого</th>${ST.map((s) => s.sourced ? `<td class="n">${nf(tot(s.key))}</td>` : `<td class="n">${NA}</td>`).join("")}<td class="n">${nf(t.overdue)}</td><td class="n">${nf(t.in_work)}</td></tr>
         </tbody></table></div>` : `<div class="panel-b muted">Очередь пуста</div>`}</section>
-      <section class="panel"><div class="panel-h"><h2>Подготовка отгрузки — поручения экспедитору</h2><span class="muted small">${nf(d.prepare_orders.length)} · «Готов к отгрузке», «Поиск ТС», «Назначена машина»</span></div>
-        <div class="panel-b">${d.prepare_orders.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Поручение</th><th>Дата</th><th>Статус</th><th>Сотрудник</th><th>Отгрузка план</th><th>Маршрут</th><th>Перевозчик</th><th class="n">План, ₽</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
-          ${d.prepare_orders.map((r) => `<tr><td>${esc(r.doc)}</td><td>${ruMoment(r.dt)}</td><td>${esc(r.status)}</td><td>${esc(r.logist)}</td><td>${ruMoment(r.ship_date)}</td><td style="white-space:normal;min-width:200px">${esc(r.route || "—")}</td><td>${esc(r.carrier || "—")}</td><td class="n">${r.plan ? nf(r.plan) : "—"}</td>${lateCell(r.late_days)}</tr>`).join("")}
-        </tbody></table></div>` : `<span class="muted">Поручений на подготовке отгрузки нет</span>`}</div></section>
+      <section class="panel"><div class="panel-h"><h2>Поручения экспедитору — подготовка отгрузки и в пути</h2><span class="muted small">${nf(d.forwarder_orders.length)} на ${ruDay(d.today)}</span></div>
+        <div class="panel-b">${d.forwarder_orders.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Поручение</th><th>Дата</th><th>Этап</th><th>Статус</th><th>Сотрудник</th><th>Отгрузка план</th><th>Поставка план</th><th>Маршрут</th><th>Перевозчик</th><th class="n">План, ₽</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
+          ${d.forwarder_orders.map((r) => `<tr><td>${esc(r.doc)}</td><td>${ruMoment(r.dt)}</td><td>${esc(r.stage)}</td><td>${esc(r.status)}</td><td>${esc(r.logist)}</td><td>${ruMoment(r.ship_date)}</td><td>${ruMoment(r.delivery_date)}</td><td style="white-space:normal;min-width:200px">${esc(r.route || "—")}</td><td>${esc(r.carrier || "—")}</td><td class="n">${r.plan ? nf(r.plan) : "—"}</td>${lateCell(r.late_days)}</tr>`).join("")}
+        </tbody></table></div>` : `<span class="muted">Поручений на подготовке отгрузки и в пути нет</span>`}</div></section>
       <section class="panel"><div class="panel-h"><h2>Заказы и перевозки — реестр</h2><span class="muted small">${nf(d.registry.length)} заявок за период</span></div>
         <div class="panel-b">${d.registry.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Перевозка</th><th>Дата</th><th>Маршрут</th><th>Перевозчик</th><th>Сотрудник</th><th>Статус</th><th class="n">План, ₽</th><th class="n">Факт, ₽</th><th>Доставка план</th><th>Доставка факт</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
           ${d.registry.map((r) => `<tr><td>${esc(r.doc)}</td><td>${ruMoment(r.dt)}</td><td style="white-space:normal;min-width:220px">${esc(r.route || "—")}</td><td>${esc(r.carrier || "—")}</td><td>${esc(r.logist)}</td><td>${esc(r.status || "—")}</td><td class="n">${r.plan ? nf(r.plan) : "—"}</td><td class="n muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="n muted">—</td></tr>`).join("")}
@@ -1314,7 +1313,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <p><b>На расчёте</b> — статус «Поступила» или «В работе». Вход на этап и выход с него — по истории статусов заявки. Очередь — на сегодня, без помеченных на удаление. Срока расчёта в заявке нет, поэтому просрочка не считается.</p>
         <p><b>Маршрут, перевозчик, план</b> — из результатов расчёта: варианты, отмеченные флажком (несколько — плечи одной перевозки, стоимость с НДС суммируется).</p>
         <p><b>Подготовка отгрузки</b> — 1С, «Склад и доставка → Поручения экспедиторам» в статусах «Готов к отгрузке», «Поиск ТС», «Назначена машина». Истории статусов в поручении нет, поэтому «поступило» и «вышло» не считаются, а дни на этапе — с даты поручения. Просрочено — прошла плановая дата отгрузки; «к отгрузке сегодня» — она сегодня.</p>
-        <p><b>Нет данных</b>: «На согласовании», «В пути», «Доставлено, не закрыто», «К доставке сегодня», фактическая стоимость и даты доставки. Скажите, где они ведутся, и их можно подключить.</p>
+        <p><b>В пути</b> — поручения экспедитору в статусе «В пути». Просрочено — прошла плановая дата поставки в поручении; «к доставке сегодня» — она сегодня. Если дата поставки в поручении не заполнена, просрочка не считается.</p>
+        <p><b>Нет данных</b>: «На согласовании», «Доставлено, не закрыто», фактическая стоимость и даты доставки. Скажите, где они ведутся, и их можно подключить.</p>
       </div></details></section>`;
     bindPeriod("l", () => state.lPer, (p) => { state.lPer = p; }, loadMetrics);
   }
