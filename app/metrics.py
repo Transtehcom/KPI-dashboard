@@ -52,6 +52,22 @@ FORWARDER_STATUSES = {"ПредварительнаяЗаявка": "Предв�
                       "ПоискТС": "Поиск ТС", "НазначенаМашина": "Назначена машина", "ВПути": "В пути",
                       "ГотовКВыдачи": "Готов к выдаче", "Выдан": "Выдан", "Завершено": "Завершено"}
 DEFAULTS = {"handed_days": 30, "approve_days": 30, "ship_soon_days": 7}
+# пояснения к этапам — под названием этапа на странице («{…}» — параметры из DEFAULTS / config.json)
+SUPPLY_NOTES = {
+    "calc": "Заявка в ОС: «Поступила», «В работе», «Запрос проектной документации». Просрочка — прошёл «Срок отработки до»",
+    "handed": "Заявка отработана, заказа клиента по её КП или тендеру нет; через {handed_days} дн. без заказа уходит из очереди",
+    "approve": "Заказ клиента есть, заказа поставщику нет; через {approve_days} дн. уходит (мог быть закрыт со склада)",
+    "placed": "Заказ поставщику без поступления; до плановой даты больше {ship_soon_days} дн. или она не задана",
+    "shipping": "До плановой даты {ship_soon_days} дн. или меньше, поступления нет. Просрочка — плановая дата прошла",
+}
+LOGISTICS_NOTES = {
+    "calc": "Заявка на расчёт ТР: «Поступила», «В работе»",
+    "approve": "Источника в 1С пока нет",
+    "prepare": "Поручение экспедитору: «Готов к отгрузке», «Поиск ТС», «Назначена машина». Просрочка — прошла плановая отгрузка",
+    "transit": "Поручение экспедитору: «В пути». Просрочка — прошла плановая поставка",
+    "delivered": "Поручение экспедитору: «Готов к выдаче»",
+    "closed": "Поручение экспедитору: «Выдан», «Завершено» — поручения периода, не в работе",
+}
 CLOSED = {"Отработана", "Отменена"}
 STATUS_TITLES = {"Поступила": "Поступила", "ВРаботе": "В работе",
                  "ЗапросПроектнойДокументации": "Запрос проектной документации"}
@@ -139,7 +155,7 @@ def supply(con, names, date_from, date_to, today=None, now=None, params=None):
     for key, title in SUPPLY_STAGES:
         mine = [x for x in segs if x[0] == key]
         now_ = [x for x in mine if current(x[2], x[3])]
-        stages.append({"key": key, "title": title, "now": len(now_),
+        stages.append({"key": key, "title": title, "note": SUPPLY_NOTES[key].format(**p), "now": len(now_),
                        "came": sum(1 for x in mine if a <= x[2] <= b and x[2] <= today),
                        "left": sum(1 for x in mine if x[3] and a <= x[3] <= b and x[3] <= today),
                        "max_days": max(((today - x[2]).days for x in now_), default=None),
@@ -256,7 +272,8 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
                                   "came": no_history, "left": no_history,
                                   "max_days": "Конечный этап" if final else "С даты поручения: истории статусов в 1С нет",
                                   "overdue": f"Прошла {what} в поручении" if field else "Плановой даты для этого этапа в поручении нет"}}
-    stages = [sourced.get(k) or {"key": k, "title": t, "sourced": False} for k, t in LOGISTICS_STAGES]
+    stages = [{**(sourced.get(k) or {"key": k, "title": t, "sourced": False}), "note": LOGISTICS_NOTES[k]}
+              for k, t in LOGISTICS_STAGES]
 
     people = {}
     for key, items in in_stage.items():
