@@ -1101,7 +1101,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
     const emps = d.employees, multi = emps.length > 1;
-    anWhen = d.analyze_hours ? `разбор с ${d.analyze_hours[0]}` : "разбор позже";  // когда Claude разбирает звонки  // администратор или руководитель отдела
+    anWhen = d.analyze === false ? "разбор выключен" : d.analyze_hours ? `разбор с ${d.analyze_hours[0]}` : "разбор позже";  // когда Claude разбирает звонки  // администратор или руководитель отдела
     const title = d.deal != null ? `по сделке ${d.deal}` : periodLabel(d.date_from, d.date_to);
     // сортировка щелчком по заголовку; при равенстве — новые звонки выше
     const sort = state.cSort || { key: "dt", dir: -1 };
