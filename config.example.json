@@ -119,6 +119,7 @@
       "kp":              { "source": "http", "path": "hs/kpi/kp" },
       "receivables":     { "source": "order_payments", "lookback_days": 365 },
       "transport_requests": { "source": "transport_requests" },
+      "forwarder_orders": { "source": "forwarder_orders" },
       "guarantees":      { "source": "http", "path": "hs/kpi/guarantees" },
       "penalties":       { "source": "http", "path": "hs/kpi/penalties" },
       "supplier_orders": { "source": "http", "path": "hs/kpi/supplier_orders" },

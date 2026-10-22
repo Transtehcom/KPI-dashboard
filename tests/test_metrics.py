@@ -133,14 +133,26 @@ class LogisticsMetricsTest(unittest.TestCase):
              "doc": "000001000", "status": "Поступила", "posted": 1, "deleted": 0},
         ]
         replace_rows(self.con, "transport_requests", rows)
+        fwd = lambda i, status, ship, emp="1c:Ваганова Наталия", deleted=0: {
+            "id": f"f{i}", "emp": emp, "dt": "2026-10-15", "created_at": "2026-10-15T10:00:00", "doc": f"ЦБ-0000019{i}",
+            "status": status, "posted": 1, "deleted": deleted, "ship_date": ship, "plan_sum": 60000}
+        replace_rows(self.con, "forwarder_orders", [
+            fwd(1, "ПоискТС", "2026-10-20"),                                   # плановая отгрузка прошла — просрочено
+            fwd(2, "ГотовКОтгрузке", "2026-10-22", emp="1c:Якимова Алёна"),   # к отгрузке сегодня
+            fwd(3, "Выдан", "2026-10-10"),                                     # уже не на подготовке
+            fwd(4, "НазначенаМашина", "2026-10-01", deleted=1)])               # помечено на удаление
         r = metrics.logistics(self.con, {"ivanov": "Роман Иванов"}, "2026-10-01", "2026-10-31", since="2026-04-01",
                               today=TODAY)
-        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 3})
+        self.assertEqual(r["tiles"], {"total": 3, "deleted": 1, "in_work": 5, "overdue": 1, "ship_today": 1})
         self.assertEqual(r["statuses"], [["Поступила", 1], ["В работе", 1], ["Запрос информации", 0], ["Отработана", 1]])
-        calc = r["stages"][0]
+        calc, prep = r["stages"][0], r["stages"][2]
         self.assertEqual((calc["now"], calc["came"], calc["left"], calc["max_days"]), (3, 2, 1, 100))  # «Тест 3» — 100 дней с даты заявки, а не с 2024 года
-        self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, False, False, False])
-        self.assertEqual([(p["name"], p["total"]) for p in r["people"]], [("СтажерЛогистика", 1), ("Якимова Алёна", 1), ("Не назначен", 1)])
+        self.assertEqual((prep["now"], prep["came"], prep["left"], prep["max_days"], prep["overdue"]), (2, None, None, 7, 1))
+        self.assertEqual([s["sourced"] for s in r["stages"]], [True, False, True, False, False])
+        self.assertEqual([(p["name"], p["total"], p["overdue"]) for p in r["people"]],
+                         [("Якимова Алёна", 2, 0), ("Ваганова Наталия", 1, 1), ("СтажерЛогистика", 1, 0), ("Не назначен", 1, 0)])
+        self.assertEqual([(x["doc"], x["status"], x["late_days"]) for x in r["prepare_orders"]],
+                         [("ЦБ-00000191", "Поиск ТС", 2), ("ЦБ-00000192", "Готов к отгрузке", 0)])
         self.assertEqual([(x["doc"], x["route"], x["plan"]) for x in r["registry"]],
                          [("000002338", "Миасс → Когалым", 81200), ("ЦБ-000990", None, None)])
 

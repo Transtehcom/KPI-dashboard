@@ -24,15 +24,16 @@ DATASETS = {
     "supply_funnel": ("supply_funnel", "dt"),
     "tenders_1c": ("tenders_1c", "dt"),
     "transport_requests": ("transport_requests", "dt"),
+    "forwarder_orders": ("forwarder_orders", "dt"),
 }
 # таблицы, где нужен весь отдел (раздел «Метрики»): строки с ответственным не из дашборда сохраняются
 # с emp = «1c:ФИО» — KPI их не видит, он выбирает строки по логину сотрудника
-KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests"}
+KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests", "forwarder_orders"}
 UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified", "posted", "deleted"}
-NUM_FIELDS = {"revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
-DATE_FIELDS = {"dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
+NUM_FIELDS = {"plan_sum", "revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
+DATE_FIELDS = {"ship_date", "delivery_date", "dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
 
 
 def _get_path(obj, path):
@@ -139,6 +140,9 @@ class OneC:
         if src == "transport_requests":  # заявки на расчёт транспортных расходов (ТТК) — «Метрики → Логистика»
             from .onec_logistics import fetch_transport_requests
             return fetch_transport_requests(self, ds, date_from, date_to)
+        if src == "forwarder_orders":  # поручения экспедитору (ТТК) — «Метрики → Логистика», подготовка отгрузки
+            from .onec_logistics import fetch_forwarder_orders
+            return fetch_forwarder_orders(self, ds, date_from, date_to)
         if src == "kp_orders":  # КП с признаком «есть заказ клиента» (Отчёт ОП, ТТК)
             from .onec_report import fetch_kp
             return fetch_kp(self, ds, date_from, date_to)

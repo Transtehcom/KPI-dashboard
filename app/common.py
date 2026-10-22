@@ -132,6 +132,11 @@ CREATE TABLE IF NOT EXISTS transport_requests (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
   sales_manager TEXT, address TEXT, history TEXT, route TEXT, carrier TEXT, cost REAL);
 
+-- поручения экспедитору (app/onec_logistics.py): статус ТТК_Статус, плановая отгрузка, emp — ответственный логист
+CREATE TABLE IF NOT EXISTS forwarder_orders (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
+  ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT);
+
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (tbl, ref, field));
@@ -205,7 +210,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
-               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "tenders_1c",
+               "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
                "deal_failures"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
