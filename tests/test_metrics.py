@@ -167,6 +167,26 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.assertEqual([(x["doc"], x["route"], x["plan"]) for x in r["registry"]],
                          [("000002338", "Миасс → Когалым", 81200), ("ЦБ-000990", None, None)])
 
+    def test_delivery_fact_from_supplier_order_lines(self):
+        import datetime as dt
+        from app.onec_logistics import delivery_facts
+
+        class FakeOneC:  # заказ клиента 00ЦБ-000052: опоры (товар), «Транспортные расходы» ИТЕКО, аккредитив
+            def _odata(self, entity, params):
+                if entity == "Catalog_Номенклатура":
+                    return [{"Ref_Key": "pole", "Description": "Опора освещения граненая"},
+                            {"Ref_Key": "trans", "Description": "Транспортные расходы"},
+                            {"Ref_Key": "paint", "Description": "Грунт-эмаль RAL 1023 транспортно-желтый"},
+                            {"Ref_Key": "bank", "Description": "Аккредитив"}]
+                return [{"ТТК_ЗаказКлиента_Key": "co52", "Товары": [
+                            {"Номенклатура_Key": "pole", "СуммаСНДС": 180195}, {"Номенклатура_Key": "pole", "СуммаСНДС": 180195}]},
+                        {"ТТК_ЗаказКлиента_Key": "co52", "Товары": [{"Номенклатура_Key": "trans", "СуммаСНДС": 165000},
+                                                                     {"Номенклатура_Key": "trans", "СуммаСНДС": 9, "Отменено": True}]},
+                        {"ТТК_ЗаказКлиента_Key": "co52", "Товары": [{"Номенклатура_Key": "bank", "СуммаСНДС": 23537.17},
+                                                                     {"Номенклатура_Key": "paint", "СуммаСНДС": 500}]}]
+
+        self.assertEqual(delivery_facts(FakeOneC(), dt.date(2026, 1, 1)), {"co52": 165000})
+
     def test_route_from_flagged_results(self):
         from app.onec_logistics import _route
         res = [{"Флаг": True, "АдресОтправки": "Миасс", "АдресДоставки": "г. Когалым\nдо 28.02", "ТранспортнаяКомпания": "да транс",
