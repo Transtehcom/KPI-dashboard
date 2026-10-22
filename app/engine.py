@@ -1,5 +1,6 @@
 """Расчёт KPI по правилам из kpi_rules.json на нормализованных данных SQLite."""
 import datetime as dt
+import re
 
 from .common import (business_days_between, month_add, month_bounds, parse_date,
                      quarter_months, today, weeks_of_month, working_days)
@@ -17,6 +18,40 @@ EPS = 1e-9
 def _in(d, first, last):
     d = parse_date(d)
     return d is not None and first <= d <= last
+
+
+ORG_FORMS = re.compile(r"(?<![\w-])(ооо|оао|зао|пао|нао|ао|као|мкп|муп|гуп|фгуп|фгбу|ип|филиал|ф-л|корпорация)(?![\w-])")
+
+
+def org_key(name):
+    """Название компании для сравнения: без формы собственности, кавычек и знаков, «ООО "Кама"» = «КАМА»."""
+    s = str(name or "").lower().replace("ё", "е")
+    s = re.sub(r"[«»\"'“”„.,()]", " ", s)
+    s = ORG_FORMS.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def match_kp_letters(kps, letters, days):
+    """Пары (КП из 1С, письмо реестра) об одном и том же КП: та же компания, даты не дальше days дней.
+    Каждое КП и каждое письмо — не больше чем в одной паре, ближайшие по дате. {id КП: письмо}."""
+    used, out = set(), {}
+    for k in sorted(kps, key=lambda r: r["dt"]):
+        kk, kd = org_key(k.get("client")), parse_date(k["dt"])
+        if len(kk) < 3:
+            continue
+        best = None
+        for i, l in enumerate(letters):
+            lk = org_key(l.get("deal"))
+            # та же компания: названия совпадают или одно целиком, по словам, входит в другое («Кама» ≠ «Камаз»)
+            if i in used or len(lk) < 3 or not (f" {kk} " in f" {lk} " or f" {lk} " in f" {kk} "):
+                continue
+            gap = abs((parse_date(l["dt"]) - kd).days)
+            if gap <= days and (best is None or gap < best[0]):
+                best = (gap, i)
+        if best:
+            used.add(best[1])
+            out[k["id"]] = letters[best[1]]
+    return out
 
 
 def comp(name, fact, target, unit="", op=">=", source=None, informative=False, pace=None, fmt=None):
@@ -115,6 +150,29 @@ class Engine:
                 out.append(d.isoformat())
             d += dt.timedelta(days=1)
         return out
+
+    def _kp_with_letters(self, emp, ctx):
+        """С месяца kp_with_letters_from (правила KPI): КП = КП из 1С + письма из реестра исходящих (темы
+        letters_sheet.topics), письмо той же компании в пределах kp_letter_match_days от КП — то же КП, считается раз.
+        Возвращает (число, extra, строки для «Как считается») или None, если месяц раньше."""
+        since = self.rules.get("kp_with_letters_from")
+        if not since or ctx["month"] < since:
+            return None
+        first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
+        kps = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt", emp, first, last)
+        letters = self.q("SELECT * FROM kp_letters WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt", emp, first, last + "T23:59:59")
+        pairs = match_kp_letters(kps, letters, self.rules.get("kp_letter_match_days", 7))
+        twin = {id(l) for l in pairs.values()}
+        n = len(kps) + len(letters) - len(pairs)
+        extra = [{"label": "КП в 1С", "value": len(kps)}, {"label": "Писем в реестре исходящих", "value": len(letters)},
+                 {"label": "Совпали — учтены один раз", "value": len(pairs),
+                  "hint": f"та же компания, даты не дальше {self.rules.get('kp_letter_match_days', 7)} дн."}]
+        det = [[k["dt"], "КП в 1С " + (k.get("doc") or ""), k.get("client") or "—",
+                f"то же, что письмо от {pairs[k['id']]['dt'][:10]}" if k["id"] in pairs else ""] for k in kps]
+        det += [[l["dt"][:10], "Письмо: " + (l.get("subject") or ""), l.get("deal") or "—",
+                 "совпало с КП в 1С — не считается второй раз" if id(l) in twin else ""] for l in letters]
+        det.sort(key=lambda r: r[0])
+        return n, extra, det
 
     def _mark_secretary(self, calls):
         """С месяца secretary_by_call_analysis_from (правила KPI): звонок секретарю — по должности контакта в Б24
@@ -271,7 +329,14 @@ class Engine:
         if "meetings_min" in p:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                               pace=self._pace(ctx, p["meetings_min"])))
-        if "kp_out_of_tender" in p:
+        kp_sum = self._kp_with_letters(emp, ctx) if "kp_out_of_tender" in p else None
+        kp_det = []
+        if kp_sum:
+            n, kp_extra, kp_det = kp_sum
+            comps.append(comp("КП вне тендера: 1С + реестр исходящих", n, p["kp_out_of_tender"], "шт",
+                              source="1С + журнал исходящих писем", pace=self._pace(ctx, p["kp_out_of_tender"])))
+            extra += kp_extra
+        elif "kp_out_of_tender" in p:
             if self.config.get("letters_sheet", {}).get("url"):
                 # КП вне тендера — письма тем из letters_sheet.topics в журнале исходящих
                 n = self.q("SELECT COUNT(*) c FROM kp_letters WHERE emp=? AND dt>=? AND dt<=?",
@@ -312,7 +377,8 @@ class Engine:
             "funnel": {"title": "Как отбираются результативные звонки", "steps": call_funnel},
             "details": {"columns": ["Дата", "Клиент", "Длительность, мин", "Тема"],
                         "rows": [[r["dt"][:16].replace("T", " "), r["client"], round((r["duration"] or 0) / 60, 1),
-                                  r["subject"]] for r in result_calls[:200]]},
+                                  r["subject"]] for r in result_calls[:200]] +
+                                [[d, client, "", kind + (f" — {note}" if note else "")] for d, kind, client, note in kp_det]},
         }
 
     def calc_tender_operations(self, e, ctx, p):
@@ -525,8 +591,13 @@ class Engine:
 
         kp_all = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=?", emp, first, last)
         kp_target = p["kp_per_day"] * wd
-        extra = []
-        if p.get("kp_confirmation", "b24") == "b24":
+        extra, kp_det = [], []
+        kp_sum = self._kp_with_letters(emp, ctx)
+        if kp_sum:
+            n, extra, kp_det = kp_sum
+            kp_comp = comp(f"КП: 1С + реестр исходящих ({p['kp_per_day']} в день × {wd} раб. дн.)", n, kp_target, "шт",
+                           source="1С + журнал исходящих писем", pace=self._pace(ctx, kp_target))
+        elif p.get("kp_confirmation", "b24") == "b24":
             # регламент: КП загружено в 1С, а скан исходящего письма прикреплён к карточке сделки в Б24
             letters = self.q("SELECT * FROM kp_letters WHERE emp=? AND dt>=? AND dt<=?", emp, first, last + "T23:59:59")
             kp_fact = min(len(kp_all), len(letters))
@@ -553,7 +624,8 @@ class Engine:
         extra += [{"label": "Встречи без протокола/резюме", "value": len(no_protocol)},
                   {"label": "Встречи закрыты не в день проведения", "value": len(late_close),
                    "hint": "не засчитываются" if p.get("meeting_same_day_close") else "справочно"}]
-        det = [[m["dt"][:10], m["client"], "Встреча", "нет протокола или резюме"] for m in no_protocol]
+        det = [[d, client, kind, note] for d, kind, client, note in kp_det]
+        det += [[m["dt"][:10], m["client"], "Встреча", "нет протокола или резюме"] for m in no_protocol]
         det += [[m["dt"][:10], m["client"], "Встреча", f"закрыта {m['closed_dt'][:10]}, не в день проведения"]
                 for m in late_close]
         return {

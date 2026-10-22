@@ -442,6 +442,24 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(r["zero_all"], [])
         self.assertEqual(next(i for i in r["items"] if i["code"] == "receivables_pm")["status"], "fail")
 
+    def test_kp_from_1c_plus_letters_without_double_count(self):
+        from app.engine import match_kp_letters, org_key
+        self.assertEqual(org_key('ПАО "КОРПОРАЦИЯ ВСМПО-АВИСМА"'), org_key("КОРПОРАЦИЯ ВСМПО-АВИСМА ПАО"))
+        insert(self.con, "kp", [{"id": "k1", "emp": "pm", "dt": "2026-10-07", "doc": "00ЦБ-000959", "client": 'АО "АБАКАНСКАЯ ТЭЦ"'},
+                                {"id": "k2", "emp": "pm", "dt": "2026-10-20", "doc": "00ЦБ-001001", "client": "ГОРТЕПЛОЭНЕРГО МУП"},
+                                {"id": "k3", "emp": "pm", "dt": "2026-10-20", "doc": "00ЦБ-001009", "client": "КАМАЗ ПАО"}])
+        insert(self.con, "kp_letters", [
+            {"id": "l1", "emp": "pm", "dt": "2026-10-02", "deal": 'АО "АБАКАНСКАЯ ТЭЦ"', "subject": "Письмо о защите БПЛА"},
+            {"id": "l2", "emp": "pm", "dt": "2026-10-02", "deal": 'ООО "КАМА"', "subject": "Письмо о защите БПЛА"},
+            {"id": "l3", "emp": "pm", "dt": "2026-10-03", "deal": 'МУП "Гортеплоэнерго"', "subject": "Письмо о сотрудничестве"}])
+        # КП 20.10 и письмо 03.10 в «Гортеплоэнерго» — дальше 7 дней: разные КП; «Кама» ≠ «КАМАЗ»
+        self.assertEqual(set(match_kp_letters(self.engine.q("SELECT * FROM kp"), self.engine.q("SELECT * FROM kp_letters"), 7)), {"k1"})
+        it = self.item("pm", "operational_activity", "2026-10")
+        kp = next(c for c in it["components"] if c["name"].startswith("КП"))
+        self.assertEqual(kp["fact"], 5)  # 3 КП в 1С + 3 письма − 1 совпадение
+        it = self.item("tender", "base_development", "2026-10")
+        self.assertEqual(next(c for c in it["components"] if c["name"].startswith("КП вне тендера"))["fact"], 0)
+
     def test_secretary_by_call_analysis_from_october(self):
         insert(self.con, "activities", [call(1, "pm", "2026-10-05"), call(2, "pm", "2026-10-06"), call(3, "pm", "2026-10-07"),
                                         call(4, "pm", "2026-09-07")])
