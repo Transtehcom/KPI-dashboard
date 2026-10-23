@@ -675,4 +675,5 @@ class SupplierDeferralTest(unittest.TestCase):
         self.assertEqual(deferral([row("КредитПослеПоступления", 100, 30)]), (1.0, 30))
         self.assertEqual(deferral([row("КредитПослеПоступления", 50, 20), row("ПредоплатаДоПоступления", 50, 10)]), (1.0, 10))
         self.assertEqual(deferral([row("КредитСдвиг", 100, 30, base="ОтДатыСогласования")]), (0.0, 0))
+        self.assertEqual(deferral([row("КредитПослеПоступления", 100, 0)]), (0.0, 0))  # срок 0 дней — предоплата
         self.assertEqual(deferral([]), (None, None))
