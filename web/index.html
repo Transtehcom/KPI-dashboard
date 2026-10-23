@@ -1234,7 +1234,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <section class="stats">
         <div class="panel stat"><div class="eyebrow">В работе сейчас</div><div class="v">${nf(t.in_work)}</div><div class="h">заявок и заказов на всех этапах</div></div>
         <div class="panel stat"><div class="eyebrow">Получено за период</div><div class="v">${nf(t.received)}</div><div class="h">заявок в отдел снабжения (1С), по дате заявки</div></div>
-        <div class="panel stat"><div class="eyebrow">Завершено за период</div><div class="v">${nf(t.done_calc)} <small>/ ${nf(t.done_orders)}</small></div><div class="h">отработано заявок (по дате закрытия) / поставлено заказов (первое поступление)</div></div>
+        <div class="panel stat"><div class="eyebrow">Завершено за период</div><div class="v">${nf(t.done_calc)} <small>/ ${nf(t.done_orders)}</small></div><div class="h">отработано заявок (по дате закрытия) / поставлено заказов (по последнему поступлению)</div></div>
         <div class="panel stat"><div class="eyebrow">Просрочено</div><div class="v${t.overdue ? " late" : ""}">${nf(t.overdue)}</div><div class="h">прошёл «Срок отработки до» в заявке или плановая дата поставки</div></div>
       </section>
       <section class="panel"><div class="panel-h"><h2>Где находится работа</h2><span class="muted small">каждая заявка или заказ — только на одном этапе</span></div>
@@ -1252,7 +1252,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="panel-b">${d.requests.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Заявка</th><th>Сотрудник</th><th>Статус</th><th>Поступила</th><th>Срок отработки</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
           ${d.requests.map((r) => `<tr><td>${esc(r.doc)}</td><td>${esc(r.emp)}</td><td>${esc(r.status)}</td><td>${ruMoment(r.created)}</td><td>${ruMoment(r.due)}</td>${lateCell(r.late_days)}</tr>`).join("")}
         </tbody></table></div>` : `<span class="muted">Заявок на расчёте нет</span>`}</div></section>
-      <section class="panel"><div class="panel-h"><h2>Заказы поставщикам</h2><span class="muted small">${nf(d.orders.length)} · не поставленные и поставленные за период · план — «Конечная дата поставки» в заказе клиента (или введённая в KPI), факт — первое поступление (УПД/ТН)</span></div>
+      <section class="panel"><div class="panel-h"><h2>Заказы поставщикам</h2><span class="muted small">${nf(d.orders.length)} · не поставленные и поставленные за период · план — «Конечная дата поставки» в заказе клиента (или введённая в KPI), факт — последнее поступление (УПД/ТН) по заказу</span></div>
         <div class="panel-b">${d.orders.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>Заказ</th><th>Поставщик</th><th>Сотрудник</th><th class="n">Закупка без НДС, ₽</th><th>Размещён</th><th>План поставки</th><th>Факт поставки</th><th class="n">Просрочка, дн.</th></tr></thead><tbody>
           ${d.orders.map((o) => `<tr><td>${esc(o.doc)}</td><td>${esc(o.supplier || "—")}</td><td>${esc(o.emp)}</td><td class="n">${nf(o.amount)}</td><td>${ruMoment(o.dt)}</td><td>${ruMoment(o.plan)}</td><td>${ruMoment(o.fact)}</td>${lateCell(o.late_days)}</tr>`).join("")}
         </tbody></table></div>` : `<span class="muted">Заказов нет</span>`}</div></section>`;
