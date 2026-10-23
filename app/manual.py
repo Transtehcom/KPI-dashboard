@@ -157,8 +157,12 @@ def entry(con, code, emp, month_first, month_last):
         columns = ["Реализация", "Дата", "Клиент", "Выручка без НДС, ₽"]
         cells = [[r["doc"], (r["dt"] or "")[:10], r["client"], r["revenue"]] for r in rows]
     else:
-        rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND (dt BETWEEN ? AND ? OR planned_date BETWEEN ? AND ?) "
-                           "ORDER BY dt", (emp, first, last, first, last)).fetchall()
+        if code == "on_time_delivery":  # поставки месяца — по плановой дате; заказы месяца — чтобы ввести её, если нет
+            rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND (dt BETWEEN ? AND ? OR planned_date BETWEEN ? AND ?) "
+                               "ORDER BY dt", (emp, first, last, first, last)).fetchall()
+        else:  # отсрочка и конкурентность считаются по заказам, размещённым в месяце
+            rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND dt BETWEEN ? AND ? ORDER BY dt",
+                               (emp, first, last)).fetchall()
         columns = ["Заказ", "Дата", "Поставщик", "Сумма без НДС, ₽"]
         cells = [[r["doc"], r["dt"], r["supplier"], r["amount_novat"]] for r in rows]
     manual = {}
