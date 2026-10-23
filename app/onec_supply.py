@@ -8,12 +8,27 @@
 Плановая дата поставки — «Конечная дата поставки» (ТТК_КонечнаяДатаПоставки) в связанном заказе клиента;
 если она не заполнена, заказ в KPI 1 не попадает, пока руководитель не введёт дату в дашборде.
 
-Поля без источника в 1С (брак, пересорт, лот, отсрочка, признаки конкурентности) вводит руководитель в дашборде.
+Отсрочка — из «Правил оплаты» заказа поставщику (ЭтапыГрафикаОплаты): строки «от даты заказа» с контролем «Оплата до
+отгрузки» или «Оплата после отгрузки»; «% платежа» → доля отсрочки (сумма по таким строкам), «Срок (дн)» → дней отсрочки
+(наименьший). Нет таких строк — отсрочки нет (0); нет правил оплаты — ждёт ввода руководителя.
+Поля без источника в 1С (брак, пересорт, лот, признаки конкурентности) вводит руководитель в дашборде; его ввод
+важнее выгрузки и для отсрочки.
 """
 import datetime as dt
 
 EMPTY = "00000000-0000-0000-0000-000000000000"
 SUPPLIERS = [f"Поставщик{i}_Key" for i in range(1, 11)]
+DEFERRAL_KINDS = {"ПредоплатаДоПоступления", "КредитПослеПоступления"}  # «Оплата до отгрузки», «Оплата после отгрузки»
+
+
+def deferral(stages):
+    """(доля отсрочки 0..1, дней) по этапам графика оплаты заказа поставщику; (None, None) — правил оплаты нет."""
+    if not stages:
+        return None, None
+    fit = [x for x in stages if x.get("ВариантОтсчета") == "ОтДатыЗаказа" and x.get("ВариантОплаты") in DEFERRAL_KINDS]
+    if not fit:
+        return 0.0, 0
+    return round(sum(x.get("ПроцентПлатежа") or 0 for x in fit) / 100, 4), min(int(x.get("Сдвиг") or 0) for x in fit)
 
 
 def _when(d):
@@ -36,7 +51,7 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
         "$format": "json", "$expand": "Контрагент",
         "$filter": f"{posted} and Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
         "$select": "Ref_Key,Number,Date,ТТК_ЗаказКлиента_Key,Контрагент/Description,"
-                   "Товары/СуммаСНДС,Товары/СуммаНДС,Товары/Отменено"})
+                   "Товары/СуммаСНДС,Товары/СуммаНДС,Товары/Отменено,ЭтапыГрафикаОплаты"})
     customer_orders = onec._odata("Document_ЗаказКлиента", {
         "$format": "json", "$filter": f"Date ge datetime'{_when(lookback)}'",
         "$select": "Ref_Key,Number,ДокументОснование,ТТК_КонечнаяДатаПоставки"})
@@ -83,6 +98,7 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
             "complete": to_receive.get(o["Ref_Key"], 0) <= 0,
             "customer_order": c["Number"].strip() if c else None,
             "kp_count": kp_count,
+            **dict(zip(("deferred_share", "deferral_days"), deferral(o.get("ЭтапыГрафикаОплаты") or []))),
         })
     return out
 

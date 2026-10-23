@@ -663,3 +663,16 @@ class MeetingDetectionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupplierDeferralTest(unittest.TestCase):
+    def test_deferral_from_payment_rules(self):
+        from app.onec_supply import deferral
+        row = lambda kind, pct, days, base="ОтДатыЗаказа": {"ВариантОтсчета": base, "ВариантОплаты": kind,
+                                                             "ПроцентПлатежа": pct, "Сдвиг": str(days)}
+        # 00ЦБ-000659: 70% до подтверждения через 3 дня, 30% до отгрузки через 35 дней
+        self.assertEqual(deferral([row("АвансДоПодтверждения", 70, 3), row("ПредоплатаДоПоступления", 30, 35)]), (0.3, 35))
+        self.assertEqual(deferral([row("КредитПослеПоступления", 100, 30)]), (1.0, 30))
+        self.assertEqual(deferral([row("КредитПослеПоступления", 50, 20), row("ПредоплатаДоПоступления", 50, 10)]), (1.0, 10))
+        self.assertEqual(deferral([row("КредитСдвиг", 100, 30, base="ОтДатыСогласования")]), (0.0, 0))
+        self.assertEqual(deferral([]), (None, None))
