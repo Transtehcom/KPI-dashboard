@@ -146,7 +146,12 @@ class EngineTest(unittest.TestCase):
             rec_sep = next(i for i in sep if i["code"] == code)
             rec_oct = next(i for i in octo if i["code"] == "receivables_overdue")  # с октября — шкала по просрочке
             self.assertEqual((rec_sep["n"], rec_sep["weight"], rec_sep["amount"]), (6, 0.10, 1000))
-            self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
+            if login == "pm":
+                self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
+            else:  # тендерный отдел: 10% — шкала по просрочке, ещё 10% — «Обеспечение и штрафы» (возвращено 26.10.2026)
+                self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.10, 1000))
+                pen = next(i for i in octo if i["code"] == "tender_receivables")
+                self.assertEqual((pen["n"], pen["weight"], pen["amount"], pen["title"]), (6, 0.10, 1000, "Обеспечение и штрафы"))
             self.assertAlmostEqual(sum(i["weight"] for i in octo), 1.0)
         supply = [i["code"] for i in self.engine.compute("supply", "2026-10")["items"]]
         self.assertIn("exec_discipline", supply)  # у снабженца пункт остаётся
@@ -168,8 +173,9 @@ class EngineTest(unittest.TestCase):
                                  emps=[login])
                     r = self.engine.compute(login, "2026-10")
                     it = next(i for i in r["items"] if i["code"] == "receivables_overdue")
-                    self.assertEqual((it["n"], it["amount"], it["components"][0]["fact"]), (5, 2000, days))
-                    self.assertEqual((it["pct"], it["payout"], it["status"]), (share, round(2000 * share), status))
+                    amount = 2000 if login == "pm" else 1000  # у тендерного отдела вторая половина — «Обеспечение и штрафы»
+                    self.assertEqual((it["n"], it["amount"], it["components"][0]["fact"]), (5, amount, days))
+                    self.assertEqual((it["pct"], it["payout"], it["status"]), (share, round(amount * share), status))
                     self.assertEqual(r["zero_all"], [])  # весь KPI не обнуляется
         # сентябрь — по прежним пунктам (у менеджера ОП просрочка > 14 дней обнуляла весь KPI)
         self.assertEqual([i["code"] for i in self.engine.compute("tender", "2026-09")["items"]][-1], "tender_receivables")
