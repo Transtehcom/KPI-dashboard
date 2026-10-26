@@ -7,6 +7,7 @@ from . import call_records, demo, employees, manual
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
+from . import b24_sales_register, onec_sales_register
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -60,6 +61,7 @@ def run(con, config, force_demo=False):
             # сначала всё выгружаем (это долго), потом пишем одной транзакцией под db_lock,
             # чтобы дашборд никогда не видел наполовину обновлённые таблицы
             writes = []  # (источник, таблица, строки, поле даты)
+            register = None
             b24 = None
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
@@ -118,6 +120,10 @@ def run(con, config, force_demo=False):
                     onec = OneC(onec_cfg, log=log.append)
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)
+                    try:  # реестр «Метрики → Отдел продаж»: тендеры, КП и заказы клиентов с начала года
+                        register = onec_sales_register.fetch(onec, managers)
+                    except Exception as e:  # noqa
+                        log.append(f"Реестр продаж из 1С не загружен: {e}")
                     for table, rows in data.items():
                         date_field = next((d for t, d in DATASETS.values() if t == table), None)
                         writes.append(("1С", table, rows, date_field))
@@ -145,6 +151,12 @@ def run(con, config, force_demo=False):
                             replace_rows(con, table, rows, emps=None if table == "crm_deals" else owners, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
+                        if register is not None:
+                            new, upd = onec_sales_register.upsert(con, register)
+                            log.append(f"1С → реестр продаж: новых {new}, обновлено {upd}")
+                        if any(table == "crm_deals" and rows for _, table, rows, _ in writes):
+                            new, upd = onec_sales_register.upsert(con, b24_sales_register.from_bitrix(con))
+                            log.append(f"Б24 → реестр продаж: новых {new}, обновлено {upd}")
                         if any(table == "clients" for _, table, _, _ in writes):
                             snapshot_clients(con, current_month())
                         con.commit()

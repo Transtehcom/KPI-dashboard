@@ -137,6 +137,23 @@ CREATE TABLE IF NOT EXISTS forwarder_orders (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
   ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL);
 
+-- панель «Метрики → Отдел продаж» (макет «Метрики ОП.xlsx»): реестр объектов и действия вводятся вручную
+CREATE TABLE IF NOT EXISTS sales_objects (
+  id TEXT PRIMARY KEY, type TEXT, client TEXT, emp TEXT, channel TEXT, stage TEXT, entered TEXT, due TEXT,
+  f_req TEXT, f_plant TEXT, f_log TEXT, f_extra TEXT, f_price TEXT, ready TEXT, proof TEXT, handover TEXT, docs TEXT,
+  order_1c TEXT, debt REAL, pay_due TEXT, url TEXT, updated_by TEXT, updated_at TEXT,
+  source TEXT, status_1c TEXT, amount REAL, stage_auto INTEGER);
+CREATE TABLE IF NOT EXISTS sales_actions (
+  id TEXT PRIMARY KEY, obj_id TEXT, what TEXT, dept TEXT, executor TEXT, due TEXT, kind TEXT, status TEXT,
+  needs_id TEXT, question TEXT, link TEXT, ord INTEGER, updated_by TEXT, updated_at TEXT);
+
+-- вкладка «Деньги»: настройки, строки «кто должен» / «плановые выплаты» (kind in / out) и обещанные клиентами даты оплаты
+CREATE TABLE IF NOT EXISTS money_settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS money_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, party TEXT, basis TEXT, type TEXT, amount REAL, owed REAL, contract TEXT,
+  plan TEXT, approval TEXT, priority TEXT, updated_by TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS money_expect (rec_id TEXT PRIMARY KEY, expected TEXT);
+
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (tbl, ref, field));
@@ -221,7 +238,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                                    ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
                  "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")],
-                 "forwarder_orders": [("fact_sum", "REAL")]}
+                 "forwarder_orders": [("fact_sum", "REAL")],
+                 "sales_objects": [("source", "TEXT"), ("status_1c", "TEXT"), ("amount", "REAL"), ("stage_auto", "INTEGER")]}
 
 
 def migrate(con):

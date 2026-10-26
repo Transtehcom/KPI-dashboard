@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
+from . import money, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -85,6 +85,9 @@ class App:
         if not r or r["expires"] < dt.datetime.now().isoformat():
             return None
         return self.user(r["login"])
+
+    def sales_team(self):  # сотрудники отдела ОП для панели «Метрики → Отдел продаж»
+        return {r[0]: r[1] for r in self.con.execute("SELECT login, name FROM employees WHERE department = 'ОП' ORDER BY sort")}
 
     def new_session(self, login):
         token = secrets.token_urlsafe(32)
@@ -458,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/metrics":  # «Метрики»: где сейчас находится работа отдела — только руководителю
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    if q.get("kind") not in ("supply", "logistics"):
+                    if q.get("kind") not in ("supply", "logistics", "sales"):
                         raise BadRequest("Неизвестный раздел метрик")
                     today_ = dt.date.today()
                     date_from = self.date_param(q.get("date_from")) or today_.replace(day=1).isoformat()
@@ -466,6 +469,9 @@ class Handler(BaseHTTPRequestHandler):
                     if date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
+                    if q.get("kind") == "sales":
+                        return self.send_json(sales_panel.build(app.con, app.sales_team(), channel=q.get("channel") or "Все",
+                                                                emp=q.get("emp") or "Все"))
                     if q.get("kind") == "logistics":
                         # очередь — по заявкам окна синхронизации: более старые строки в базе не обновляются
                         since = month_bounds(month_add(current_month(), -app.config.get("sync", {}).get("months_back", 6)))[0]
@@ -595,6 +601,50 @@ class Handler(BaseHTTPRequestHandler):
                            self.number_param(b.get("value")))
                     with db_lock():
                         app.con.execute("INSERT OR REPLACE INTO plans VALUES (?,?,?,?)", row)
+                        app.con.commit()
+                    return self.send_json({"ok": True})
+                if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    return self.send_json(money.build(app.con))
+                if path == "/api/money" and method == "POST":
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    b = self.body()
+                    with db_lock():
+                        try:
+                            act = b.get("action")
+                            if act == "settings":
+                                money.save_settings(app.con, b)
+                            elif act == "item":
+                                money.save_item(app.con, b, me["login"])
+                            elif act == "delete":
+                                money.delete_item(app.con, b.get("id"))
+                            elif act == "expect":
+                                money.save_expect(app.con, b.get("id"), b.get("expected"))
+                            else:
+                                raise ValueError("неизвестное действие")
+                        except (ValueError, KeyError, TypeError) as e:
+                            app.con.rollback()
+                            raise BadRequest(f"Не сохранено: {e}")
+                        app.con.commit()
+                    return self.send_json({"ok": True})
+                if path in ("/api/sales-object", "/api/sales-action") and method == "POST":  # реестр и действия панели ОП
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    b = self.body()
+                    obj = path == "/api/sales-object"
+                    with db_lock():
+                        try:
+                            if b.get("action") == "delete":
+                                (sales_panel.delete_object if obj else sales_panel.delete_action)(app.con, str(b.get("id") or ""))
+                            elif obj:
+                                sales_panel.save_object(app.con, b, app.sales_team(), me["login"])
+                            else:
+                                sales_panel.save_action(app.con, b, me["login"])
+                        except (ValueError, KeyError) as e:
+                            app.con.rollback()
+                            raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
                     return self.send_json({"ok": True})
                 if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
