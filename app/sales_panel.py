@@ -146,12 +146,13 @@ def _need(o):
 
 
 def _debt_1c(con, order):
-    """Остаток долга и ближайший срок оплаты по связанному заказу из 1С (дебиторка); None — заказа в дебиторке нет."""
+    """Остаток долга и ближайший срок оплаты по связанному заказу из 1С (дебиторка); None — заказ не указан.
+    Заказа нет в дебиторке — отгруженного долга нет (не отгружен или нет этапов оплаты): остаток 0."""
     if not order:
         return None
     rows = con.execute("SELECT amount, due_date, paid_date FROM receivables WHERE doc = ?", (order.strip(),)).fetchall()
     if not rows:
-        return None
+        return 0.0, None
     open_ = [r for r in rows if not r[2]]
     return sum(r[0] or 0 for r in open_), min((r[1] for r in open_ if r[1]), default=None)
 
@@ -188,8 +189,10 @@ def build(con, team, now=None, channel="Все", emp="Все"):
         due = _dt(o["due"])
         o["late"] = bool(due and due < now and o["need"] and not o["closed"])
         o["no_due"] = not o["closed"] and not o["due"]
-        o["debt_late"] = None if o["debt"] is None or not o["pay_due"] else \
-            (o["debt"] if o["debt"] > 0 and o["pay_due"][:10] < today.isoformat() else 0)
+        o["pre_exec"] = not known or [x[0] for x in STAGES].index(o["stage"]) < [x[0] for x in STAGES].index("Передача в исполнение")
+        # долг до передачи в исполнение не возникает; нулевой остаток — просрочки нет; иначе нужны остаток и срок оплаты
+        o["debt_late"] = 0 if o["debt"] is not None and o["debt"] <= 0 else None if o["debt"] is None or not o["pay_due"] else \
+            (o["debt"] if o["pay_due"][:10] < today.isoformat() else 0)
         o["selected"] = (not o["closed"] and (emp == "Все" or o["emp"] == emp) and (channel == "Все" or o["channel"] == channel))
         objs[o["id"]] = o
     acts = []

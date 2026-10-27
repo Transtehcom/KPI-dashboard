@@ -153,6 +153,19 @@ CREATE TABLE IF NOT EXISTS money_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, party TEXT, basis TEXT, type TEXT, amount REAL, owed REAL, contract TEXT,
   plan TEXT, approval TEXT, priority TEXT, updated_by TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS money_expect (rec_id TEXT PRIMARY KEY, expected TEXT);
+-- загрузка из 1С: остатки по счетам и кассам, плановые платежи (kind out — выплаты, in — авансы клиентов); правки руководителя — override
+CREATE TABLE IF NOT EXISTS money_cash (account TEXT, currency TEXT, amount REAL, last TEXT);
+CREATE TABLE IF NOT EXISTS money_plan (
+  id TEXT PRIMARY KEY, kind TEXT, source TEXT, doc TEXT, doc_date TEXT, party TEXT, basis TEXT, purpose TEXT, detail TEXT,
+  amount REAL, currency TEXT, contract TEXT, plan TEXT, approval TEXT, priority TEXT);
+CREATE TABLE IF NOT EXISTS money_override (id TEXT PRIMARY KEY, plan TEXT, approval TEXT);
+-- вкладка «Поставщики»: строки поступлений (in) и возвратов (ret) из 1С, цены и суммы без НДС; supplier_meta — время и ошибка загрузки
+CREATE TABLE IF NOT EXISTS supplier_lines (
+  id TEXT PRIMARY KEY, kind TEXT, doc TEXT, doc_date TEXT, partner_key TEXT, partner TEXT, inn TEXT, item_key TEXT, item TEXT,
+  unit TEXT, qty REAL, amount REAL, currency TEXT);
+CREATE INDEX IF NOT EXISTS supplier_lines_partner ON supplier_lines (partner_key, doc_date);
+CREATE INDEX IF NOT EXISTS supplier_lines_item ON supplier_lines (item_key, doc_date);
+CREATE TABLE IF NOT EXISTS supplier_meta (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,

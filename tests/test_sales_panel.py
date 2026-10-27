@@ -67,6 +67,15 @@ class SalesPanelTest(unittest.TestCase):
         o = sp.build(self.con, TEAM, now=NOW)["objects"][0]
         self.assertEqual((o["debt"], o["debt_late"], o["need"]), (500, 500, "Оплата клиента"))
 
+    def test_debt_zero_when_order_not_in_receivables_and_none_before_execution(self):
+        self.obj(id="И-1", type="Исполнение", stage="Исполнение", order_1c="00ЦБ-9")  # заказ не отгружен: долга в дебиторке нет
+        self.obj(id="С-1", stage="КП")  # до исполнения долга не бывает
+        self.obj(id="И-2", type="Исполнение", stage="Приёмка и оплата", docs="Принято")  # приёмка без заказа: данных нет
+        o = {x["id"]: x for x in sp.build(self.con, TEAM, now=NOW)["objects"]}
+        self.assertEqual((o["И-1"]["debt"], o["И-1"]["debt_late"]), (0.0, 0))
+        self.assertTrue(o["С-1"]["pre_exec"] and o["С-1"]["debt_late"] is None)
+        self.assertTrue(not o["И-2"]["pre_exec"] and o["И-2"]["debt_late"] is None)
+
     def test_rejects_unknown_stage(self):
         with self.assertRaises(ValueError):
             self.obj(id="С-1", stage="Выдумка")

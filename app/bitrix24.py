@@ -210,6 +210,11 @@ class Bitrix24:
                                                         "select": contact_select}):
                 if contact_flags(c)[0]:
                     company_has_lpr.add(str(c.get("COMPANY_ID")))
+            if lead_lpr_field:  # и лиды компании с заполненным полем «ЛПР»: звонок на компанию, а не на сам лид
+                for ld in self.list_all("crm.lead.list", {"filter": {"COMPANY_ID": company_ids[i:i + 50]},
+                                                         "select": ["ID", "COMPANY_ID", lead_lpr_field]}):
+                    if self.flag(ld.get(lead_lpr_field)):
+                        company_has_lpr.add(str(ld.get("COMPANY_ID")))
 
         def entity_info(etype, eid):
             """(есть ЛПР, секретарь, название клиента) для сущности CRM, к которой привязан звонок или встреча."""

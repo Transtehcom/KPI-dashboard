@@ -15,10 +15,11 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import money, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
+from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
+from .onec import OneC
 from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, deal_funnel
 
 WEB = os.path.join(ROOT, "web")
@@ -58,6 +59,8 @@ class App:
         # та же блокировка, под которой синхронизация пишет в базу: расчёт не увидит недописанные таблицы
         self.lock = db_lock()
         self.login_fails = {}  # (ip, login) -> [время неудачных попыток]
+        self.money_busy = threading.Lock()  # идёт загрузка остатков и планов платежей из 1С («Деньги»)
+        self.suppliers_busy = threading.Lock()  # идёт загрузка закупок из 1С («Поставщики»)
 
     def login_blocked(self, key):
         now = time.monotonic()
@@ -85,6 +88,46 @@ class App:
         if not r or r["expires"] < dt.datetime.now().isoformat():
             return None
         return self.user(r["login"])
+
+    def refresh_money(self):
+        """Загрузить остатки и планы платежей из 1С в фоне; при ошибке прежние суммы остаются, причина видна на странице."""
+        if not self.money_busy.acquire(blocking=False):
+            return False
+
+        def work():
+            try:
+                data = onec_money.fetch(OneC(self.config["onec"], log=lambda *a: None))
+                with db_lock():
+                    onec_money.store(self.con, data)
+                    self.con.commit()
+            except Exception as e:  # noqa
+                with db_lock():
+                    onec_money.store_error(self.con, f"{type(e).__name__}: {e}")
+                    self.con.commit()
+            finally:
+                self.money_busy.release()
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def refresh_suppliers(self):
+        """Загрузить закупки из 1С в фоне; при ошибке прежние данные остаются, причина видна на странице."""
+        if not self.suppliers_busy.acquire(blocking=False):
+            return False
+
+        def work():
+            try:
+                lines = onec_suppliers.fetch(OneC(self.config["onec"], log=lambda *a: None))
+                with db_lock():
+                    onec_suppliers.store(self.con, lines)
+                    self.con.commit()
+            except Exception as e:  # noqa
+                with db_lock():
+                    onec_suppliers.store_error(self.con, f"{type(e).__name__}: {e}")
+                    self.con.commit()
+            finally:
+                self.suppliers_busy.release()
+        threading.Thread(target=work, daemon=True).start()
+        return True
 
     def sales_team(self):  # сотрудники отдела ОП для панели «Метрики → Отдел продаж»
         return {r[0]: r[1] for r in self.con.execute("SELECT login, name FROM employees WHERE department = 'ОП' ORDER BY sort")}
@@ -603,10 +646,31 @@ class Handler(BaseHTTPRequestHandler):
                         app.con.execute("INSERT OR REPLACE INTO plans VALUES (?,?,?,?)", row)
                         app.con.commit()
                     return self.send_json({"ok": True})
+                if path == "/api/suppliers" and method == "GET":  # вкладка «Поставщики»: закупки и цены из 1С — только руководителю
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    today_ = dt.date.today()
+                    date_from = self.date_param(q.get("date_from")) or today_.replace(month=1, day=1).isoformat()
+                    date_to = self.date_param(q.get("date_to")) or today_.isoformat()
+                    if q.get("refresh") or onec_suppliers.is_stale(app.con):  # открытие вкладки обновляет данные из 1С в фоне, если им больше часа
+                        app.refresh_suppliers()
+                    res = {"period": [date_from, date_to], "meta": onec_suppliers.meta(app.con), "refreshing": app.suppliers_busy.locked()}
+                    key = onec_suppliers.find_partner(app.con, q.get("partner"), q.get("inn"))
+                    if (q.get("partner") or q.get("inn")) and not key:
+                        res["not_found"] = True  # поставщика нет в закупках 1С: страница покажет список, а не пустую карточку
+                    if key:
+                        res.update(onec_suppliers.build(app.con, key, date_from, date_to, q.get("item") or None))
+                    else:
+                        res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to)
+                    return self.send_json(res)
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    return self.send_json(money.build(app.con))
+                    st = money.settings(app.con)
+                    stale = not st["synced_at"] or dt.datetime.fromisoformat(st["synced_at"]) < dt.datetime.now() - dt.timedelta(minutes=15)
+                    if stale:  # открытие вкладки обновляет данные из 1С в фоне, если им больше 15 минут
+                        app.refresh_money()
+                    return self.send_json({**money.build(app.con), "refreshing": app.money_busy.locked()})
                 if path == "/api/money" and method == "POST":
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
@@ -620,6 +684,10 @@ class Handler(BaseHTTPRequestHandler):
                                 money.save_item(app.con, b, me["login"])
                             elif act == "delete":
                                 money.delete_item(app.con, b.get("id"))
+                            elif act == "override":
+                                money.save_override(app.con, b.get("id"), b.get("plan"), b.get("approval"))
+                            elif act == "refresh":
+                                app.refresh_money()
                             elif act == "expect":
                                 money.save_expect(app.con, b.get("id"), b.get("expected"))
                             else:

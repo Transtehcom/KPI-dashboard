@@ -642,6 +642,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
     else if (h === "money" && !PREVIEW) { state.view = "money"; }
+    else if (h.split("?")[0] === "suppliers" && !PREVIEW) { state.view = "suppliers"; supFromHash(h); }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
     else if (h === "funnel") { state.view = "funnel"; }
     else if (metricsView(h) && !PREVIEW) { state.view = metricsView(h); }
@@ -682,14 +683,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
-    const noSide = ["funnel", "staff", "calls", "money"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
+    const noSide = ["funnel", "staff", "calls", "money", "suppliers"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<a href="#suppliers" data-tab="suppliers" class="${state.view === "suppliers" ? "on" : ""}">Поставщики</a>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -707,6 +708,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
       else if (a.dataset.tab === "money") { state.view = "money"; location.hash = "money"; }
+      else if (a.dataset.tab === "suppliers") { state.view = "suppliers"; state.sup = { partner: "", inn: "", item: "", date_from: "", date_to: "", hq: "suppliers" }; location.hash = "suppliers"; }
       else if (a.dataset.tab === "calls") { state.view = "calls"; location.hash = "calls"; }
       else if (METRICS[a.dataset.tab]) { state.view = a.dataset.tab; location.hash = METRICS[a.dataset.tab].hash; }
       else if (isMgr) { state.view = "team"; location.hash = "team"; }
@@ -762,6 +764,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     }
     if (state.view === "calls") { loadCalls(); return; }
     if (state.view === "money") { loadMoney(); return; }
+    if (state.view === "suppliers") { loadSuppliers(); return; }
     if (METRICS[state.view]) { loadMetrics(); return; }
     if (state.view === "funnel") {
       try {
@@ -1275,72 +1278,179 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         </tbody></table></div>` : `<span class="muted">Заказов нет</span>`}</div></section>`;
     bindPeriod("m", () => state.mPer, (p) => { state.mPer = p; }, loadMetrics);
   }
-  // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx»)
-  const m2 = (v) => nf(v, 2);
+  // ---------- «Поставщики»: закупки, номенклатура и цены из 1С (макет «ТТК_Поставщики_дашборд_ТЗ.xlsx»); вход из карточки Битрикса: #suppliers?inn=…
+  let supTimer = null;
+  const supQuery = (h) => { const i = h.indexOf("?"); return Object.fromEntries(new URLSearchParams(i < 0 ? "" : h.slice(i + 1))); };
+  function supFromHash(h) {  // ссылка из карточки поставщика: #suppliers?inn=… или ?partner=…
+    const q = supQuery(h);
+    state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h };
+  }
+  async function loadSuppliers(refresh) {
+    clearTimeout(supTimer);
+    const s = (state.sup = state.sup || {}), p = new URLSearchParams();
+    for (const k of ["partner", "inn", "item", "date_from", "date_to"]) if (s[k]) p.set(k, s[k]);
+    if (refresh) p.set("refresh", "1");
+    try {
+      const d = await api("/api/suppliers?" + p);
+      renderSuppliers(d);
+      if (d.refreshing) supTimer = setTimeout(() => { if (state.view === "suppliers") loadSuppliers(); }, 4000);  // идёт загрузка из 1С
+    } catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  function renderSuppliers(d) {
+    const s = state.sup, M = d.meta || {}, T = d.tiles, pr = (v) => (v == null ? "—" : nf(v, 2) + " ₽");
+    const pc = (v) => (v == null ? "—" : `<span style="color:var(--${v > 0 ? "bad" : v < 0 ? "good" : "muted"})">${v > 0 ? "+" : ""}${nf(v * 100, 1)} %</span>`);
+    const day = (v) => (v ? ruDay(v.slice(0, 10)) : "—");
+    const when = (v) => (v ? ruDay(v.slice(0, 10)) + " " + v.slice(11, 16) : "—");
+    const head = `<section class="panel"><div class="panel-h"><h2>${d.partner ? esc(d.partner.name) : "Закупки у поставщиков"}</h2>
+        <div class="sp-add" style="gap:8px;align-items:center">${d.partner ? `<button class="btn" id="supBack" type="button">← Все поставщики</button>` : ""}
+        <label class="small">Период с <input type="date" id="supFrom" value="${d.period[0]}"></label><label class="small">по <input type="date" id="supTo" value="${d.period[1]}"></label>
+        <button class="btn primary" id="supRefresh" type="button" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button></div>
+        <span class="muted small">Из 1С: ${M.synced_at ? "загружено " + when(M.synced_at) : "ещё не загружено"} · закупки = поступления минус возвраты, цены и суммы без НДС (OData — копия базы за прошлый день)</span></div>
+        ${M.error ? `<div class="panel-b" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(M.error)}. Показаны данные последней успешной загрузки${M.synced_at ? " (" + when(M.synced_at) + ")" : ""}.</div>` : ""}
+        ${!M.synced_at && !d.refreshing ? `<div class="panel-b">Данных из 1С ещё нет — нажмите «Обновить из 1С».</div>` : ""}
+        ${d.not_found ? `<div class="panel-b">Поставщик из ссылки не найден в закупках 1С${s.inn ? " (ИНН " + esc(s.inn) + ")" : ""} — показан общий список.</div>` : ""}</section>`;
+    let body = "";
+    if (d.list) {
+      body = `<section class="panel"><div class="panel-h"><h2>Поставщики</h2><span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${d.list.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Закупки, ₽</th><th class="n">Позиций</th><th class="n">Поступлений</th><th>Последняя закупка</th></tr></thead><tbody>
+        ${d.list.map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.amount, 2)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.docs)}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
+    } else {
+      const it = d.item;
+      body = `<section class="stats">
+        <div class="panel stat"><div class="eyebrow">Закуплено за период</div><div class="v">${pr(T.amount)}</div><div class="h">поступления минус возвраты</div></div>
+        <div class="panel stat"><div class="eyebrow">Позиций в закупках</div><div class="v">${nf(T.items)}</div></div>
+        <div class="panel stat"><div class="eyebrow">Позиций с ростом цены</div><div class="v">${nf(T.growth)}</div><div class="h">последняя цена выше первой за период</div></div>
+        <div class="panel stat"><div class="eyebrow">Позиций без альтернатив</div><div class="v">${nf(T.no_alt)}</div><div class="h">других поставщиков за период нет</div></div></section>
+        ${d.foreign_lines ? `<div class="muted small">Строки в иностранной валюте (${nf(d.foreign_lines)}) в суммы и сравнение цен не входят.</div>` : ""}
+        <section class="panel"><div class="panel-h"><h2>Номенклатура и цены</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу = сумма / количество</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Объём</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средневзв. цена, ₽</th><th class="n">Изменение</th><th class="n">Закупки, ₽</th><th>Последняя закупка</th><th class="n">Альтернатив</th></tr></thead><tbody>
+        ${d.items.map((x) => `<tr class="mrow${it && it.key === x.key ? " on" : ""}" data-item="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.item)}</td><td>${esc(x.unit || "—")}</td><td class="n">${nf(x.qty, 2)}</td><td class="n">${nf(x.first, 2)}</td><td class="n">${nf(x.last, 2)}</td><td class="n">${nf(x.avg, 2)}</td><td class="n">${pc(x.change)}</td><td class="n">${nf(x.amount, 2)}</td><td>${day(x.last_date)}</td><td class="n">${x.alternatives ? nf(x.alternatives) : `<span class="muted">нет</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
+      if (it) {
+        const dyn = d.dynamics || [];
+        let chart = `<span class="muted">Для динамики нужны закупки минимум в двух месяцах</span>`;
+        if (dyn.length > 1) {
+          const W = 520, H = 170, pad = 34, lo = Math.min(...dyn.map((x) => x.price)), hi = Math.max(...dyn.map((x) => x.price)), span = hi - lo || 1;
+          const X = (i) => pad + (i * (W - 2 * pad)) / (dyn.length - 1), Y = (v) => H - pad - ((v - lo) / span) * (H - 2 * pad);
+          chart = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px" role="img" aria-label="Динамика цены"><polyline fill="none" stroke="var(--accent,#4BBBB8)" stroke-width="2" points="${dyn.map((x, i) => X(i) + "," + Y(x.price)).join(" ")}"/>
+            ${dyn.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.price)}" r="3.5" fill="var(--accent,#4BBBB8)"/><text x="${X(i)}" y="${Y(x.price) - 8}" font-size="11" text-anchor="middle" fill="currentColor">${nf(x.price, 2)}</text><text x="${X(i)}" y="${H - 10}" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">${x.month.slice(5)}.${x.month.slice(2, 4)}</text>`).join("")}</svg>`;
+        }
+        body += `<section class="panel"><div class="panel-h"><h2>${esc(it.item)}</h2><span class="muted small">динамика средневзвешенной цены по месяцам, ₽/${esc(it.unit || "ед.")}</span></div><div class="panel-b">${chart}</div></section>
+          <section class="panel"><div class="panel-h"><h2>Альтернативы</h2><span class="muted small">другие поставщики этой позиции (та же единица) за период · цены — повод запросить новое КП, наличие и актуальную цену нужно подтвердить</span></div><div class="panel-b">${d.alternatives && d.alternatives.length ? `<table class="mt"><thead><tr><th>Поставщик</th><th class="n">Последняя цена, ₽</th><th class="n">К текущему</th><th>Дата</th><th class="n">Объём</th></tr></thead><tbody>
+          ${d.alternatives.map((a) => `<tr class="mrow" data-sup="${esc(a.key)}" style="cursor:pointer"><td>${esc(a.name)}</td><td class="n">${nf(a.last, 2)}</td><td class="n">${a.last != null && it.last ? pc(a.last / it.last - 1) : "—"}</td><td>${day(a.last_date)}</td><td class="n">${nf(a.qty, 2)}</td></tr>`).join("")}</tbody></table>` : `<span class="muted">Других поставщиков этой позиции за период нет</span>`}</div></section>`;
+      }
+      const hist = d.history.slice(0, 300);
+      body += `<section class="panel"><div class="panel-h"><h2>История закупок${it ? " — " + esc(it.item) : ""}</h2><span class="muted small">документы 1С: номер поступления или возврата${d.history.length > 300 ? " · показаны последние 300 строк" : ""}</span></div><div class="panel-b">${hist.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Дата</th><th>Документ</th><th>Номенклатура</th><th>Ед.</th><th class="n">Кол-во</th><th class="n">Цена, ₽</th><th class="n">Сумма, ₽</th></tr></thead><tbody>
+        ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${r.kind === "ret" ? "Возврат " : "Поступление "}${esc(r.doc)}</td><td>${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.qty, 2)}</td><td class="n">${nf(r.price, 2)}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.amount, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
+    }
+    const main = document.getElementById("main");
+    main.innerHTML = head + body;
+    const go = (patch) => { Object.assign(state.sup, patch); loadSuppliers(); };
+    main.querySelectorAll("[data-sup]").forEach((r) => r.addEventListener("click", () => go({ partner: r.dataset.sup, inn: "", item: "" })));
+    main.querySelectorAll("[data-item]").forEach((r) => r.addEventListener("click", () => go({ item: state.sup.item === r.dataset.item ? "" : r.dataset.item })));
+    const back = document.getElementById("supBack");
+    if (back) back.addEventListener("click", () => go({ partner: "", inn: "", item: "" }));
+    document.getElementById("supFrom").addEventListener("change", (e) => go({ date_from: e.target.value }));
+    document.getElementById("supTo").addEventListener("change", (e) => go({ date_to: e.target.value }));
+    document.getElementById("supRefresh").addEventListener("click", () => loadSuppliers(true));
+  }
+  // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx» и «Краткое ТЗ»)
+  const m2 = (v) => nf(v, 2) + " ₽";
+  let moneyTimer = null;
   async function loadMoney() {
-    try { renderMoney(await api("/api/money")); }
-    catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    clearTimeout(moneyTimer);
+    try {
+      const d = await api("/api/money");
+      renderMoney(d);
+      if (d.refreshing) moneyTimer = setTimeout(() => { if (state.view === "money") loadMoney(); }, 4000);  // идёт загрузка из 1С
+    } catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
   function renderMoney(d) {
     const T = d.tiles, O = d.options, neg = (v) => (v < 0 ? ' style="color:var(--bad);font-weight:600"' : "");
     const dayHead = (iso) => { const x = new Date(iso + "T00:00:00"); return `${ruDay(iso).slice(0, 5)} <span class="muted small">${["вс", "пн", "вт", "ср", "чт", "пт", "сб"][x.getDay()]}</span>`; };
     const inp = (f, v, type = "text", w) => `<input data-f="${f}" type="${type}" value="${esc(v ?? "")}"${w ? ` style="width:${w}px"` : ""}>`;
     const sel = (f, v, opts) => `<select data-f="${f}"><option value=""></option>${opts.map((o) => `<option ${v === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    const cur = (c) => (c && c !== "руб." ? ` <span class="muted small">${esc(c)}</span>` : "");
+    const when = (v) => (v ? ruDay(v.slice(0, 10)) + (v.length > 10 ? " " + v.slice(11, 16) : "") : "—");
     const scroll = [...document.querySelectorAll("#main .dt-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
+    const open = [...document.querySelectorAll("#main details[data-keep]")].map((x) => x.open);
+    const S = d.sync;
+    const payRow = (p) => {  // строка плановых выплат: свои — редактируются целиком, строки из 1С — только перенос даты и согласование
+      const mine = p.src === "manual";
+      return `<tr data-pid="${esc(p.id)}" data-src="${p.src}" class="mrow"><td${mine ? ' class="in"' : ""}>${mine ? inp("party", p.party, "text", 170) : esc(p.party)}</td>
+        <td${mine ? ' class="in"' : ""}>${mine ? inp("basis", p.basis, "text", 140) : esc(p.basis || "—")}</td><td${mine ? ' class="in"' : ""}>${mine ? sel("type", p.type, O.out_types) : esc(p.type || "—")}</td>
+        <td class="n${mine ? " in" : ""}">${mine ? inp("amount", p.amount, "number", 130) : m2(p.amount) + cur(p.currency)}</td>
+        <td${mine ? ' class="in"' : ""}>${mine ? inp("contract", p.contract, "date") : p.contract ? ruDay(p.contract) : "—"}</td>
+        <td class="in">${inp("plan", p.plan, "date")}</td><td class="in">${sel("approval", p.approval, O.approvals)}</td>
+        <td>${esc(p.priority || "—")}</td><td>${p.in_cal ? "в календаре" : p.plan && p.approval === "Согласовано" ? "за пределами периода" : "не в календаре"}${p.moved ? " · изменено" : ""}</td>
+        <td>${mine ? `<button class="btn danger" data-mdel="${p.id}" style="min-height:26px;padding:2px 8px" title="Удалить строку">×</button>` : ""}</td></tr>
+        <tr class="mdetail" hidden><td colspan="10" class="muted small">${esc(p.detail || "")}</td></tr>`;
+    };
+    const payHead = `<thead><tr><th>Получатель</th><th>Основание</th><th>Назначение</th><th class="n">К оплате</th><th>По договору</th><th>План оплаты</th><th>Согласование</th><th>Приоритет</th><th>Учёт</th><th></th></tr></thead>`;
     document.getElementById("main").innerHTML = `
-      <div class="head"><div><div class="eyebrow">Деньги · 1С и ручной ввод</div><h1>Денежное состояние</h1>
-        <div class="sub">Платёжный календарь на ${nf(d.calendar.length)} дней с ${ruDay(d.asof)}. Суммы — рубли с копейками. Долги клиентов — из 1С, остальное вводится здесь.</div></div></div>
+      <div class="head"><div><div class="eyebrow">Деньги · данные 1С</div><h1>Денежное состояние</h1>
+        <div class="sub">Платёжный календарь на ${nf(d.calendar.length)} дней с ${ruDay(d.asof)}. Суммы в рублях с копейками; другие валюты — отдельно, без пересчёта.</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters sp-add" style="margin:0">
         <label>Дата среза<input type="date" id="mAsof" value="${esc(d.asof_manual || d.asof)}"></label>
-        <label>Доступно на начало, ₽<input type="number" step="0.01" id="mStart" value="${d.start}" style="width:150px"></label>
-        <button class="btn" id="mAsofToday" title="Дата среза — всегда сегодня">Сегодня</button></div>
-        <span class="muted small">жёлтое — ввод; итоги пересчитываются</span></div></section>
+        <label title="Часть остатка, которой нельзя распоряжаться: вычитается из «Доступно на начало»">Недоступные средства, ₽<input type="number" step="0.01" id="mAdjust" value="${d.adjust}" style="width:150px"></label>
+        <button class="btn" id="mAsofToday" title="Дата среза — всегда сегодня">Сегодня</button>
+        <button class="btn primary" id="mRefresh" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button></div>
+        <span class="muted small">Из 1С: ${S.at ? "загружено " + when(S.at) : "ещё не загружено"}${S.last_move ? " · последнее движение по счетам " + when(S.last_move) + " (OData — копия базы за прошлый день)" : ""}</span></div>
+        ${S.error ? `<div class="panel-b" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(S.error)}. Показаны суммы последней успешной загрузки${S.at ? " (" + when(S.at) + ")" : ""}.</div>` : ""}
+        ${!S.at && !d.refreshing ? `<div class="panel-b">Данных из 1С ещё нет — нажмите «Обновить из 1С».</div>` : ""}</section>
       <section class="stats">
-        <div class="panel stat"><div class="eyebrow">Доступно на начало</div><div class="v">${m2(T.start)}</div></div>
+        <div class="panel stat"><div class="eyebrow">Доступно на начало</div><div class="v">${m2(T.start)}</div><div class="h">по счетам и кассам${d.adjust ? ", за вычетом недоступных" : ""}</div></div>
         <div class="panel stat"><div class="eyebrow">Поступления периода</div><div class="v">${m2(T.in)}</div></div>
-        <div class="panel stat"><div class="eyebrow">Выплаты периода</div><div class="v">${m2(T.out)}</div></div>
+        <div class="panel stat"><div class="eyebrow">Выплаты периода</div><div class="v">${m2(T.out)}</div><div class="h">только согласованные с датой</div></div>
         <div class="panel stat"><div class="eyebrow">Минимум остатка</div><div class="v"${neg(T.low)}>${m2(T.low)}</div></div>
       </section>
+      <details class="panel" data-keep ${open[0] ? "open" : ""}><summary class="panel-h" style="cursor:pointer"><h2 style="display:inline">Остатки по счетам и кассам</h2> <span class="muted small">${nf(d.cash.length)} · итого в рублях ${m2(d.cash_rub)}</span></summary>
+        <div class="panel-b">${d.cash.length ? `<table class="mt"><thead><tr><th>Счёт / касса</th><th class="n">Остаток</th><th>Валюта</th><th>Последнее движение</th></tr></thead><tbody>
+          ${d.cash.map((c) => `<tr><td>${esc(c.account)}</td><td class="n"${neg(c.amount)}>${nf(c.amount, 2)}</td><td>${esc(c.currency)}</td><td>${when(c.last)}</td></tr>`).join("")}</tbody></table>
+          <div class="muted small" style="margin-top:8px">Остатки по счетам могут быть смещены, если часть операций проведена по другим счетам организации; итог сверяйте с отчётом 1С на ту же дату.</div>` : `<span class="muted">Данных нет</span>`}</div></details>
       <section class="panel"><div class="panel-h"><h2>Платёжный календарь</h2><span class="muted small">поступления — по дате «Ожидаем», выплаты — по «Плану оплаты», только «Согласовано»</span></div>
         <div class="panel-b"><div class="scroll"><table class="mt"><thead><tr><th>Дата</th>${d.calendar.map((c) => `<th class="n">${dayHead(c.date)}</th>`).join("")}</tr></thead><tbody>
           <tr><th>На начало дня</th>${d.calendar.map((c) => `<td class="n"${neg(c.begin)}>${m2(c.begin)}</td>`).join("")}</tr>
           <tr><th>Поступления</th>${d.calendar.map((c) => `<td class="n">${c.in ? m2(c.in) : "—"}</td>`).join("")}</tr>
           <tr><th>Выплаты</th>${d.calendar.map((c) => `<td class="n">${c.out ? m2(c.out) : "—"}</td>`).join("")}</tr>
           <tr class="tot"><th>На конец дня</th>${d.calendar.map((c) => `<td class="n"${neg(c.end)}>${m2(c.end)}</td>`).join("")}</tr></tbody></table></div>
-        <div style="margin-top:12px"><b>Максимальная нехватка денег:</b> <span${T.shortfall ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(T.shortfall)} ₽</span>
+        <div style="margin-top:12px"><b>Максимальная нехватка денег:</b> <span${T.shortfall ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(T.shortfall)}</span>
           <span class="muted"> · дата минимума: ${ruDay(T.low_date)}</span></div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Кто должен и когда ожидаем поступления</h2><span class="muted small">долг за отгрузку — из 1С (неоплаченные этапы графика оплаты); «Ожидаем» — дата, которую обещал клиент</span></div>
-        <div class="panel-b"><form id="mAddIn" class="sp-add"><input name="party" placeholder="Клиент" required style="width:200px"><input name="basis" placeholder="Основание (спецификация, заказ)" style="width:200px">
+      <section class="panel"><div class="panel-h"><h2>Кто должен и когда ожидаем поступления</h2><span class="muted small">долг за отгрузку и аванс — из 1С; «Ожидаем» — дата, которую обещал клиент (договорная дата не меняется) · строка раскрывается по нажатию</span></div>
+        <div class="panel-b"><details class="sp-addwrap"><summary class="muted small" style="cursor:pointer">Добавить поступление вручную</summary><form id="mAddIn" class="sp-add" style="margin-top:8px"><input name="party" placeholder="Клиент" required style="width:200px"><input name="basis" placeholder="Основание (спецификация, заказ)" style="width:200px">
           <select name="type">${O.in_types.map((t) => `<option>${t}</option>`).join("")}</select><input name="amount" type="number" step="0.01" placeholder="К получению, ₽" required style="width:140px">
           <input name="owed" type="number" step="0.01" placeholder="Долг за отгрузку, ₽" style="width:150px"><label class="small">По договору <input name="contract" type="date"></label>
-          <label class="small">Ожидаем <input name="plan" type="date"></label><button class="btn primary">Добавить поступление</button></form>
-        ${d.owe.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt sp-edit"><thead><tr><th>Клиент</th><th>Основание</th><th>Вид</th><th class="n">К получению, ₽</th><th class="n">Долг за отгрузку, ₽</th><th>По договору</th><th>Ожидаем</th><th class="n">Просрочка, дней</th><th>Статус даты</th><th></th></tr></thead><tbody>
-          ${d.owe.map((o) => o.src === "1c" ? `<tr data-rid="${esc(o.id)}"><td>${esc(o.party)}</td><td>${esc(o.basis)}</td><td>${esc(o.type)} · 1С</td><td class="n">${m2(o.amount)}</td><td class="n">${m2(o.owed)}</td><td>${o.contract ? ruDay(o.contract) : "—"}</td>
-            <td class="in"><input data-expect type="date" value="${esc(o.promised ? o.plan : "")}" placeholder="${esc(o.plan || "")}" title="Обещанная клиентом дата оплаты"></td><td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td></td></tr>`
-          : `<tr data-iid="${o.id}" data-kind="in"><td class="in">${inp("party", o.party, "text", 180)}</td><td class="in">${inp("basis", o.basis, "text", 160)}</td><td class="in">${sel("type", o.type, O.in_types)}</td>
+          <label class="small">Ожидаем <input name="plan" type="date"></label><button class="btn primary">Добавить</button></form></details>
+        ${d.owe.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt sp-edit"><thead><tr><th>Клиент</th><th>Основание</th><th>Вид</th><th class="n">К получению</th><th class="n">Долг за отгрузку</th><th>По договору</th><th>Ожидаем</th><th class="n">Просрочка, дней</th><th>Статус даты</th><th></th></tr></thead><tbody>
+          ${d.owe.map((o) => o.src === "1c" ? `<tr data-rid="${esc(o.id)}" class="mrow"><td>${esc(o.party)}</td><td>${esc(o.basis || "—")}</td><td>${esc(o.type)}</td><td class="n">${m2(o.amount)}${cur(o.currency)}</td><td class="n">${o.owed ? m2(o.owed) : "—"}</td><td>${o.contract ? ruDay(o.contract) : "—"}</td>
+            <td class="in"><input data-expect type="date" value="${esc(o.promised ? o.plan : "")}" title="Обещанная клиентом дата оплаты${o.plan && !o.promised ? " (сейчас по договору: " + ruDay(o.plan) + ")" : ""}"></td><td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td></td></tr>
+            <tr class="mdetail" hidden><td colspan="10" class="muted small">${esc(o.detail || "")}</td></tr>`
+          : `<tr data-iid="${o.id}" data-kind="in" class="mrow"><td class="in">${inp("party", o.party, "text", 180)}</td><td class="in">${inp("basis", o.basis, "text", 160)}</td><td class="in">${sel("type", o.type, O.in_types)}</td>
             <td class="in">${inp("amount", o.amount, "number", 130)}</td><td class="in">${inp("owed", o.owed, "number", 130)}</td><td class="in">${inp("contract", o.contract, "date")}</td><td class="in">${inp("plan", o.plan, "date")}</td>
-            <td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td><button class="btn danger" data-mdel="${o.id}" style="min-height:26px;padding:2px 8px" title="Удалить строку">×</button></td></tr>`).join("")}
-        </tbody></table></div>` : `<div class="muted">Долгов нет</div>`}
-        <div style="margin-top:12px"><b>Всего долг клиентов:</b> ${m2(d.owe_total)} ₽ <span class="muted"> · </span><b>Просрочено:</b> <span${d.owe_late ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(d.owe_late)} ₽</span></div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Плановые выплаты</h2><span class="muted small">движение денег, а не бухгалтерские расходы; авансы показаны отдельно от долга за отгрузки</span></div>
-        <div class="panel-b"><form id="mAddOut" class="sp-add"><input name="party" placeholder="Получатель" required style="width:180px"><input name="basis" placeholder="Основание" style="width:160px">
+            <td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td><button class="btn danger" data-mdel="${o.id}" style="min-height:26px;padding:2px 8px" title="Удалить строку">×</button></td></tr>
+            <tr class="mdetail" hidden><td colspan="10" class="muted small">Введено вручную</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="muted">Долгов и авансов нет</div>`}
+        <div style="margin-top:12px"><b>Всего долг клиентов (за отгрузки):</b> ${m2(d.owe_total)} <span class="muted"> · </span><b>Просрочено:</b> <span${d.owe_late ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(d.owe_late)}</span>
+          <span class="muted"> · </span><b>Авансы отдельно:</b> ${m2(d.owe_advance)}</div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Плановые выплаты</h2><span class="muted small">согласованные, с датой · заявки на расходование и план оплаты из 1С; движение денег, а не расходы · за пределами периода — ${m2(d.pay_beyond)}</span></div>
+        <div class="panel-b"><details class="sp-addwrap"><summary class="muted small" style="cursor:pointer">Добавить выплату вручную</summary><form id="mAddOut" class="sp-add" style="margin-top:8px"><input name="party" placeholder="Получатель" required style="width:180px"><input name="basis" placeholder="Основание" style="width:160px">
           <select name="type"><option value=""></option>${O.out_types.map((t) => `<option>${t}</option>`).join("")}</select><input name="amount" type="number" step="0.01" placeholder="К оплате, ₽" required style="width:130px">
           <label class="small">По договору <input name="contract" type="date"></label><label class="small">План оплаты <input name="plan" type="date"></label>
           <select name="approval"><option value="Согласовано">Согласовано</option><option value="Не согласовано">Не согласовано</option></select>
-          <select name="priority"><option value="Обязательный">Обязательный</option><option value="Отложить">Отложить</option></select><button class="btn primary">Добавить выплату</button></form>
-        ${d.pay.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit"><thead><tr><th>Получатель</th><th>Основание</th><th>Назначение</th><th class="n">К оплате, ₽</th><th>По договору</th><th>План оплаты</th><th>Согласование</th><th>Приоритет</th><th></th></tr></thead><tbody>
-          ${d.pay.map((p) => `<tr data-iid="${p.id}" data-kind="out"><td class="in">${inp("party", p.party, "text", 170)}</td><td class="in">${inp("basis", p.basis, "text", 150)}</td><td class="in">${sel("type", p.type, O.out_types)}</td>
-            <td class="in">${inp("amount", p.amount, "number", 130)}</td><td class="in">${inp("contract", p.contract, "date")}</td><td class="in">${inp("plan", p.plan, "date")}</td>
-            <td class="in">${sel("approval", p.approval, O.approvals)}</td><td class="in">${sel("priority", p.priority, O.priorities)}</td>
-            <td><button class="btn danger" data-mdel="${p.id}" style="min-height:26px;padding:2px 8px" title="Удалить строку">×</button></td></tr>`).join("")}
-        </tbody></table></div>` : `<div class="muted">Плановых выплат нет — добавьте их выше</div>`}
-        <div style="margin-top:12px"><b>Всего к оплате:</b> ${m2(d.pay_total)} ₽ <span class="muted small"> · в календарь попадают только «Согласовано»</span></div></div></section>`;
+          <select name="priority"><option value="Обязательный">Обязательный</option><option value="Отложить">Отложить</option></select><button class="btn primary">Добавить</button></form></details>
+        ${d.pay.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit">${payHead}<tbody>${d.pay.map(payRow).join("")}</tbody></table></div>` : `<div class="muted">Согласованных платежей с датой нет</div>`}
+        <div style="margin-top:12px"><b>Всего согласовано к оплате:</b> ${m2(d.pay_total)}</div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Несогласованные и без даты</h2><span class="muted small">в календарь не входят · чтобы включить, поставьте «Согласовано» и дату</span></div>
+        <div class="panel-b">${d.pay_other.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit">${payHead}<tbody>${d.pay_other.map(payRow).join("")}</tbody></table></div>` : `<div class="muted">Таких платежей нет</div>`}
+        <div style="margin-top:12px"><b>Всего:</b> ${m2(d.pay_other_total)}</div></div></section>
+      ${d.foreign.length ? `<section class="panel"><div class="panel-h"><h2>Другие валюты</h2><span class="muted small">без пересчёта в рубли, в календарь не входят</span></div><div class="panel-b"><table class="mt"><thead><tr><th>Валюта</th><th class="n">Остаток</th><th class="n">К получению</th><th class="n">К оплате</th></tr></thead><tbody>
+        ${d.foreign.map((f) => `<tr><th>${esc(f.currency)}</th><td class="n">${nf(f.cash, 2)}</td><td class="n">${nf(f.in, 2)}</td><td class="n">${nf(f.out, 2)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+      <div class="muted small" style="margin:4px 0 16px">Остаток — движения по счетам и кассам 1С; поступления — неоплаченные этапы графика оплаты и авансы клиентов; выплаты — заявки на расходование денежных средств (согласованные и «к оплате») и план оплаты поставщикам (без заявки — «не согласовано»). Платёжные документы в 1С на заявки не ссылаются, поэтому в выплаты берутся заявки с датой платежа не раньше даты среза.</div>`;
     document.querySelectorAll("#main .dt-wrap").forEach((w, i) => { if (scroll[i]) { w.scrollTop = scroll[i][0]; w.scrollLeft = scroll[i][1]; } });
+    document.querySelectorAll("#main details[data-keep]").forEach((x, i) => { x.open = !!open[i]; });
     const post = async (body) => { try { await api("/api/money", body); loadMoney(); } catch (e) { if (e.message !== "auth") { toast(e.message); loadMoney(); } } };
-    const settings = () => post({ action: "settings", asof: document.getElementById("mAsof").value, start: document.getElementById("mStart").value });
+    const settings = () => post({ action: "settings", asof: document.getElementById("mAsof").value, adjust: document.getElementById("mAdjust").value });
     document.getElementById("mAsof").addEventListener("change", settings);
-    document.getElementById("mStart").addEventListener("change", settings);
-    document.getElementById("mAsofToday").addEventListener("click", () => post({ action: "settings", asof: "", start: document.getElementById("mStart").value }));
+    document.getElementById("mAdjust").addEventListener("change", settings);
+    document.getElementById("mAsofToday").addEventListener("click", () => post({ action: "settings", asof: "", adjust: document.getElementById("mAdjust").value }));
+    document.getElementById("mRefresh").addEventListener("click", () => post({ action: "refresh" }));
     for (const [id, kind] of [["mAddIn", "in"], ["mAddOut", "out"]]) {
       document.getElementById(id).addEventListener("submit", (ev) => { ev.preventDefault(); post({ action: "item", kind, ...Object.fromEntries(new FormData(ev.target)) }); });
     }
@@ -1349,9 +1459,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       tr.querySelectorAll("[data-f]").forEach((x) => { body[x.dataset.f] = x.value; });
       post(body);
     })));
+    document.querySelectorAll("#main tr[data-pid]").forEach((tr) => tr.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => {
+      const f = (n) => (tr.querySelector(`[data-f=${n}]`) || {}).value || "";
+      if (tr.dataset.src === "1c") { post({ action: "override", id: tr.dataset.pid, plan: f("plan"), approval: f("approval") }); return; }
+      const body = { action: "item", id: tr.dataset.pid, kind: "out" };
+      tr.querySelectorAll("[data-f]").forEach((x) => { body[x.dataset.f] = x.value; });
+      post(body);
+    })));
     document.querySelectorAll("#main tr[data-rid] [data-expect]").forEach((el) => el.addEventListener("change", () =>
       post({ action: "expect", id: el.closest("tr").dataset.rid, expected: el.value })));
-    document.querySelectorAll("#main [data-mdel]").forEach((b) => b.addEventListener("click", () => { if (confirm("Удалить строку?")) post({ action: "delete", id: b.dataset.mdel }); }));
+    document.querySelectorAll("#main [data-mdel]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); if (confirm("Удалить строку?")) post({ action: "delete", id: b.dataset.mdel }); }));
+    document.querySelectorAll("#main tr.mrow").forEach((tr) => tr.addEventListener("click", (ev) => {  // раскрыть источник строки (документ 1С)
+      if (ev.target.closest("input, select, button")) return;
+      const nx = tr.nextElementSibling; if (nx && nx.classList.contains("mdetail")) nx.hidden = !nx.hidden;
+    }));
   }
 
   // ---------- «Метрики → Отдел продаж»: панель, реестр и действия по макету «Метрики ОП.xlsx»
@@ -1438,7 +1559,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <td class="in">${o.debt_1c ? ruMoment(o.pay_due) : spIn("pay_due", (o.pay_due || "").slice(0, 10), "date")}</td><td class="in">${spIn("url", o.url, "text", 140)}</td>
             <td style="white-space:normal;min-width:180px">${esc(o.result)}</td><td style="white-space:normal;min-width:180px">${esc(o.need || "—")}</td>
             <td>${o.closed ? "—" : o.late ? '<b style="color:var(--bad)">да</b>' : "нет"}</td><td>${o.closed ? "—" : yes(!d.actions.some((a) => a.obj_id === o.id && a.active && a.dept === "Продажи"))}</td>
-            <td class="n">${o.debt_late == null ? "нет данных" : o.debt_late ? nf(o.debt_late, 2) : "—"}</td><td>${esc(o.group)}</td>
+            <td class="n">${o.debt_late ? nf(o.debt_late, 2) : o.debt_late === 0 || o.closed || o.pre_exec ? "—" : "нет данных"}</td><td>${esc(o.group)}</td>
             <td><button class="btn danger" data-spdel="${esc(o.id)}" data-kind="object" title="Удалить объект" style="min-height:26px;padding:2px 8px">×</button></td></tr>`).join("")}
         </tbody></table></div>` : `<div class="muted" style="margin-top:12px">${hidden ? "Открытых объектов нет — закрытые скрыты" : "Объектов пока нет: они появятся из 1С при обновлении данных или добавьте вручную"}</div>`}
         <div class="muted small" style="margin-top:12px">Готовность: «Готово» + подтверждение. Для расчёта дополнительно заполнены пять флагов. Для передачи — «Принято». Для приёмки — документы «Принято» и долг 0. «Не требуется» допустимо только при обосновании. Тендеры, КП и заказы клиентов 1С с начала года попадают в реестр при каждом «Обновить данные»: клиент, сумма, статус 1С и ответственный берутся из 1С; этап ставится автоматически только там, где он однозначен (КП — «КП», заказ — «Исполнение» или «Приёмка и оплата», проиграно или отменено — «Закрыто без результата», есть следующий документ цепочки — «Закрыто успешно»). Этап, выбранный вручную, не меняется. Если указан связанный заказ 1С и он есть в дебиторке, долг и срок оплаты берутся из 1С.</div></div></section>
@@ -2047,6 +2168,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
     else if (h === "money" && state.view !== "money") { state.view = "money"; renderShell(); load(); }
+    else if (h.split("?")[0] === "suppliers" && (state.view !== "suppliers" || (state.sup && state.sup.hq !== h))) { state.view = "suppliers"; supFromHash(h); renderShell(); load(); }
     else if (metricsView(h) && state.view !== metricsView(h)) { state.view = metricsView(h); renderShell(); load(); }
   });
   start();

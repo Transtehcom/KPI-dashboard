@@ -7,7 +7,7 @@ from . import call_records, demo, employees, manual
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
-from . import b24_sales_register, onec_sales_register
+from . import b24_sales_register, onec_money, onec_sales_register
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -62,6 +62,7 @@ def run(con, config, force_demo=False):
             # чтобы дашборд никогда не видел наполовину обновлённые таблицы
             writes = []  # (источник, таблица, строки, поле даты)
             register = None
+            money_data, money_err = None, None
             b24 = None
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
@@ -124,6 +125,11 @@ def run(con, config, force_demo=False):
                         register = onec_sales_register.fetch(onec, managers)
                     except Exception as e:  # noqa
                         log.append(f"Реестр продаж из 1С не загружен: {e}")
+                    try:  # вкладка «Деньги»: остатки и планы платежей
+                        money_data = onec_money.fetch(onec)
+                    except Exception as e:  # noqa
+                        money_err = f"{type(e).__name__}: {e}"
+                        log.append(f"Деньги из 1С не загружены: {e}")
                     for table, rows in data.items():
                         date_field = next((d for t, d in DATASETS.values() if t == table), None)
                         writes.append(("1С", table, rows, date_field))
@@ -151,6 +157,11 @@ def run(con, config, force_demo=False):
                             replace_rows(con, table, rows, emps=None if table == "crm_deals" else owners, date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
+                        if money_data is not None:
+                            onec_money.store(con, money_data)
+                            log.append(f"1С → деньги: счетов {len(money_data['cash'])}, платежей {len(money_data['plan'])}")
+                        elif money_err:
+                            onec_money.store_error(con, money_err)
                         if register is not None:
                             new, upd = onec_sales_register.upsert(con, register)
                             log.append(f"1С → реестр продаж: новых {new}, обновлено {upd}")

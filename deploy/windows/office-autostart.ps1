@@ -27,8 +27,20 @@ if (-not $mutex.WaitOne(0)) { exit 0 }
 $port = (Get-Content (Join-Path $root "config.json") -Raw -Encoding UTF8 | ConvertFrom-Json).server.port
 if (-not $port) { $port = 8080 }
 
-$py = Join-Path $root "python\python.exe"
-if (-not (Test-Path $py)) { $py = (Get-Command python -ErrorAction Stop).Source }
+# настоящий Python: «python» из WindowsApps — заглушка Магазина (после обновления Windows она отвечает кодом 9009), её пропускаем
+function Find-Python {
+    $cand = @(Join-Path $root "python\python.exe")
+    $cand += @(Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe", "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+               "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object { $_.FullName })
+    $cand += @(Get-Command python -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($c in $cand) {
+        if (-not $c -or -not (Test-Path $c) -or $c -match "\\WindowsApps\\") { continue }
+        & $c --version *> $null
+        if ($LASTEXITCODE -eq 0) { return $c }
+    }
+    throw "Python не найден: установите Python 3 или положите его в папку python\"
+}
+$py = Find-Python
 $ssh = Join-Path $env:SystemRoot "System32\OpenSSH\ssh.exe"
 
 # без обращения к Handle PowerShell не узнает код завершения процесса
