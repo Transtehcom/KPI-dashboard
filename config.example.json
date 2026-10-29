@@ -42,6 +42,8 @@
   ],
   "_workdays_comment": "Рабочие субботы и воскресенья (переносы по производственному календарю). Оба списка обновляйте каждый год.",
   "workdays": [],
+  "_workload_comment": "Вкладка «Загрузка» (app/workload.py): 100% = day_hours часов в день, пн–пт без holidays и дней отсутствия. include_b24_ids — кого учитывать (ID пользователей Битрикс24); пустой список — всех сотрудников из раздела «Сотрудники», у кого указан ID. Отпуска и больничные вносятся там же, в карточке сотрудника. Вебхуку нужны права «Задачи» (task) и «Календарь» (calendar).",
+  "workload": {"day_hours": 9, "weeks": 6, "include_b24_ids": []},
 
   "bitrix24": {
     "_comment": "Входящий вебхук: Битрикс24 → Разработчикам → Другое → Входящий вебхук. Права: crm, telephony, tasks, user, calendar.",
@@ -60,11 +62,12 @@
     "_legacy_tenders_comment": "Необязательно: торги, которые раньше велись в другой воронке. category_id — та воронка; won_stages — стадии исполнения договора (победа); reviewed_lost_stages — проигрыш после рассмотрения заявки. Копии выигранных тендеров (то же название, что в воронке тендеров) пропускаются.",
     "_legacy_tenders_example": { "category_id": 2, "won_stages": ["C2:WON"], "reviewed_lost_stages": ["C2:LOSE"] },
 
-    "_fields_comment": "Коды пользовательских полей (UF_CRM_...). Их видно в настройках полей карточки или через crm.deal.fields / crm.lead.fields / crm.contact.fields / crm.company.fields. contact_is_lpr может быть списком полей (например, галочка «ЛПР» и строка «ЛПР (ФИО)») — информация о ЛПР есть, если заполнено любое.",
+    "_fields_comment": "Коды пользовательских полей (UF_CRM_...). Их видно в настройках полей карточки или через crm.deal.fields / crm.lead.fields / crm.contact.fields / crm.company.fields. contact_is_lpr может быть списком полей (например, галочка «ЛПР» и строка «ЛПР (ФИО)») — информация о ЛПР есть, если заполнено любое. Если задан company_lpr (поле «Ф.И.О. лица, принимающего решение» в карточке компании), ЛПР определяется только по нему — для звонков на компанию, контакт или лид и для лидов воронки; contact_is_lpr и lead_lpr тогда не учитываются. Прочерк, «+», «нет» и подсказка «ФИО лица» заполнением не считаются.",
     "fields": {
       "deal_planned_cost": "UF_CRM_PLANNED_COST",
       "deal_actual_cost": "UF_CRM_ACTUAL_COST",
       "contact_is_lpr": "UF_CRM_IS_LPR",
+      "company_lpr": "UF_CRM_COMPANY_LPR",
       "company_need": "UF_CRM_NEED_IDENTIFIED",
       "company_strategy": "UF_CRM_WORK_STRATEGY",
       "lead_need": "UF_CRM_LEAD_NEED",

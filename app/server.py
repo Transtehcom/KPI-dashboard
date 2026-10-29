@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts
+from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
@@ -24,7 +24,10 @@ from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, de
 
 WEB = os.path.join(ROOT, "web")
 PAGE_HEAD = (b'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
-             b'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>')
+             b'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+             b'<link rel="icon" type="image/png" href="/assets/favicon.png"><link rel="icon" href="/assets/favicon.ico" sizes="any">'
+             b'<link rel="apple-touch-icon" href="/assets/icon-180.png"></head><body>')
+ASSET_TYPES = {".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml"}
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 PLAN_METRICS = {"gross_profit", "revenue"}
 # защита от подбора пароля: не больше LOGIN_MAX_FAILS неудачных попыток за LOGIN_WINDOW секунд
@@ -116,9 +119,10 @@ class App:
 
         def work():
             try:
-                lines = onec_suppliers.fetch(OneC(self.config["onec"], log=lambda *a: None))
+                lines, quotes = onec_suppliers.fetch_all(OneC(self.config["onec"], log=lambda *a: None))
                 with db_lock():
                     onec_suppliers.store(self.con, lines)
+                    onec_suppliers.store_quotes(self.con, quotes)
                     self.con.commit()
             except Exception as e:  # noqa
                 with db_lock():
@@ -280,6 +284,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         if path.endswith(".html"):  # после обновления дашборда браузер не должен показывать старую страницу
             self.send_header("Cache-Control", "no-cache")
+        elif os.path.dirname(path).endswith("assets"):
+            self.send_header("Cache-Control", "public, max-age=86400")
         self.end_headers()
         self.wfile.write(body)
 
@@ -413,6 +419,12 @@ class Handler(BaseHTTPRequestHandler):
         if not u.path.startswith("/api/"):
             if u.path in ("/", "/index.html"):
                 return self.send_file(os.path.join(WEB, "index.html"), "text/html; charset=utf-8")
+            if u.path.startswith("/assets/"):  # шрифты и значок: только файлы из web/assets с разрешёнными расширениями
+                name = os.path.basename(u.path)
+                ctype = ASSET_TYPES.get(os.path.splitext(name)[1].lower())
+                path = os.path.join(WEB, "assets", name)
+                if ctype and os.path.isfile(path):
+                    return self.send_file(path, ctype)
             self.send_response(404)
             self.end_headers()
             return
@@ -514,7 +526,8 @@ class Handler(BaseHTTPRequestHandler):
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
                     if q.get("kind") == "sales":
                         return self.send_json(sales_panel.build(app.con, app.sales_team(), channel=q.get("channel") or "Все",
-                                                                emp=q.get("emp") or "Все"))
+                                                                emp=q.get("emp") or "Все",
+                                                                portal=urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc))
                     if q.get("kind") == "logistics":
                         # очередь — по заявкам окна синхронизации: более старые строки в базе не обновляются
                         since = month_bounds(month_add(current_month(), -app.config.get("sync", {}).get("months_back", 6)))[0]
@@ -537,6 +550,10 @@ class Handler(BaseHTTPRequestHandler):
                     if date_from and date_to and date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
                     return self.send_json(app.calls(me, is_mgr, q, date_from, date_to))
+                if path == "/api/calls-job":  # ход ручной обработки звонков (кнопка «Обработать…» в разделе «Звонки»)
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    return self.send_json({**call_analysis.JOB, "busy": call_records.status()["running"]})
                 if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
                     row = call_records.get(app.con, q.get("id") or "")
                     if not row:
@@ -655,6 +672,16 @@ class Handler(BaseHTTPRequestHandler):
                     if q.get("refresh") or onec_suppliers.is_stale(app.con):  # открытие вкладки обновляет данные из 1С в фоне, если им больше часа
                         app.refresh_suppliers()
                     res = {"period": [date_from, date_to], "meta": onec_suppliers.meta(app.con), "refreshing": app.suppliers_busy.locked()}
+                    if q.get("mode") == "requests":  # «Заявки поставщикам»: предложения из заявок в отдел снабжения
+                        res["mode"] = "requests"
+                        key = onec_suppliers.quote_find_partner(app.con, q.get("partner"), q.get("inn"))
+                        if (q.get("partner") or q.get("inn")) and not key:
+                            res["not_found"] = True
+                        if key:
+                            res.update(onec_suppliers.build_quotes(app.con, key, date_from, date_to, q.get("item") or None))
+                        else:
+                            res["list"] = onec_suppliers.quote_suppliers(app.con, date_from, date_to, q.get("not_bought") == "1")
+                        return self.send_json(res)
                     key = onec_suppliers.find_partner(app.con, q.get("partner"), q.get("inn"))
                     if (q.get("partner") or q.get("inn")) and not key:
                         res["not_found"] = True  # поставщика нет в закупках 1С: страница покажет список, а не пустую карточку
@@ -663,6 +690,10 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to)
                     return self.send_json(res)
+                if path == "/api/workload" and method == "GET":  # вкладка «Загрузка»: руководитель — все, сотрудник — только он сам
+                    portal = urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc
+                    return self.send_json(workload.build(app.con, app.config, logins=None if is_mgr else {me["login"]},
+                                                         portal=portal or None))
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
@@ -715,6 +746,33 @@ class Handler(BaseHTTPRequestHandler):
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
                     return self.send_json({"ok": True})
+                if path == "/api/calls-process" and method == "POST":  # обработать звонок / «всё» / последние N из текущего списка
+                    if not is_mgr:
+                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                    b = self.body()
+                    if b.get("id"):
+                        if not call_records.get(app.con, str(b["id"])):
+                            return self.send_json({"error": "Звонок не найден"}, 404)
+                        ids, force = [str(b["id"])], True  # один звонок — всегда заново
+                    else:
+                        mode = b.get("mode")
+                        if mode not in ("all", "last"):
+                            raise BadRequest("Ожидается mode: all или last")
+                        date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
+                        if not (date_from or date_to) and not q.get("all"):
+                            first, last = month_bounds(month)
+                            date_from, date_to = first.isoformat(), last.isoformat()
+                        with app.lock:
+                            rows = app.calls(me, is_mgr, q, date_from, date_to)["calls"]
+                        rows = [r for r in rows if r["audio"] == "ready"]  # от новых к старым
+                        if mode == "last":
+                            n = int(b.get("n") or 0)
+                            if n not in (20, 50, 100):
+                                raise BadRequest("Ожидается 20, 50 или 100")
+                            rows = rows[:n]
+                        ids, force = [r["id"] for r in rows], False
+                    started, msg = call_analysis.start_job(app.con, app.config, ids, force)
+                    return self.send_json({"ok": started, "message": msg, **call_analysis.JOB})
                 if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
                     b = self.body()
                     if not call_records.get(app.con, str(b.get("id") or "")):

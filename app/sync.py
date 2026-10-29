@@ -3,7 +3,7 @@ import datetime as dt
 import threading
 import traceback
 
-from . import call_records, demo, employees, manual
+from . import call_records, demo, employees, manual, workload
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
@@ -87,6 +87,14 @@ def run(con, config, force_demo=False):
                     status = "error"
                     log.append(f"Ошибка Битрикс24 (данные для KPI): {e}")
                     traceback.print_exc()
+                try:  # открытые задачи для вкладки «Загрузка»: свои сотрудники (workload.members), не только с должностью
+                    wl = workload.members(config)
+                    if wl:
+                        writes.append(("Б24", "workload_tasks", b24.fetch_workload_tasks(wl), None))
+                except Exception as e:  # noqa
+                    status = "error"
+                    log.append(f"Ошибка Битрикс24 (задачи для загрузки): {e}")
+                    traceback.print_exc()
             else:
                 log.append("Битрикс24 не настроен (bitrix24.webhook)")
 
@@ -154,7 +162,8 @@ def run(con, config, force_demo=False):
                             if table in KEEP_UNMAPPED:  # и ответственные не из дашборда («1c:ФИО»)
                                 owners = logins + [r[0] for r in con.execute(
                                     f"SELECT DISTINCT emp FROM {table} WHERE emp LIKE ?", (UNMAPPED + "%",))]
-                            replace_rows(con, table, rows, emps=None if table == "crm_deals" else owners, date_field=date_field,
+                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "workload_tasks") else owners,
+                                         date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
                         if money_data is not None:

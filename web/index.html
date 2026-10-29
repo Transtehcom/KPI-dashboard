@@ -1,6 +1,6 @@
-<title>KPI-ведомость отдела</title>
+<title>TTK | Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Oswald:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 /* Макет: «ведомость» — слева состав команды, справа лист месяца: итог → матрица пунктов KPI → карточки пунктов. */
 :root {
@@ -68,6 +68,8 @@ h2 { font-size: 16px; }
 h3 { font-size: 14px; }
 .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-3); font-weight: 600; }
 
+.sup-t td:first-child, .sup-t td.wrap { white-space: normal; min-width: 220px; max-width: 360px; overflow-wrap: anywhere; line-height: 1.3; }
+.sup-t td { vertical-align: top; }
 /* --- фирменный стиль transtehcom.ru: заголовки Oswald прописными, кнопки без скруглений, полоса индиго → бирюза */
 h1 { font-family: var(--head); font-weight: 600; font-size: 26px; text-transform: uppercase; letter-spacing: .01em; line-height: 1.15; }
 .btn { border-radius: 0; font-weight: 600; }
@@ -195,7 +197,7 @@ table { border-collapse: collapse; width: 100%; }
 .kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .kv div b { display: block; font: 600 15px var(--mono); margin-top: 2px; }
 
-.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }  /* карточки ряда — одной высоты, «Как считается» прижато к низу */
 .card { display: flex; flex-direction: column; }
 .card-h { padding: 14px 16px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; }
 .card-h .meta { font: 500 12px var(--mono); color: var(--fg-3); }
@@ -204,7 +206,8 @@ table { border-collapse: collapse; width: 100%; }
 .card-score { grid-row: 1 / span 2; grid-column: 2; text-align: right; }
 .card-score .p { font: 600 26px/1 var(--mono); letter-spacing: -.02em; }
 .card-score .r { font: 500 12px var(--mono); color: var(--fg-3); margin-top: 4px; }
-.card-b { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 12px; }
+.card-b { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; }
+.card > details.more { margin-top: auto; }
 .comp { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
 .comp .n { font-size: 13px; color: var(--fg); }
 .comp .n .src { font-size: 11px; color: var(--fg-3); margin-left: 4px; white-space: nowrap; }
@@ -361,6 +364,17 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .tabs a { padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); text-decoration: none; white-space: nowrap; }
 .tabs a:hover { color: var(--fg); }
 .tabs a.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
+.proc { position: relative; }
+.proc > summary { list-style: none; cursor: pointer; display: inline-block; }
+.proc > summary::-webkit-details-marker { display: none; }
+.proc > summary::after { content: "▾"; margin-left: 6px; font-size: 11px; }
+.proc[data-busy="1"] > summary { opacity: .5; pointer-events: none; }
+.proc-pop { position: absolute; z-index: 40; right: 0; top: calc(100% + 6px); min-width: 200px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.proc-pop button { text-align: left; padding: 8px 12px; background: none; border: 0; font: 500 13px var(--font); color: var(--fg); cursor: pointer; }
+.proc-pop button:hover { background: var(--surface-2); }
+.proc-pop .sub { padding-left: 26px; }
+.an-proc { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .tab-menu { position: relative; }
 .tab-menu summary { list-style: none; cursor: pointer; padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); white-space: nowrap; }
 .tab-menu summary::-webkit-details-marker { display: none; }
@@ -476,41 +490,142 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
+@font-face { font-family: "Montserrat"; font-weight: 400; font-display: swap; src: url(/assets/montserrat-cyrillic-400-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-weight: 400; font-display: swap; src: url(/assets/montserrat-latin-400-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-weight: 500; font-display: swap; src: url(/assets/montserrat-cyrillic-500-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-weight: 500; font-display: swap; src: url(/assets/montserrat-latin-500-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-weight: 600; font-display: swap; src: url(/assets/montserrat-cyrillic-600-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-weight: 600; font-display: swap; src: url(/assets/montserrat-latin-600-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-weight: 700; font-display: swap; src: url(/assets/montserrat-cyrillic-700-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-weight: 700; font-display: swap; src: url(/assets/montserrat-latin-700-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-weight: 800; font-display: swap; src: url(/assets/montserrat-cyrillic-800-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-weight: 800; font-display: swap; src: url(/assets/montserrat-latin-800-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Oswald"; font-weight: 500 600; font-display: swap; src: url(/assets/oswald-cyrillic-600-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Oswald"; font-weight: 500 600; font-display: swap; src: url(/assets/oswald-latin-600-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* --- оформление по презентациям transtehcom.ru («Металлоконструкции», «Защита от БПЛА»): плакатные заголовки Oswald прописными,
+   градиентные плитки с крупными цифрами (индиго → бирюза), тонкие бирюзовые линии, знак ТХ на фоне */
+:root { --grad: linear-gradient(160deg, #3a4185 0%, #3e6ba8 52%, #4bbbb8 100%); --grad-h: linear-gradient(90deg, #3a4185, #4bbbb8); }
+h1 { font-size: 32px; letter-spacing: .005em; }
+h2 { font-family: var(--head); font-weight: 600; text-transform: uppercase; letter-spacing: .025em; font-size: 18px; }
+.head h1::after { content: ""; display: block; width: 64px; height: 3px; margin-top: 8px; background: var(--grad-h); }
+.panel-h { border-bottom: 1px solid color-mix(in srgb, var(--teal) 38%, transparent); margin-bottom: 0; }
+.panel-h + .panel-b { padding-top: 12px; }
+.stat { background: var(--grad); border: 0; color: #fff; padding: 16px 18px 14px; position: relative; overflow: hidden; }
+.stat .eyebrow { color: rgba(255, 255, 255, .8); }
+.stat .v { font: 600 34px/1.1 var(--head); letter-spacing: .01em; color: #fff !important; margin-top: 8px; }
+.stat .v small { color: rgba(255, 255, 255, .78); font: 600 16px var(--head); }
+.stat .h { color: rgba(255, 255, 255, .85); border-top: 1px solid rgba(255, 255, 255, .32); padding-top: 6px; margin-top: 8px; }
+.stat .v.late, .stat .v[style*="--bad"] { color: #ffd6d1 !important; }
+.tabs { background: transparent; padding: 0; gap: 4px; border-radius: 0; }
+.tabs a, .tab-menu summary { border-radius: 0; padding: 8px 12px; font: 600 14px/1.2 var(--head); text-transform: uppercase; letter-spacing: .05em; color: var(--fg-2); }
+.tabs a:hover, .tab-menu summary:hover, .tab-menu[open] summary { color: var(--accent); }
+.tabs a.on, .tab-menu.on summary { background: transparent; box-shadow: inset 0 -3px 0 var(--teal); color: var(--accent); }
+.tab-menu-pop { border-radius: 0; }
+.tabs .tab-menu-pop a { text-transform: none; font: 500 13px var(--font); letter-spacing: 0; padding: 8px 12px; }
+.tabs .tab-menu-pop a.on { box-shadow: inset 3px 0 0 var(--teal); color: var(--accent); }
+.nav-item.active { box-shadow: inset 3px 0 0 var(--teal); }
+.login form { position: relative; overflow: hidden; padding: 32px 28px 28px; }
+.login form::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--grad-h); }
+.login-title { font-size: 46px; line-height: 1; margin-top: 6px; }
+.login-title::after { content: none !important; }
+.login .brand-sep, .login .brand-app { display: none; }
+.login-slogan { font: 600 15px var(--head); text-transform: uppercase; letter-spacing: .06em; color: var(--teal-ink); margin-top: 6px; }
+body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 600px; height: 400px; z-index: -1; pointer-events: none; opacity: .07;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1306 875'><path fill='%233A4185' d='M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z'/><path fill='%234BBBB8' d='M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z'/></svg>") no-repeat center / contain; }
+:root[data-theme="dark"] body::after { opacity: .1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) body::after { opacity: .1; } }
+@media (max-width: 760px) { body::after { width: 340px; height: 226px; } .stat .v { font-size: 28px; } }
+
 /* --- печать: документ собирается из блока .print-only, всё остальное скрыто */
-@page { size: A4; margin: 14mm 12mm; }
+@page { size: A4; margin: 8mm 10mm; }
 @media print {
+  body::after { display: none; }
+  .stat { background: none !important; color: #000; }
+  .stat .v, .stat .eyebrow, .stat .h { color: #000 !important; }
   :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
     --bg: #fff; --surface: #fff; --surface-2: #f1f3f3; --line: #c9d0d0; --line-strong: #aab4b4; --fg: #000; --fg-2: #2b2b2b; --fg-3: #555;
     --funnel: #3a4185; --funnel-line: #c4c7de; --funnel-soft: #eceef8; --shadow: none; color-scheme: light; }
   .top::after { display: none; }
   .pr-head h1 { font-family: var(--head); text-transform: uppercase; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  body { background: #fff; font-size: 11pt; }
+  body { background: #fff; font-size: 10pt; }
   .top, .side, .toast, .no-print { display: none !important; }
   .print-only { display: block !important; }
   .shell { display: block; }
   .main { padding: 0; max-width: none; gap: 0; }
-  .pr-head h1 { font-size: 18pt; margin: 0 0 8pt; }
-  .pr-sec + .pr-sec { break-before: page; }
-  .pr-sec h2 { font-size: 14pt; margin: 14pt 0 8pt; }
-  .pr-sec h3 { font-size: 11pt; margin: 14pt 0 5pt; }
+  .pr-head h1 { font-size: 16pt; margin: 0 0 6pt; }
+  /* разделы идут подряд, без принудительного переноса на новую страницу: меньше полупустых листов */
+  .pr-sec h2 { font-size: 12pt; margin: 8pt 0 4pt; break-after: avoid; }
+  .pr-sec h3 { font-size: 10pt; margin: 5pt 0 2pt; break-after: avoid; }
+  .pr-sec .sm { margin: 3pt 0 0; }
+  .pr-sec .fn { zoom: .58; }
+  .pr-sec .fn-legend { font-size: 9px; padding: 4px 8px; }
+  /* расписание: сотрудники подряд в одну колонку — две колонки с неразрываемыми блоками в печати теряли содержимое */
+  .pr-person h3 { margin-top: 8pt; }
+  .pr-calls { break-inside: avoid; }
+  .pr-sec .cf-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6pt 12pt; }
+  .pr-sec .cf-p h3 { font-size: 9.5pt; margin: 0; }
+  .pr-sec .funnel .row { font-size: 8pt; grid-template-columns: minmax(0, 80pt) minmax(0, 1fr) 26px; gap: 4pt; }
+  .pr-sec .funnel .row b { font-size: 8pt; }
   .pr-sec .panel { box-shadow: none; break-inside: avoid; }
   .pr-sec .panel-h { display: none; }
   .pr-sec .fn-row { grid-template-columns: minmax(0, 38%) minmax(0, 1fr); cursor: default; break-inside: avoid; }
   .pr-sec .fn-row.sel { background: none; }
   .pr-sec .cf-p { break-inside: avoid; }
   .pr-sec .fn-row.sel .fn-lab .t { font-weight: 400; color: var(--fg-2); }
-  table.pr { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
-  table.pr th, table.pr td { border: 0.5pt solid #9aa3a3; padding: 3pt 5pt; text-align: left; vertical-align: top; }
+  table.pr { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  table.pr th, table.pr td { border: 0.5pt solid #9aa3a3; padding: 1pt 4pt; text-align: left; vertical-align: top; }
   table.pr th { background: #eef1f1; font-weight: 600; }
   table.pr .n { text-align: right; white-space: nowrap; }
   table.pr thead { display: table-header-group; }
   table.pr tr { break-inside: avoid; }
   table.pr .tot td { font-weight: 600; background: #f6f8f8; }
-  table.pr-params { width: auto; min-width: 60%; }
-  table.pr-params th { width: 150pt; }
+  /* расписание: все строки остаются, но столбцы подобраны так, чтобы запись занимала одну строку, а не две */
+  table.pr-cal { table-layout: fixed; }
+  table.pr-cal th:nth-child(1) { width: 11%; }
+  table.pr-cal th:nth-child(2) { width: 47%; }
+  table.pr-cal th:nth-child(3) { width: 42%; }
+  table.pr-cal td { font-size: 8pt; }
+  table.pr-cal td:nth-child(3) { font-size: 7.5pt; }
+  table.pr-stages { table-layout: fixed; }
+  table.pr-stages th:nth-child(1) { width: 15%; }
+  table.pr-stages th:nth-child(2) { width: 49%; }
+  table.pr-stages td:first-child { overflow-wrap: anywhere; hyphens: auto; }
+  table.pr-stages td, table.pr-stages th { padding-top: .5pt; padding-bottom: .5pt; }
+  .pr-sec .cf-p .muted { font-size: 7pt; line-height: 1.2; }
+  table.pr-stages th.n { white-space: normal; }
+  table.pr-params { width: 100%; }
+  table.pr-params th { width: 17%; white-space: nowrap; }
+  table.pr-params { font-size: 8pt; }
+  .pr-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12pt; break-inside: avoid; }
+  .pr-row3 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0 12pt; break-inside: avoid; }
+  .pr-row3 .pr-sec { margin: 0; }
+  .pr-row3 .cf-grid { grid-template-columns: minmax(0, 1fr); }
+  .pr-row3 .pr-calls h2 { font-size: 10pt; }
+  .pr-row3 .cf-p .muted { display: none; }
+  .pr-row3 .cf-p { gap: 2pt; }
+  .pr-row3 .funnel .row { font-size: 7.5pt; }
+  .pr-duo .fn { zoom: .42; }
+  table.pr-cal td, table.pr-cal th { padding-top: .5pt; padding-bottom: .5pt; }
+  .pr-g h2 { font-size: 10pt; margin: 8pt 0 3pt; }
+  table.pr-stages { font-size: 7.5pt; }
+  table.pr-stages td, table.pr-stages th { line-height: 1.2; }
+  .pr-duo .fn-legend { display: none; }
   .pr-sec .sm, table.pr .sm { font-size: 8.5pt; color: #444; }
 }
+  /* вкладка «Загрузка» */
+  .wl-table td.wl { min-width: 54px; }
+  .wl-ok { background: var(--good-soft); }
+  .wl-warn { background: var(--warn-soft); }
+  .wl-bad { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+  .wl-none { color: var(--fg-3); }
+  .wl-row { cursor: pointer; }
+  .wl-row:hover td { background: var(--surface-2); }
+  .wl-row.open td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .wl-detail > td { background: var(--surface-2); padding: 8px 12px; }
+  .wl-flag { color: var(--bad); }
+  .wl-key { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--line); vertical-align: -2px; }
 </style>
 
 <div id="root"></div>
@@ -617,7 +732,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   // ---------- вход
   function renderLogin() {
     root.innerHTML = `<div class="login"><form class="panel" id="loginForm">
-      <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span></div>
+      <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
+      <div><h1 class="login-title">Дашборд</h1><div class="login-slogan">С нами строят будущее</div></div>
       <p class="muted small" style="margin:0">Войдите под своей учётной записью. Сотрудник видит свой дашборд, руководитель — всю команду.</p>
       <label for="lg">Логин<input id="lg" type="text" autocomplete="username" required></label>
       <label for="pw">Пароль<input id="pw" type="password" autocomplete="current-password" required></label>
@@ -639,6 +755,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
     if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
+    else if (h === "workload" && !PREVIEW) { state.view = "workload"; if (!isMgr) state.login = b.me.login; }
     else if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
     else if (h === "money" && !PREVIEW) { state.view = "money"; }
@@ -683,14 +800,14 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   function renderShell() {
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
-    const noSide = ["funnel", "staff", "calls", "money", "suppliers"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
+    const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
-        <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">KPI-ведомость</span><small>ОП и ОС</small></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<a href="#suppliers" data-tab="suppliers" class="${state.view === "suppliers" ? "on" : ""}">Поставщики</a>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${PREVIEW ? "" : `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -707,8 +824,12 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       ev.preventDefault();
       if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
+      else if (a.dataset.tab === "workload") { state.view = "workload"; location.hash = "workload"; }
       else if (a.dataset.tab === "money") { state.view = "money"; location.hash = "money"; }
-      else if (a.dataset.tab === "suppliers") { state.view = "suppliers"; state.sup = { partner: "", inn: "", item: "", date_from: "", date_to: "", hq: "suppliers" }; location.hash = "suppliers"; }
+      else if (a.dataset.tab === "suppliers") {
+        const req = a.dataset.mode === "requests", h = req ? "suppliers?mode=requests" : "suppliers";
+        state.view = "suppliers"; state.sup = { partner: "", inn: "", item: "", date_from: "", date_to: "", hq: h, mode: req ? "requests" : "", size: (state.sup || {}).size, page: 0 }; location.hash = h;
+      }
       else if (a.dataset.tab === "calls") { state.view = "calls"; location.hash = "calls"; }
       else if (METRICS[a.dataset.tab]) { state.view = a.dataset.tab; location.hash = METRICS[a.dataset.tab].hash; }
       else if (isMgr) { state.view = "team"; location.hash = "team"; }
@@ -763,6 +884,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       return;
     }
     if (state.view === "calls") { loadCalls(); return; }
+    if (state.view === "workload") { loadWorkload(); return; }
     if (state.view === "money") { loadMoney(); return; }
     if (state.view === "suppliers") { loadSuppliers(); return; }
     if (METRICS[state.view]) { loadMetrics(); return; }
@@ -1054,7 +1176,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   // ---------- звонки: записи разговоров и журнал прослушиваний
   const DIR = { out: "Исходящий", in: "Входящий" };
   // раздел «Метрики» (только руководителю): вид → адрес и страница
-  const METRICS = { "m-sales": { hash: "metrics-sales", title: "Отдел продаж", kind: "sales" },
+  const METRICS = { "m-sales": { hash: "metrics-sales", title: "Продажи", kind: "sales" },
                     "m-supply": { hash: "metrics-supply", title: "Снабжение", kind: "supply" },
                     "m-logistics": { hash: "metrics-logistics", title: "Логистика", kind: "logistics" } };
   const metricsView = (h) => Object.keys(METRICS).find((v) => METRICS[v].hash === h);
@@ -1064,8 +1186,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   let anWhen = "разбор позже";
   const anCell = (c) => {
     const a = c.analysis;
-    if (!a) return c.transcript === "ready" ? `<span class="muted small">${anWhen}</span>` : `<span class="muted">—</span>`;
-    return `<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}${a.secretary ? `<span class="an-flag warn" title="${a.secretary_manual ? "Отметил руководитель" : "Определил Claude"}: разговор только с секретарём — в KPI не результативный">секретарь</span>` : ""}</span>`;
+    const mgr = state.boot.me.role === "manager" && c.audio === "ready";
+    const proc = (label, title) => mgr ? `<button class="btn ghost an-proc" type="button" data-proc="${esc(c.id)}" title="${title}">${label}</button>` : "";
+    if (!a) return c.transcript === "ready" ? `<span class="muted small">${anWhen}</span>${proc("Обработать", "Расшифровать (если нужно) и разобрать звонок сейчас")}`
+      : c.audio === "ready" ? proc("Обработать", "Расшифровать и разобрать звонок сейчас") || `<span class="muted">—</span>` : `<span class="muted">—</span>`;
+    return `${proc("↻", "Обработать заново").replace("an-proc", "an-proc re")}<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}${a.secretary ? `<span class="an-flag warn" title="${a.secretary_manual ? "Отметил руководитель" : "Определил Claude"}: разговор только с секретарём — в KPI не результативный">секретарь</span>` : ""}</span>`;
   };
   function analysisHtml(a, id) {  // полный разбор над расшифровкой; id — звонок (для отметки «секретарь»)
     if (!a) return `<div class="muted small">Разбора пока нет: он появится после расшифровки, в фоне.</div>`;
@@ -1105,9 +1230,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       const login = state.cLogin ?? "";
       const deal = (state.cDeal || "").trim();
       if (!state.cPer) state.cPer = { mode: "month", month: state.boot.current_month };
+      if (state.cPg) state.cPg.page = 0;  // новые фильтры или данные — снова с первой страницы
       const [a, b] = periodRange(state.cPer);
       const per = a || b ? `&date_from=${a}&date_to=${b}` : "&all=1";
-      const d = await api(`/api/calls?login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`);
+      state.cQs = `login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`;
+      const d = await api(`/api/calls?${state.cQs}`);
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
       renderCalls(d, log);
     } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
@@ -1132,10 +1259,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const SORT_KEYS = { dt: (c) => c.dt, emp: (c) => c.emp_name || "", direction: (c) => DIR[c.direction] || "", duration: (c) => c.duration || 0 };
     const cmp = (a, b) => (typeof a === "number" ? a - b : String(a).localeCompare(String(b), "ru"));
     const calls = [...d.calls].sort((a, b) => sort.dir * cmp(SORT_KEYS[sort.key](a), SORT_KEYS[sort.key](b)) || cmp(b.dt, a.dt));
+    const cpg = (state.cPg = state.cPg || {}), pgc = pgInfo(cpg, calls.length);
+    const needs = (c) => c.audio === "ready" && (!c.analysis || c.transcript !== "ready");  // звонок ждёт расшифровки или разбора
+    const todoAll = d.calls.filter(needs).length;
     const th = (key, label) => `<th aria-sort="${sort.key === key ? (sort.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-h${sort.key === key ? " on" : ""}" data-sort="${key}" title="Сортировать">${label}<span aria-hidden="true">${sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</span></button></th>`;
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
-        <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div></div>
+        <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div>
+        ${isMgr && d.calls.length ? `<div style="margin-left:auto;text-align:right"><details class="proc" id="cProc"><summary class="btn">Обработать…</summary><div class="proc-pop">
+          <button type="button" data-batch="all">Всё <span class="muted small">· ${nf(todoAll)} к обработке</span></button>
+          <button type="button" id="cLastTog" aria-expanded="false">Последние… ▸</button>
+          ${[20, 50, 100].map((n) => `<button type="button" class="sub" data-batch="last" data-n="${n}" hidden>${n} звонков</button>`).join("")}
+        </div></details><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
       <section class="panel"><div class="panel-h"><div class="filters">
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
@@ -1143,8 +1278,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form>
           <button class="btn" type="button" id="cReset" ${callsFiltered() ? "" : "disabled"}>Сбросить фильтры</button></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
+        ${d.calls.length ? `<div class="panel-b" style="padding-bottom:0">${pgHtml(cpg, calls.length, "звонков")}</div>` : ""}
         ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
-          ${calls.map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+          ${calls.slice(pgc.from, pgc.to).map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="an-cell">${anCell(c)}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
@@ -1162,7 +1298,50 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     main.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
       const key = b.dataset.sort;  // первый щелчок: дата и длительность — по убыванию, текст — по алфавиту
       state.cSort = sort.key === key ? { key, dir: -sort.dir } : { key, dir: key === "dt" || key === "duration" ? -1 : 1 };
+      cpg.page = 0;
       renderCalls(d, log);
+    }));
+    pgBind(main, cpg, () => renderCalls(d, log));
+    // ручная обработка: один звонок, «Всё» или последние N из текущего списка (по периоду и фильтрам)
+    const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
+    const startProc = async (body, ask) => {
+      if (ask && !confirm(ask)) return;
+      try {
+        const r = await api(`/api/calls-process?${state.cQs}`, body);
+        toast(r.message);
+        if (r.ok) watchJob(); else if (job) job.textContent = r.message;
+      } catch (e) { if (e.message !== "auth") toast(e.message); }
+    };
+    const watchJob = async () => {
+      clearTimeout(state.cJobT);
+      if (state.view !== "calls") return;
+      let st;
+      try { st = await api("/api/calls-job"); } catch (e) { return; }
+      const el = document.getElementById("cJob"), pr = document.getElementById("cProc");
+      if (pr) pr.dataset.busy = st.running ? "1" : "";
+      if (st.running) {
+        if (el) el.textContent = `${st.message} · готово ${st.done}${st.failed ? `, ошибок ${st.failed}` : ""} из ${st.total}`;
+        state.cJobT = setTimeout(watchJob, 3000);
+      } else if (state.cJobWas) {
+        state.cJobWas = false; toast(st.message); loadCalls();
+      } else if (el && st.finished && st.message) el.textContent = st.message;
+      if (st.running) state.cJobWas = true;
+    };
+    if (isMgr) watchJob();
+    main.querySelectorAll("[data-proc]").forEach((btn) => btn.addEventListener("click", () => startProc({ id: btn.dataset.proc })));
+    const tog = document.getElementById("cLastTog");
+    if (tog) tog.addEventListener("click", () => {
+      const open = tog.getAttribute("aria-expanded") !== "true";
+      tog.setAttribute("aria-expanded", open); tog.textContent = open ? "Последние… ▾" : "Последние… ▸";
+      main.querySelectorAll(".proc-pop .sub").forEach((b) => { b.hidden = !open; });
+    });
+    main.querySelectorAll("[data-batch]").forEach((btn) => btn.addEventListener("click", () => {
+      if (proc) proc.open = false;
+      const all = btn.dataset.batch === "all", n = +btn.dataset.n || 0;
+      const count = all ? todoAll : [...d.calls].filter((c) => c.audio === "ready").sort((a, b) => cmp(b.dt, a.dt)).slice(0, n).filter(needs).length;
+      if (!count) { toast("Выбранные звонки уже обработаны"); return; }
+      startProc(all ? { mode: "all" } : { mode: "last", n },
+        `Обработать звонков: ${count}? Расшифровка идёт на этом компьютере, разбор — через Claude и расходует лимит подписки.`);
     }));
     bindPeriod("c", () => state.cPer, (v) => { state.cPer = v; }, loadCalls);
     const sel = document.getElementById("cLogin");
@@ -1283,12 +1462,13 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   const supQuery = (h) => { const i = h.indexOf("?"); return Object.fromEntries(new URLSearchParams(i < 0 ? "" : h.slice(i + 1))); };
   function supFromHash(h) {  // ссылка из карточки поставщика: #suppliers?inn=… или ?partner=…
     const q = supQuery(h);
-    state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h };
+    state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h, mode: q.mode === "requests" ? "requests" : "" };
   }
   async function loadSuppliers(refresh) {
     clearTimeout(supTimer);
     const s = (state.sup = state.sup || {}), p = new URLSearchParams();
     for (const k of ["partner", "inn", "item", "date_from", "date_to"]) if (s[k]) p.set(k, s[k]);
+    if (s.mode === "requests") { p.set("mode", "requests"); if (s.notBought) p.set("not_bought", "1"); }
     if (refresh) p.set("refresh", "1");
     try {
       const d = await api("/api/suppliers?" + p);
@@ -1298,21 +1478,29 @@ details.more[open] > summary::before { transform: rotate(90deg); }
   }
   function renderSuppliers(d) {
     const s = state.sup, M = d.meta || {}, T = d.tiles, pr = (v) => (v == null ? "—" : nf(v, 2) + " ₽");
-    const pc = (v) => (v == null ? "—" : `<span style="color:var(--${v > 0 ? "bad" : v < 0 ? "good" : "muted"})">${v > 0 ? "+" : ""}${nf(v * 100, 1)} %</span>`);
+    const pc = (v) => {  // изменение цены: чёрные цифры на бледном красном (рост) или зелёном (снижение) квадрате; ноль — без заливки
+      if (v == null) return "—";
+      const t = `${v > 0 ? "+" : ""}${nf(v * 100, 1)} %`, c = Math.round(v * 1000) > 0 ? "bad" : Math.round(v * 1000) < 0 ? "good" : "";
+      return c ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;color:#111;background:color-mix(in srgb, var(--${c}) 20%, transparent)">${t}</span>` : `<span style="color:var(--muted)">${t}</span>`;
+    };
     const day = (v) => (v ? ruDay(v.slice(0, 10)) : "—");
     const when = (v) => (v ? ruDay(v.slice(0, 10)) + " " + v.slice(11, 16) : "—");
-    const head = `<section class="panel"><div class="panel-h"><h2>${d.partner ? esc(d.partner.name) : "Закупки у поставщиков"}</h2>
+    const isReq = d.mode === "requests";
+    const head = `<section class="panel"><div class="panel-h"><h2>${d.partner ? esc(d.partner.name) : isReq ? "Заявки поставщикам" : "Закупки у поставщиков"}</h2>
         <div class="sp-add" style="gap:8px;align-items:center">${d.partner ? `<button class="btn" id="supBack" type="button">← Все поставщики</button>` : ""}
         <label class="small">Период с <input type="date" id="supFrom" value="${d.period[0]}"></label><label class="small">по <input type="date" id="supTo" value="${d.period[1]}"></label>
         <button class="btn primary" id="supRefresh" type="button" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button></div>
-        <span class="muted small">Из 1С: ${M.synced_at ? "загружено " + when(M.synced_at) : "ещё не загружено"} · закупки = поступления минус возвраты, цены и суммы без НДС (OData — копия базы за прошлый день)</span></div>
+        <span class="muted small">Из 1С: ${M.synced_at ? "загружено " + when(M.synced_at) : "ещё не загружено"} · ${isReq ? "заявки в отдел снабжения со статусом «Отработана»; цены — как внёс снабженец (могут быть с НДС)" : "закупки = поступления минус возвраты, цены и суммы без НДС"} (OData — копия базы за прошлый день)</span></div>
         ${M.error ? `<div class="panel-b" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(M.error)}. Показаны данные последней успешной загрузки${M.synced_at ? " (" + when(M.synced_at) + ")" : ""}.</div>` : ""}
         ${!M.synced_at && !d.refreshing ? `<div class="panel-b">Данных из 1С ещё нет — нажмите «Обновить из 1С».</div>` : ""}
         ${d.not_found ? `<div class="panel-b">Поставщик из ссылки не найден в закупках 1С${s.inn ? " (ИНН " + esc(s.inn) + ")" : ""} — показан общий список.</div>` : ""}</section>`;
     let body = "";
-    if (d.list) {
-      body = `<section class="panel"><div class="panel-h"><h2>Поставщики</h2><span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${d.list.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Закупки, ₽</th><th class="n">Позиций</th><th class="n">Поступлений</th><th>Последняя закупка</th></tr></thead><tbody>
-        ${d.list.map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.amount, 2)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.docs)}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
+    if (isReq) {
+      body = supRequestsBody(d, { pc, day, pr });
+    } else if (d.list) {
+      const pg = supPageInfo(d.list.length);
+      body = `<section class="panel"><div class="panel-h"><h2>Поставщики</h2><span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Закупки, ₽</th><th class="n">Позиций</th><th class="n">Поступлений</th><th>Последняя закупка</th></tr></thead><tbody>
+        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.amount, 2)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.docs)}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
     } else {
       const it = d.item;
       body = `<section class="stats">
@@ -1321,7 +1509,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
         <div class="panel stat"><div class="eyebrow">Позиций с ростом цены</div><div class="v">${nf(T.growth)}</div><div class="h">последняя цена выше первой за период</div></div>
         <div class="panel stat"><div class="eyebrow">Позиций без альтернатив</div><div class="v">${nf(T.no_alt)}</div><div class="h">других поставщиков за период нет</div></div></section>
         ${d.foreign_lines ? `<div class="muted small">Строки в иностранной валюте (${nf(d.foreign_lines)}) в суммы и сравнение цен не входят.</div>` : ""}
-        <section class="panel"><div class="panel-h"><h2>Номенклатура и цены</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу = сумма / количество</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Объём</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средневзв. цена, ₽</th><th class="n">Изменение</th><th class="n">Закупки, ₽</th><th>Последняя закупка</th><th class="n">Альтернатив</th></tr></thead><tbody>
+        <section class="panel"><div class="panel-h"><h2>Номенклатура и цены</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу = сумма / количество</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Объём</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средневзв. цена, ₽</th><th class="n">Изменение</th><th class="n">Закупки, ₽</th><th>Последняя закупка</th><th class="n">Альтернатив</th></tr></thead><tbody>
         ${d.items.map((x) => `<tr class="mrow${it && it.key === x.key ? " on" : ""}" data-item="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.item)}</td><td>${esc(x.unit || "—")}</td><td class="n">${nf(x.qty, 2)}</td><td class="n">${nf(x.first, 2)}</td><td class="n">${nf(x.last, 2)}</td><td class="n">${nf(x.avg, 2)}</td><td class="n">${pc(x.change)}</td><td class="n">${nf(x.amount, 2)}</td><td>${day(x.last_date)}</td><td class="n">${x.alternatives ? nf(x.alternatives) : `<span class="muted">нет</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
       if (it) {
         const dyn = d.dynamics || [];
@@ -1333,12 +1521,12 @@ details.more[open] > summary::before { transform: rotate(90deg); }
             ${dyn.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.price)}" r="3.5" fill="var(--accent,#4BBBB8)"/><text x="${X(i)}" y="${Y(x.price) - 8}" font-size="11" text-anchor="middle" fill="currentColor">${nf(x.price, 2)}</text><text x="${X(i)}" y="${H - 10}" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">${x.month.slice(5)}.${x.month.slice(2, 4)}</text>`).join("")}</svg>`;
         }
         body += `<section class="panel"><div class="panel-h"><h2>${esc(it.item)}</h2><span class="muted small">динамика средневзвешенной цены по месяцам, ₽/${esc(it.unit || "ед.")}</span></div><div class="panel-b">${chart}</div></section>
-          <section class="panel"><div class="panel-h"><h2>Альтернативы</h2><span class="muted small">другие поставщики этой позиции (та же единица) за период · цены — повод запросить новое КП, наличие и актуальную цену нужно подтвердить</span></div><div class="panel-b">${d.alternatives && d.alternatives.length ? `<table class="mt"><thead><tr><th>Поставщик</th><th class="n">Последняя цена, ₽</th><th class="n">К текущему</th><th>Дата</th><th class="n">Объём</th></tr></thead><tbody>
+          <section class="panel"><div class="panel-h"><h2>Альтернативы</h2><span class="muted small">другие поставщики этой позиции (та же единица) за период · цены — повод запросить новое КП, наличие и актуальную цену нужно подтвердить</span></div><div class="panel-b">${d.alternatives && d.alternatives.length ? `<table class="mt sup-t"><thead><tr><th>Поставщик</th><th class="n">Последняя цена, ₽</th><th class="n">К текущему</th><th>Дата</th><th class="n">Объём</th></tr></thead><tbody>
           ${d.alternatives.map((a) => `<tr class="mrow" data-sup="${esc(a.key)}" style="cursor:pointer"><td>${esc(a.name)}</td><td class="n">${nf(a.last, 2)}</td><td class="n">${a.last != null && it.last ? pc(a.last / it.last - 1) : "—"}</td><td>${day(a.last_date)}</td><td class="n">${nf(a.qty, 2)}</td></tr>`).join("")}</tbody></table>` : `<span class="muted">Других поставщиков этой позиции за период нет</span>`}</div></section>`;
       }
       const hist = d.history.slice(0, 300);
-      body += `<section class="panel"><div class="panel-h"><h2>История закупок${it ? " — " + esc(it.item) : ""}</h2><span class="muted small">документы 1С: номер поступления или возврата${d.history.length > 300 ? " · показаны последние 300 строк" : ""}</span></div><div class="panel-b">${hist.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Дата</th><th>Документ</th><th>Номенклатура</th><th>Ед.</th><th class="n">Кол-во</th><th class="n">Цена, ₽</th><th class="n">Сумма, ₽</th></tr></thead><tbody>
-        ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${r.kind === "ret" ? "Возврат " : "Поступление "}${esc(r.doc)}</td><td>${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.qty, 2)}</td><td class="n">${nf(r.price, 2)}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.amount, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
+      body += `<section class="panel"><div class="panel-h"><h2>История закупок${it ? " — " + esc(it.item) : ""}</h2><span class="muted small">документы 1С: номер поступления или возврата${d.history.length > 300 ? " · показаны последние 300 строк" : ""}</span></div><div class="panel-b">${hist.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Дата</th><th>Документ</th><th>Номенклатура</th><th>Ед.</th><th class="n">Кол-во</th><th class="n">Цена, ₽</th><th class="n">Сумма, ₽</th></tr></thead><tbody>
+        ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${r.kind === "ret" ? "Возврат " : "Поступление "}${esc(r.doc)}</td><td class="wrap">${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.qty, 2)}</td><td class="n">${nf(r.price, 2)}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.amount, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
     }
     const main = document.getElementById("main");
     main.innerHTML = head + body;
@@ -1347,10 +1535,110 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     main.querySelectorAll("[data-item]").forEach((r) => r.addEventListener("click", () => go({ item: state.sup.item === r.dataset.item ? "" : r.dataset.item })));
     const back = document.getElementById("supBack");
     if (back) back.addEventListener("click", () => go({ partner: "", inn: "", item: "" }));
-    document.getElementById("supFrom").addEventListener("change", (e) => go({ date_from: e.target.value }));
-    document.getElementById("supTo").addEventListener("change", (e) => go({ date_to: e.target.value }));
+    document.getElementById("supFrom").addEventListener("change", (e) => go({ date_from: e.target.value, page: 0 }));
+    document.getElementById("supTo").addEventListener("change", (e) => go({ date_to: e.target.value, page: 0 }));
     document.getElementById("supRefresh").addEventListener("click", () => loadSuppliers(true));
+    const nb = document.getElementById("supNotBought");
+    if (nb) nb.addEventListener("change", (e) => go({ notBought: e.target.checked, page: 0 }));
+    pgBind(main, state.sup, loadSuppliers);
   }
+  // постраничный показ списков: по 20 / 50 / 100 строк, выбор запоминается в браузере и общий для всех списков.
+  // st — объект состояния списка {size, page}; pgBind после отрисовки подключает выбор размера и кнопки «Назад / Далее»
+  function pgInfo(st, total) {
+    if (!st.size) { try { st.size = Number(localStorage.getItem("kpi_list_size")) || 20; } catch (e) { st.size = 20; } }
+    if (![20, 50, 100].includes(st.size)) st.size = 20;
+    const pages = Math.max(1, Math.ceil(total / st.size));
+    st.page = Math.min(Math.max(0, st.page || 0), pages - 1);
+    return { size: st.size, pages, page: st.page, from: st.page * st.size, to: Math.min(total, st.page * st.size + st.size) };
+  }
+  function pgHtml(st, total, noun) {
+    const p = pgInfo(st, total);
+    return `<div class="sp-pager" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0"><label class="small">Показывать по <select class="pg-size">${[20, 50, 100].map((n) => `<option ${n === p.size ? "selected" : ""}>${n}</option>`).join("")}</select> ${noun}</label>
+      <span class="muted small">${total ? `${p.from + 1}–${p.to} из ${nf(total)}` : "нет данных"}</span>
+      <button class="btn" type="button" data-pg="-1" ${p.page === 0 ? "disabled" : ""}>← Назад</button><button class="btn" type="button" data-pg="1" ${p.page >= p.pages - 1 ? "disabled" : ""}>Далее →</button></div>`;
+  }
+  function pgBind(root, st, again) {
+    root.querySelectorAll(".pg-size").forEach((sel) => sel.addEventListener("change", () => {
+      try { localStorage.setItem("kpi_list_size", sel.value); } catch (e) { /* без сохранения выбора */ }
+      st.size = Number(sel.value); st.page = 0; again();
+    }));
+    root.querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { st.page = (st.page || 0) + Number(b.dataset.pg); again(); }));
+  }
+  const supPageInfo = (total) => pgInfo(state.sup, total);
+  const supPagerHtml = (total) => pgHtml(state.sup, total, "поставщиков");
+  // «Заявки поставщикам»: предложения поставщиков из заявок в отдел снабжения (статус «Отработана»), оформление как у закупок
+  function supChart(dyn) {
+    if (!dyn || dyn.length < 2) return `<span class="muted">Для динамики нужны предложения минимум в двух месяцах</span>`;
+    const W = 520, H = 170, pad = 34, lo = Math.min(...dyn.map((x) => x.price)), hi = Math.max(...dyn.map((x) => x.price)), span = hi - lo || 1;
+    const X = (i) => pad + (i * (W - 2 * pad)) / (dyn.length - 1), Y = (v) => H - pad - ((v - lo) / span) * (H - 2 * pad);
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px" role="img" aria-label="Динамика цены"><polyline fill="none" stroke="var(--accent,#4BBBB8)" stroke-width="2" points="${dyn.map((x, i) => X(i) + "," + Y(x.price)).join(" ")}"/>
+      ${dyn.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.price)}" r="3.5" fill="var(--accent,#4BBBB8)"/><text x="${X(i)}" y="${Y(x.price) - 8}" font-size="11" text-anchor="middle" fill="currentColor">${nf(x.price, 2)}</text><text x="${X(i)}" y="${H - 10}" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">${x.month.slice(5)}.${x.month.slice(2, 4)}</text>`).join("")}</svg>`;
+  }
+  function supRequestsBody(d, { pc, day }) {
+    const mark = (r) => [r.best ? "лучшая цена" : "", r.chosen ? "выбран" : ""].filter(Boolean).join(" · ") || "—";
+    if (d.list) {
+      const pg = supPageInfo(d.list.length);
+      return `<section class="panel"><div class="panel-h"><h2>Поставщики в заявках</h2><label class="small"><input type="checkbox" id="supNotBought" ${state.sup.notBought ? "checked" : ""}> только те, у кого не было закупок</label>
+        <span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Заявок</th><th class="n">Позиций</th><th class="n">Ответил ценой</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Закупки</th><th>Последняя заявка</th></tr></thead><tbody>
+        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.requests)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.priced)}</td><td class="n">${nf(x.best)}</td><td class="n">${nf(x.chosen)}</td><td>${x.bought ? "были" : `<span class="muted">не было</span>`}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">Заявок за период нет</span>`}</div></section>`;
+    }
+    const T = d.tiles, it = d.item;
+    let html = `${d.partner && d.partner.bought === false ? `<div class="muted small">Закупок у этого поставщика в 1С не было — он только в заявках.</div>` : ""}
+      <section class="stats">
+        <div class="panel stat"><div class="eyebrow">Заявок с участием</div><div class="v">${nf(T.requests)}</div><div class="h">со статусом «Отработана»</div></div>
+        <div class="panel stat"><div class="eyebrow">Позиций с ценой</div><div class="v">${nf(T.items)}</div></div>
+        <div class="panel stat"><div class="eyebrow">Лучшая цена</div><div class="v">${nf(T.best)}</div><div class="h">строк заявок, где его цена минимальная</div></div>
+        <div class="panel stat"><div class="eyebrow">Выбран поставщиком</div><div class="v">${nf(T.chosen)}</div><div class="h">строк заявок</div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Номенклатура и предложения</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу, как внёс снабженец</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Заявок</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средняя, ₽</th><th class="n">Мин., ₽</th><th class="n">Изменение</th><th class="n">Срок, дн.</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Последний ответ</th><th class="n">Альтернатив</th></tr></thead><tbody>
+        ${d.items.map((x) => `<tr class="mrow${it && it.key === x.key ? " on" : ""}" data-item="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.item)}</td><td>${esc(x.unit || "—")}</td><td class="n">${nf(x.requests)}</td><td class="n">${nf(x.first, 2)}</td><td class="n">${nf(x.last, 2)}</td><td class="n">${nf(x.avg, 2)}</td><td class="n">${nf(x.min, 2)}</td><td class="n">${pc(x.change)}</td><td class="n">${x.term != null ? nf(x.term) : "—"}</td><td class="n">${nf(x.best)}</td><td class="n">${nf(x.chosen)}</td><td>${day(x.last_date)}</td><td class="n">${x.alternatives ? nf(x.alternatives) : `<span class="muted">нет</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Заявок за период нет</span>`}</div></section>`;
+    if (it) {
+      html += `<section class="panel"><div class="panel-h"><h2>${esc(it.item)}</h2><span class="muted small">динамика средней цены предложений по месяцам, ₽/${esc(it.unit || "ед.")}</span></div><div class="panel-b">${supChart(d.dynamics)}</div></section>
+        <section class="panel"><div class="panel-h"><h2>Альтернативы</h2><span class="muted small">другие поставщики этой позиции (та же единица) в заявках за период · цены — повод запросить новое КП, наличие и актуальную цену нужно подтвердить</span></div><div class="panel-b">${d.alternatives && d.alternatives.length ? `<table class="mt sup-t"><thead><tr><th>Поставщик</th><th class="n">Последняя цена, ₽</th><th class="n">К текущему</th><th>Дата</th><th class="n">Срок, дн.</th><th class="n">Заявок</th></tr></thead><tbody>
+        ${d.alternatives.map((a) => `<tr class="mrow" data-sup="${esc(a.key)}" style="cursor:pointer"><td>${esc(a.name)}</td><td class="n">${nf(a.last, 2)}</td><td class="n">${a.last != null && it.last ? pc(a.last / it.last - 1) : "—"}</td><td>${day(a.last_date)}</td><td class="n">${a.term != null ? nf(a.term) : "—"}</td><td class="n">${nf(a.requests)}</td></tr>`).join("")}</tbody></table>` : `<span class="muted">Других поставщиков этой позиции в заявках за период нет</span>`}</div></section>`;
+    }
+    const hist = d.history.slice(0, 300);
+    return html + `<section class="panel"><div class="panel-h"><h2>История предложений${it ? " — " + esc(it.item) : ""}</h2><span class="muted small">заявки в отдел снабжения${d.history.length > 300 ? " · показаны последние 300 строк" : ""}</span></div><div class="panel-b">${hist.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Дата</th><th>Заявка №</th><th>Номенклатура</th><th>Ед.</th><th class="n">Кол-во</th><th class="n">Цена, ₽</th><th class="n">Сумма, ₽</th><th class="n">Срок, дн.</th><th>Отметка</th></tr></thead><tbody>
+      ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${esc(r.doc)}</td><td class="wrap">${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${nf(r.qty, 3)}</td><td class="n">${r.price != null ? nf(r.price, 2) : `<span class="muted">без цены</span>`}</td><td class="n">${r.amount != null ? nf(r.amount, 2) : "—"}</td><td class="n">${r.term != null ? nf(r.term) : "—"}</td><td>${mark(r)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
+  }
+  // ---------- «Загрузка»: загрузка сотрудников по задачам Битрикс24 (расчёт — app/workload.py)
+  async function loadWorkload() {
+    try { renderWorkload(await api("/api/workload")); }
+    catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  function renderWorkload(d) {
+    const st = state.wl || (state.wl = { open: "" });
+    const url = (uid, id) => (d.portal ? `https://${d.portal}/company/personal/user/${uid}/tasks/task/view/${id}/` : null);
+    const taskA = (uid, id) => { const u = url(uid, id); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(id)}</a>` : esc(id); };
+    const cls = (w) => (!w.hours ? "wl-none" : w.percent > d.overload ? "wl-bad" : w.percent > d.warn ? "wl-warn" : "wl-ok");
+    const head = d.mondays.map((m, i) => `<th class="n" title="Неделя с ${ruDay(m)}">${ruDay(m).slice(0, 5)}${i === 0 ? '<br><span class="muted small">эта</span>' : ""}</th>`).join("");
+    const cell = (w) => `<td class="n wl ${cls(w)}" title="${nf(w.hours, 1)} ч из ${nf(w.capacity)} ч · пик дня ${w.peak}%${w.absent_days ? ` · отсутствие: ${w.absent_days} дн.` : ""}">${w.hours ? (w.percent > 900 ? "∞" : w.percent + "%") + `<div class="muted small" style="font-weight:400">${nf(w.hours, 1)} из ${nf(w.capacity)} ч</div>` : "—"}</td>`;
+    const weekList = (t) => d.mondays.map((m, i) => (t.per_week[i] ? `<span style="white-space:nowrap">${ruDay(m).slice(0, 5)}: <b>${nf(t.per_week[i], 1)} ч</b></span>` : "")).filter(Boolean).join(" &nbsp;·&nbsp; ");
+    const detail = (p) => {
+      const lacking = d.no_estimate.filter((t) => t.login === p.login);
+      return `<tr class="wl-detail"><td colspan="${d.mondays.length + 3}">${p.tasks.length
+        ? `<table class="dt"><thead><tr><th>Задача</th><th>Срок</th><th class="n">Всего осталось</th><th>Как распределены часы по неделям</th></tr></thead><tbody>${p.tasks.map((t) => `<tr><td style="white-space:normal">${taskA(p.b24_user_id, t.task_id)} · ${esc((t.title || "").slice(0, 70))}</td><td>${t.deadline ? ruDay(t.deadline) : "—"}</td><td class="n">${nf(t.hours, 1)} ч</td><td>${weekList(t)}</td></tr>`).join("")}</tbody></table>`
+        : '<span class="muted small">Нет задач с оценкой и сроком — в расчёт нечего включать.</span>'}${lacking.length ? `<div class="small" style="margin-top:8px"><span class="wl-flag">Не учтены (нет оценки времени):</span> ${lacking.map((t) => taskA(p.b24_user_id, t.task_id) + " · " + esc((t.title || "").slice(0, 40))).join("; ")}</div>` : ""}</td></tr>`;
+    };
+    const rows = d.people.map((p) => `<tr class="wl-row${st.open === p.login ? " open" : ""}" data-wl="${esc(p.login)}"><td><b>${esc(p.name)}</b>${p.overloaded ? ' <span class="wl-flag" title="Есть недели с перегрузкой">●</span>' : ""}</td>${p.weeks.map(cell).join("")}<td class="n">${p.no_estimate ? `<b style="color:var(--bad)">${p.no_estimate}</b>` : "0"}</td><td class="n">${p.no_deadline || "0"}</td></tr>${st.open === p.login ? detail(p) : ""}`).join("");
+    const by = {};
+    d.no_estimate.forEach((t) => (by[t.login] = by[t.login] || { name: t.name, uid: t.b24_user_id, items: [] }).items.push(t));
+    const noEst = Object.values(by).sort((a, b) => b.items.length - a.items.length).map((g) => `<tr><td>${esc(g.name)}</td><td class="n">${g.items.length}</td><td style="white-space:normal">${g.items.slice(0, 15).map((t) => taskA(g.uid, t.task_id)).join(", ")}${g.items.length > 15 ? " …" : ""}</td></tr>`).join("");
+    const planned = d.people.reduce((s, p) => s + p.planned, 0);
+    document.getElementById("main").innerHTML = `
+      <div class="head"><div><div class="eyebrow">Загрузка · задачи Битрикс24</div><h1>Загрузка сотрудников</h1>
+        <div class="sub">100% = ${nf(d.day_hours)} часов в день, пн–пт, без праздников и отсутствий. Часы задачи — оценка за вычетом списанного времени, поровну по дням до срока. Рассчитано ${esc(d.generated.replace("T", " "))}.</div></div></div>
+      ${planned ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">В расчёт пока не вошла ни одна задача: у открытых задач не указана оценка времени. Откройте задачу, включите «Учитывать время по задаче» и впишите «Планируемое время» в часах. ${d.has_data ? "" : "Или данные ещё не синхронизированы — нажмите «Обновить данные»."}</div></div>`}
+      <section class="panel"><div class="panel-h"><h2>Недели</h2><span class="muted small">Нажмите на сотрудника, чтобы увидеть задачи</span></div><div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead><tr><th>Сотрудник</th>${head}<th class="n" title="Открытых задач без оценки времени — в расчёт не входят">Без оценки</th><th class="n" title="Задач с оценкой, но без срока — в расчёт не входят">Без срока</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="muted small" style="margin-top:8px"><span class="wl-key wl-ok"></span> до ${d.warn}% &nbsp; <span class="wl-key wl-warn"></span> до ${d.overload}% &nbsp; <span class="wl-key wl-bad"></span> перегрузка &nbsp; «—» нет задач с оценкой<br>Процент = часы задач, которые попадают на неделю ÷ рабочие часы недели (с учётом праздников и отсутствий; текущая неделя — только с сегодняшнего дня).</div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Задачи без оценки</h2><span class="muted small">Оценка времени обязательна</span></div><div class="panel-b">${noEst
+        ? `<div class="scroll"><table class="dt"><thead><tr><th>Исполнитель</th><th class="n">Задач</th><th>Номера</th></tr></thead><tbody>${noEst}</tbody></table></div>`
+        : '<span class="muted small">У всех открытых задач оценка указана.</span>'}</div></section>`;
+    document.querySelectorAll("#main .wl-row").forEach((tr) => tr.addEventListener("click", () => {
+      st.open = st.open === tr.dataset.wl ? "" : tr.dataset.wl;
+      renderWorkload(d);
+    }));
+  }
+
   // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx» и «Краткое ТЗ»)
   const m2 = (v) => nf(v, 2) + " ₽";
   let moneyTimer = null;
@@ -1486,7 +1774,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const scroll = [...document.querySelectorAll("#main .dt-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
     const tabs = [["panel", "Панель"], ["reg", `Реестр · ${nf(d.objects.length)}`], ["act", `Действия · ${nf(d.actions.length)}`]];
     document.getElementById("main").innerHTML = `
-      <div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>Отдел продаж</h1>
+      <div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>Продажи</h1>
         <div class="sub">Срез на ${ruMoment(P.now)} · данные реестра и действий вводятся здесь, долг — из 1С</div></div></div>
       <div class="sp-seg" role="tablist">${tabs.map(([k, t]) => `<button class="btn${s.tab === k ? " primary" : ""}" data-sptab="${k}">${t}</button>`).join("")}</div>
       ${s.tab === "reg" ? spRegistry(d) : s.tab === "act" ? spActions(d) : spPanel(d)}`;
@@ -1539,6 +1827,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const yes = (v) => (v == null ? "" : v ? "да" : "нет");
     const SRC = { tender: "Тендер 1С", kp: "КП 1С", order: "Заказ 1С", b24_deal: "Сделка Б24", b24_lead: "Лид Б24" };
     const objs = d.objects.filter((o) => state.sp.showClosed || !o.closed), hidden = d.objects.length - objs.length;
+    const pgo = spPg("obj"), pg = pgInfo(pgo, objs.length);
     return `
       <section class="panel"><div class="panel-h"><h2>Реестр продаж ТТК</h2><span class="muted small">жёлтое — ввод; остальное считается · объекты: лиды, сделки и исполнение; прямые продажи и тендеры ведутся по своим этапам</span></div>
         <div class="panel-b"><form id="spAddObj" class="sp-add"><input name="id" placeholder="ID (например С-110)" required style="width:150px"><select name="type">${O.types.map((t) => `<option>${t}</option>`).join("")}</select>
@@ -1547,10 +1836,11 @@ details.more[open] > summary::before { transform: rotate(90deg); }
           <select name="emp"><option value="">Сотрудник</option>${team.map(([l, n]) => `<option value="${esc(l)}">${esc(n)}</option>`).join("")}</select>
           <button class="btn primary">Добавить объект</button></form>
         <label class="small" style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px"><input type="checkbox" id="spClosed" ${state.sp.showClosed ? "checked" : ""}> Показывать закрытые${hidden && !state.sp.showClosed ? ` (скрыто ${nf(hidden)})` : ""}</label>
+        ${pgHtml(pgo, objs.length, "объектов")}
         ${objs.length ? `<div class="dt-wrap" style="max-height:560px"><table class="dt sp-edit" data-path="/api/sales-object"><thead><tr><th>ID</th><th>Источник</th><th>Статус источника</th><th class="n">Сумма, ₽</th><th>Тип</th><th>Клиент / объект</th><th>Сотрудник</th><th>Канал</th><th>Этап</th><th>Вход на этап</th><th>Срок результата этапа</th>
           ${d.flags.map(([, t]) => `<th>${esc(t)}</th>`).join("")}<th>Результат готов</th><th>Подтверждение результата</th><th>Передача принята</th><th>Документы приняты</th><th>Связанный заказ 1С</th><th class="n">Долг, ₽ с НДС</th><th>Срок оплаты</th><th>Ссылка Битрикс</th>
           <th>Ожидаемый результат</th><th>Что ещё нужно</th><th>Просрочен этап</th><th>Без открытого действия</th><th class="n">Просроченный долг, ₽</th><th>Группа этапов</th><th></th></tr></thead><tbody>
-          ${objs.map((o) => `<tr data-id="${esc(o.id)}"><th>${esc(o.id)}</th><td>${SRC[o.source] || "Вручную"}</td><td>${esc(o.status_1c || "—")}</td><td class="n">${o.amount ? nf(o.amount) : "—"}</td><td class="in">${spSel("type", o.type, O.types, false)}</td><td class="in">${spIn("client", o.client, "text", 200)}</td>
+          ${objs.slice(pg.from, pg.to).map((o) => `<tr data-id="${esc(o.id)}"><th>${esc(o.id)}</th><td>${SRC[o.source] || "Вручную"}</td><td>${esc(o.status_1c || "—")}</td><td class="n">${o.amount ? nf(o.amount) : "—"}</td><td class="in">${spSel("type", o.type, O.types, false)}</td><td class="in">${spIn("client", o.client, "text", 200)}</td>
             <td class="in">${spSel("emp", o.emp, team)}</td><td class="in">${spSel("channel", o.channel, O.channels)}</td><td class="in">${spSel("stage", o.stage, O.stages, !!o.source)}</td>
             <td class="in">${spIn("entered", o.entered, "datetime-local")}</td><td class="in">${spIn("due", o.due, "datetime-local")}</td>
             ${d.flags.map(([f]) => `<td class="in">${spSel(f, o[f], O.flags)}</td>`).join("")}
@@ -1566,17 +1856,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       <section class="panel"><div class="panel-h"><h2>Этапы</h2><span class="muted small">результат этапа и где его фиксировать</span></div><div class="panel-b"><div class="dt-wrap"><table class="dt"><thead><tr><th>Этап</th><th>Результат</th><th>Группа</th><th>Где фиксировать</th></tr></thead><tbody>
         ${d.stages.map((r) => `<tr>${r.map((c) => `<td style="white-space:normal">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div></section>`;
   }
+  const spPg = (k) => { const s = state.sp; s.pg = s.pg || {}; return (s.pg[k] = s.pg[k] || {}); };  // состояние постраничного показа: реестр и действия — отдельно
   function spActions(d) {
     const O = d.options, ids = d.objects.map((o) => o.id);
+    const pga = spPg("act"), pgx = pgInfo(pga, d.actions.length);
     return `
       <section class="panel"><div class="panel-h"><h2>Действия и ожидания по продажам</h2><span class="muted small">отдельные строки для действия продавца и запроса другому отделу · приоритет: 1 — жёсткий срок (≤ 48 ч или просрочен), 2 — прочая просрочка, 3 — сегодня, 4 — решение ИД или нет срока</span></div>
         <div class="panel-b"><form id="spAddAct" class="sp-add"><input name="id" placeholder="ID (например Д-19)" required style="width:130px">
           <select name="obj_id" required><option value="">Объект</option>${ids.map((i) => `<option>${esc(i)}</option>`).join("")}</select>
           <input name="what" placeholder="Что сделать" style="width:260px"><select name="dept">${O.depts.map((t) => `<option>${t}</option>`).join("")}</select>
           <input name="executor" placeholder="Исполнитель" style="width:160px"><input name="due" type="datetime-local"><button class="btn primary">Добавить действие</button></form>
+        ${pgHtml(pga, d.actions.length, "действий")}
         ${d.actions.length ? `<div class="dt-wrap" style="max-height:560px"><table class="dt sp-edit" data-path="/api/sales-action"><thead><tr><th>ID действия</th><th>ID объекта</th><th>Что сделать</th><th>Кто должен выдать результат</th><th>Исполнитель</th><th>Срок</th><th>Тип действия</th><th>Статус</th><th>Нужно решение ИД</th><th>Вопрос для ИД</th><th>Ссылка / подтверждение</th>
           <th>Менеджер сделки</th><th>Канал</th><th>Активно</th><th class="n">Просрочено, часов</th><th>Критический срок</th><th>Просрочка продаж</th><th>Ожидание других</th><th class="n">Приоритет</th><th></th></tr></thead><tbody>
-          ${d.actions.map((a) => `<tr data-id="${esc(a.id)}"><th>${esc(a.id)}</th><td class="in">${spSel("obj_id", a.obj_id, ids, false)}</td><td class="in">${spIn("what", a.what, "text", 260)}</td><td class="in">${spSel("dept", a.dept, O.depts)}</td>
+          ${d.actions.slice(pgx.from, pgx.to).map((a) => `<tr data-id="${esc(a.id)}"><th>${esc(a.id)}</th><td class="in">${spSel("obj_id", a.obj_id, ids, false)}</td><td class="in">${spIn("what", a.what, "text", 260)}</td><td class="in">${spSel("dept", a.dept, O.depts)}</td>
             <td class="in">${spIn("executor", a.executor, "text", 140)}</td><td class="in">${spIn("due", a.due, "datetime-local")}</td><td class="in">${spSel("kind", a.kind, O.kinds)}</td><td class="in">${spSel("status", a.status, O.statuses)}</td>
             <td class="in">${spSel("needs_id", a.needs_id, O.yn)}</td><td class="in">${spIn("question", a.question, "text", 220)}</td><td class="in">${spIn("link", a.link, "text", 140)}</td>
             <td>${esc(d.team[a.manager] || a.manager || "—")}</td><td>${esc(a.channel || "—")}</td><td>${a.active ? "да" : "нет"}</td>
@@ -1592,7 +1885,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     main.querySelectorAll("[data-sptab]").forEach((b) => b.addEventListener("click", () => { s.tab = b.dataset.sptab; renderSales(d); }));
     main.querySelectorAll("[data-spch]").forEach((b) => b.addEventListener("click", () => { s.channel = b.dataset.spch; s.drill = null; again(); }));
     const cl = document.getElementById("spClosed");
-    if (cl) cl.addEventListener("change", () => { s.showClosed = cl.checked; renderSales(d); });
+    if (cl) cl.addEventListener("change", () => { s.showClosed = cl.checked; spPg("obj").page = 0; renderSales(d); });
+    if (s.tab === "reg" || s.tab === "act") pgBind(main, spPg(s.tab === "reg" ? "obj" : "act"), () => renderSales(d));
     const emp = document.getElementById("spEmp");
     if (emp) emp.addEventListener("change", () => { s.emp = emp.value; s.drill = null; again(); });
     main.querySelectorAll("[data-spdrill]").forEach((r) => r.addEventListener("click", () => { s.drill = s.drill === r.dataset.spdrill ? null : r.dataset.spdrill; renderSales(d); }));
@@ -1749,8 +2043,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     return ["", ""];
   }
   document.addEventListener("click", (e) => {  // список ответственных и меню «Метрики» закрываются по клику мимо них
-    const mm = document.getElementById("mMenu");
-    if (mm && mm.open && !mm.contains(e.target)) mm.open = false;
+    for (const id of ["mMenu", "sMenu"]) { const mm = document.getElementById(id); if (mm && mm.open && !mm.contains(e.target)) mm.open = false; }
     const det = document.getElementById("fResp");
     if (det && det.open && !det.contains(e.target)) { det.open = false; state.fRespOpen = false; }
   });
@@ -1823,20 +2116,20 @@ details.more[open] > summary::before { transform: rotate(90deg); }
       }));
       const ppl = [...people.values()].sort((a, b) => b.count - a.count);
       const cell = (r) => (r ? `${nf(r.count)}${amt && r.amount ? `<br><span class="sm">${money(r.amount)}</span>` : ""}` : "—");
-      return `<section class="pr-sec"><h2>${x.title}: ${nf(fx.total)} ${x.gen}${amt ? ` на ${money(total)}` : ""}</h2>
-        ${panel(x)}
-        <h3>Этапы воронки</h3>
-        <table class="pr"><thead><tr><th>Этап</th><th>${x.kind === "leads" ? "Статусы" : "Стадии"} CRM</th><th class="n">Количество</th>${amt ? `<th class="n">Сумма, ₽</th>` : ""}<th class="n">Доля воронки</th><th class="n">Дней на стадии, в среднем</th></tr></thead><tbody>
-          ${ss.map((s) => `<tr><td><b>${esc(s.title)}</b></td><td>${s.by_stage.map((b) => `${esc(b.stage)}${many ? ` (${esc(b.category)})` : ""} — ${nf(b.count)}`).join("<br>") || "—"}</td>
+      // график отдельно (две воронки печатаются рядом), таблицы — ниже
+      return { graph: `<div class="pr-g"><h2>${x.title}: ${nf(fx.total)} ${x.gen}${amt ? ` на ${money(total)}` : ""}</h2>${panel(x)}</div>`, tables: `<section class="pr-sec">
+        <h3>${x.title}: этапы воронки</h3>
+        <table class="pr pr-stages"><thead><tr><th>Этап</th><th>${x.kind === "leads" ? "Статусы" : "Стадии"} CRM</th><th class="n">Количество</th>${amt ? `<th class="n">Сумма, ₽</th>` : ""}<th class="n">Доля воронки</th><th class="n">Дней на стадии (в среднем)</th></tr></thead><tbody>
+          ${ss.map((s) => `<tr><td><b>${esc(s.title)}</b></td><td>${s.by_stage.map((b) => `${esc(b.stage)}${many ? ` (${esc(b.category)})` : ""} — ${nf(b.count)}`).join("; ") || "—"}</td>
             <td class="n">${nf(s.count)}</td>${amt ? `<td class="n">${nf(s.amount)}</td>` : ""}<td class="n">${s.share_of_total != null ? pct(s.share_of_total, 1) : "—"}</td><td class="n">${s.avg_days_on_stage ?? "—"}</td></tr>`).join("")}
           <tr class="tot"><td colspan="2">Итого в воронке</td><td class="n">${nf(fx.total)}</td>${amt ? `<td class="n">${nf(total)}</td>` : ""}<td></td><td></td></tr>
         </tbody></table>
-        <h3>По ответственным</h3>
+        ${chosen.length === 1 ? "" : `<h3>По ответственным</h3>
         ${ppl.length ? `<table class="pr"><thead><tr><th>Ответственный</th>${ss.map((s) => `<th class="n">${esc(s.title)}</th>`).join("")}<th class="n">Всего</th></tr></thead><tbody>
           ${ppl.map((p) => `<tr><td>${esc(p.name)}</td>${p.cells.map((r) => `<td class="n">${cell(r)}</td>`).join("")}<td class="n"><b>${cell(p)}</b></td></tr>`).join("")}
-        </tbody></table>` : `<p>Записей нет.</p>`}
+        </tbody></table>` : `<p>Записей нет.</p>`}`}
         ${fx.other_stages.length ? `<p class="sm">Не вошли в этапы воронки: ${fx.other_stages.map((o) => `${esc(o.stage)}${many ? ` (${esc(o.category)})` : ""} — ${nf(o.count)}`).join("; ")}.</p>` : ""}
-      </section>`;
+      </section>` };
     };
     // --- звонки выбранных ответственных: воронка отбора результативных звонков, как в карточке KPI
     const cf = d.calls, cfPeople = cf ? cf.people.filter(Boolean) : [];
@@ -1856,16 +2149,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const printHtml = `<div class="print-only">
       <div class="pr-head"><h1>Воронки лидов и сделок</h1>
         <table class="pr pr-params"><tbody>
-          <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td></tr>
-          <tr><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки</td></tr>
-          <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td></tr>
-          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td></tr>
-          <tr><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
-          <tr><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
+          <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
+          <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
+          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
-      ${cfHtml ? `<section class="pr-sec"><h2>Звонки: как отбираются результативные, ${esc(cfPer)}</h2><div class="cf-grid">${cfHtml}</div></section>` : ""}
-      ${FUNNELS.map(printFunnel).join("")}</div>`;
+      ${(() => {
+        // для одного сотрудника воронка звонков и две воронки идут одним рядом — вместе с расписанием это один лист
+        const ps = FUNNELS.map(printFunnel);
+        const calls = cfHtml ? `<section class="pr-sec pr-calls"><h2>Звонки: отбор результативных, ${esc(cfPer.replace(/ \(период не выбран.*$/, ""))}</h2><div class="cf-grid">${cfHtml}</div></section>` : "";
+        const duo = `<section class="pr-sec pr-duo">${ps.map((p) => p.graph).join("")}</section>`;
+        return `${cfPeople.length === 1 ? `<div class="pr-row3">${calls}${duo}</div>` : calls + duo}${ps.map((p) => p.tables).join("")}`;
+      })()}</div>`;
 
     const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
     const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
@@ -1954,13 +2249,13 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     const title = `<h2>Расписание на ${esc(ruDay(calDay()))} (календарь Битрикс24)</h2>`;
     if (c.loading) return `<section class="pr-sec">${title}<p class="sm">Календарь ещё загружается — повторите печать через несколько секунд.</p></section>`;
     if (c.error || c.data.unavailable) return `<section class="pr-sec">${title}<p class="sm">${esc(c.error || c.data.unavailable)}</p></section>`;
-    return `<section class="pr-sec">${title}${c.data.people.map((p) => {
+    return `<section class="pr-sec">${title}<div class="pr-cols">${c.data.people.map((p) => {
       const name = (state.fRespNames && state.fRespNames.get(p.key)) || p.key;
-      if (p.error) return `<h3>${esc(name)}</h3><p class="sm">${esc(p.error)}</p>`;
-      return `<h3>${esc(name)}</h3>${p.items.length ? `<table class="pr"><thead><tr><th>Время</th><th>Что</th><th>Тип</th></tr></thead><tbody>
+      if (p.error) return `<div class="pr-person"><h3>${esc(name)}</h3><p class="sm">${esc(p.error)}</p></div>`;
+      return `<div class="pr-person"><h3>${esc(name)}</h3>${p.items.length ? `<table class="pr pr-cal"><thead><tr><th>Время</th><th>Что</th><th>Тип</th></tr></thead><tbody>
         ${p.items.map((x) => `<tr><td>${esc(calWhen(x))}</td><td>${esc(x.title)}</td><td>${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</td></tr>`).join("")}
-        </tbody></table>` : `<p class="sm">В этот день ничего не запланировано.</p>`}`;
-    }).join("")}</section>`;
+        </tbody></table>` : `<p class="sm">В этот день ничего не запланировано.</p>`}</div>`;
+    }).join("")}</div></section>`;
   }
   function calHtml() {
     if (PREVIEW) return "";
@@ -2159,7 +2454,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
     if (state.boot.me.role !== "manager") {
-      const view = h === "funnel" ? "funnel" : "emp";
+      const view = h === "funnel" ? "funnel" : h === "workload" ? "workload" : "emp";
       if (view !== state.view) { state.view = view; renderShell(); load(); }
       return;
     }
@@ -2167,6 +2462,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
+    else if (h === "workload" && state.view !== "workload") { state.view = "workload"; renderShell(); load(); }
     else if (h === "money" && state.view !== "money") { state.view = "money"; renderShell(); load(); }
     else if (h.split("?")[0] === "suppliers" && (state.view !== "suppliers" || (state.sup && state.sup.hq !== h))) { state.view = "suppliers"; supFromHash(h); renderShell(); load(); }
     else if (metricsView(h) && state.view !== metricsView(h)) { state.view = metricsView(h); renderShell(); load(); }

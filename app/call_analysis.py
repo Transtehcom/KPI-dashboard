@@ -273,6 +273,32 @@ def get(con, rid):
             "secretary_ai": m.get("ai"), "secretary_manual": m.get("manual")}
 
 
+def analyze_row(con, config, r, titles, log=print):
+    """Разобрать один звонок очереди (строка call_records + расшифровка): "ok", "failed" или "limit" (лимит подписки —
+    попытку не считаем, дальше идти бессмысленно)."""
+    s = settings(config)
+    segs = json.loads(r["segments"] or "[]")
+    if len(r["text"] or "") < int(s["analyze_min_chars"]):  # гудки, «алло» без ответа — без Claude
+        short = {"call_type": "недозвон", "summary": "Разговора нет или он слишком короткий для разбора",
+                 "offer": {"made": False}, "agreement": {"reached": False}, "prices": [], "deadlines": [],
+                 "objections": [], "tone": {}, "next_step": None, "local": True}
+        save(con, r["id"], short, "-" * len(sentences(segs)), {}, {"model": "local"})
+        return "ok"
+    t = time.time()
+    try:
+        res, roles, mapping, call, _ = analyze_masked(
+            segs, {"direction": r["direction"], "duration": r["duration"], "position": titles.get(r["emp"])},
+            config, [r["client"] or ""])
+    except Exception as e:  # noqa
+        if LIMIT_RE.search(str(e)):
+            log(f"Разбор звонков: лимит Claude ({str(e)[:120]})")
+            return "limit"
+        save(con, r["id"], error=f"{type(e).__name__}: {e}")
+        return "failed"
+    save(con, r["id"], res, roles, mapping, call, spent=round(time.time() - t, 1))
+    return "ok"
+
+
 def run(con, config, log=print):
     """Разобрать очередь. Возвращает (разобрано, ошибок, остановлено_по_лимиту)."""
     s = settings(config)
@@ -283,26 +309,85 @@ def run(con, config, log=print):
     for r in pending(con, s["analyze_per_run"], (config.get("bitrix24") or {}).get("min_call_seconds", 120)):
         if not in_hours(config):  # окно закончилось посреди прохода
             break
-        segs = json.loads(r["segments"] or "[]")
-        if len(r["text"] or "") < int(s["analyze_min_chars"]):  # гудки, «алло» без ответа — без Claude
-            short = {"call_type": "недозвон", "summary": "Разговора нет или он слишком короткий для разбора",
-                     "offer": {"made": False}, "agreement": {"reached": False}, "prices": [], "deadlines": [],
-                     "objections": [], "tone": {}, "next_step": None, "local": True}
-            save(con, r["id"], short, "-" * len(sentences(segs)), {}, {"model": "local"})
-            ok += 1
-            continue
-        t = time.time()
-        try:
-            res, roles, mapping, call, _ = analyze_masked(
-                segs, {"direction": r["direction"], "duration": r["duration"], "position": titles.get(r["emp"])},
-                config, [r["client"] or ""])
-        except Exception as e:  # noqa
-            if LIMIT_RE.search(str(e)):  # лимит подписки — остановиться до следующей синхронизации, попытку не считать
-                log(f"Разбор звонков: лимит Claude ({str(e)[:120]}) — продолжу при следующей синхронизации")
-                return ok, failed, True
-            save(con, r["id"], error=f"{type(e).__name__}: {e}")
-            failed += 1
-            continue
-        save(con, r["id"], res, roles, mapping, call, spent=round(time.time() - t, 1))
-        ok += 1
+        res = analyze_row(con, config, r, titles, log)
+        if res == "limit":  # остановиться до следующей синхронизации
+            log("Разбор звонков: продолжу при следующей синхронизации")
+            return ok, failed, True
+        ok += res == "ok"
+        failed += res == "failed"
     return ok, failed, False
+
+
+# ---------- ручная обработка звонков из раздела «Звонки»: расшифровка (если нет) и разбор Claude, в любое время суток
+
+JOB = {"running": False, "total": 0, "done": 0, "failed": 0, "message": "", "started": None, "finished": None}
+
+
+def todo(con, ids):
+    """Из ids (новые первыми) — звонки с записью, у которых нет расшифровки текущей модели или разбора: {id: нужно_расшифровать}."""
+    ids = list(ids)
+    out = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        ph = ",".join("?" * len(chunk))
+        have = {r["id"]: r["engine"] for r in con.execute(
+            f"SELECT id, engine FROM call_transcripts WHERE segments IS NOT NULL AND id IN ({ph})", chunk)}
+        done = {r["id"] for r in con.execute(f"SELECT id FROM call_analysis WHERE result IS NOT NULL AND version >= ? "
+                                             f"AND id IN ({ph})", (PROMPT_VERSION, *chunk))}
+        for rid in chunk:
+            if rid not in done:
+                out[rid] = have.get(rid) != ENGINE
+    return {rid: out[rid] for rid in ids if rid in out}
+
+
+def start_job(con, config, ids, force=False):
+    """Запустить обработку ids в фоне. Возвращает (запущено, сообщение). force — разобрать заново, даже если разбор есть."""
+    from . import call_records
+    if not call_records._running.acquire(blocking=False):  # скачивание записей, расшифровка или другое задание уже идёт
+        return False, "Сейчас идёт скачивание и обработка записей — попробуйте позже"
+    ids = list(ids)
+    plan = {rid: True for rid in ids} if force else todo(con, ids)
+    if force:  # заново — только разбор; расшифровка нужна, лишь если её нет
+        have = {r["id"] for r in con.execute(f"SELECT id FROM call_transcripts WHERE segments IS NOT NULL AND engine=? "
+                                             f"AND id IN ({','.join('?' * len(ids)) or 'NULL'})", (ENGINE, *ids))}
+        plan = {rid: rid not in have for rid in ids}
+    if not plan:
+        call_records._running.release()
+        return False, "Все выбранные звонки уже обработаны"
+    JOB.update(running=True, total=len(plan), done=0, failed=0, message="Расшифровка…" if any(plan.values()) else "Разбор…",
+               started=dt.datetime.now().isoformat(timespec="seconds"), finished=None)
+
+    def work():
+        try:
+            from . import transcripts
+            need = [rid for rid, t in plan.items() if t]
+            if need:
+                def progress(ok, failed):
+                    JOB["message"] = f"Расшифровка: {ok + failed} из {len(need)}"
+                transcripts.run(con, config, call_records.records_dir(config), print, ids=need, progress=progress)
+            titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
+            order = list(plan)
+            for n, rid in enumerate(order, 1):
+                JOB["message"] = f"Разбор: {n} из {len(order)}"
+                r = con.execute("SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
+                                "WHERE c.id=? AND t.engine=? AND t.segments IS NOT NULL", (rid, ENGINE)).fetchone()
+                if not r:  # расшифровать не удалось
+                    JOB["failed"] += 1
+                    continue
+                res = analyze_row(con, config, dict(r), titles)
+                if res == "limit":
+                    JOB["message"] = "Остановлено: лимит подписки Claude — повторите позже"
+                    break
+                JOB["done"] += res == "ok"
+                JOB["failed"] += res == "failed"
+            else:
+                JOB["message"] = f"Готово: обработано {JOB['done']}" + (f", ошибок {JOB['failed']}" if JOB["failed"] else "")
+        except Exception as e:  # noqa
+            JOB["message"] = f"Ошибка: {e}"
+        finally:
+            JOB.update(running=False, finished=dt.datetime.now().isoformat(timespec="seconds"))
+            call_records._running.release()
+
+    import threading
+    threading.Thread(target=work, daemon=True).start()
+    return True, f"Запущена обработка: {len(plan)}"

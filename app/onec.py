@@ -28,11 +28,11 @@ DATASETS = {
 }
 # таблицы, где нужен весь отдел (раздел «Метрики»): строки с ответственным не из дашборда сохраняются
 # с emp = «1c:ФИО» — KPI их не видит, он выбирает строки по логину сотрудника
-KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests", "forwarder_orders"}
+KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests", "forwarder_orders", "receivables"}  # дебиторка — и по заказам менеджеров вне дашборда («Деньги», панель продаж); в KPI они не входят
 UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified", "posted", "deleted"}
-NUM_FIELDS = {"plan_sum", "fact_sum", "revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count"}
+NUM_FIELDS = {"plan_sum", "fact_sum", "revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count", "suppliers"}
 DATE_FIELDS = {"ship_date", "delivery_date", "dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
 
 

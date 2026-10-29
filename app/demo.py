@@ -229,7 +229,8 @@ def generate(con, config):
                     stage = "ordered" if x > 0.85 else "done" if x > 0.2 else "cancelled" if x > 0.08 else "open"
                     data["supply_funnel"].append({"id": nid("f"), "emp": emp, "dt": d.isoformat(), "doc": f"ЗС-{rnd.randint(1000, 9999)}",
                                                   "customer_order": f"ЗК-{rnd.randint(1000, 9999)}" if stage == "ordered" else None,
-                                                  "client": None, "stage": stage})
+                                                  "client": None, "stage": stage,
+                                                  "suppliers": rnd.choice([3, 3, 4, 5]) if rnd.random() < 0.86 * kk else rnd.choice([1, 2])})
 
             # --- задачи Б24 (все)
             for _ in range(rnd.randint(12, 22)):

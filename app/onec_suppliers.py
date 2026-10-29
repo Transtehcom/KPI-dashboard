@@ -41,8 +41,133 @@ def lines_from_docs(docs, kind, partners, items):
     return out
 
 
+def quotes_from_docs(docs, partners, items, units):
+    """Заявки в отдел снабжения (до 10 поставщиков в шапке, цена/сумма/срок по каждому в строке) → строки supplier_quotes:
+    по строке заявки и поставщику; поставщики без цены (0) в строку заявки не попадают."""
+    out = []
+    for d in docs:
+        sup = [(i, d.get(f"Поставщик{i}_Key")) for i in range(1, 11)]
+        sup = [(i, k) for i, k in sup if k and not _empty(k)]
+        for r in d.get("ТаблицаТовары") or []:
+            ik = r.get("Номенклатура_Key")
+            if not sup or not ik or _empty(ik):
+                continue
+            prices = {i: r.get(f"ЦенаПоставки{i}") or 0 for i, _ in sup}
+            pos = [p for p in prices.values() if p > 0]
+            best = min(pos) if pos else None
+            it = items.get(ik, {})
+            unit = units.get(r.get("ЕдиницаИзмерения_Key")) or it.get("unit") or ""
+            for i, key in sup:
+                p, pr = prices[i], partners.get(key, {})
+                if p <= 0:  # без цены в заявке — не показываем
+                    continue
+                try:
+                    term = int(r.get(f"Срок{i}") or 0) or None
+                except (TypeError, ValueError):
+                    term = None
+                out.append({"id": f"{d['Ref_Key']}:{r.get('LineNumber')}:{i}", "req_id": d["Ref_Key"], "req_number": (d.get("Number") or "").strip(),
+                            "req_date": _day(d.get("Date")), "partner_key": key, "partner": pr.get("name") or "Без названия",
+                            "inn": pr.get("inn") or "", "item_key": ik, "item": it.get("name") or "Номенклатура без названия", "unit": unit,
+                            "qty": float(r.get("Количество") or 0), "price": p if p > 0 else None,
+                            "amount": (r.get(f"СуммаПоставки{i}") or None) if p > 0 else None, "term_days": term if p > 0 else None,
+                            "best": int(p > 0 and p == best), "chosen": int(r.get("ТекущийПоставщик_Key") == key)})
+    return out
+
+
+def store_quotes(con, quotes):
+    con.execute("DELETE FROM supplier_quotes")
+    cols = ["id", "req_id", "req_number", "req_date", "partner_key", "partner", "inn", "item_key", "item", "unit", "qty", "price", "amount",
+            "term_days", "best", "chosen"]
+    con.executemany(f"INSERT OR REPLACE INTO supplier_quotes ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                    [[r[c] for c in cols] for r in quotes])
+
+
+def _quote_item_stats(rows):
+    """Строки одной позиции (и единицы) у одного поставщика → показатели; цена — без пересчёта, как ввёл снабженец."""
+    priced = sorted((r for r in rows if r["price"]), key=lambda r: (r["req_date"], r["req_number"]))
+    prices = [r["price"] for r in priced]
+    first, last = (prices[0], prices[-1]) if prices else (None, None)
+    return {"requests": len({r["req_id"] for r in rows}), "priced": len(priced), "first": first, "last": last,
+            "avg": round(sum(prices) / len(prices), 2) if prices else None, "min": min(prices) if prices else None,
+            "change": round(last / first - 1, 4) if first else None, "term": priced[-1]["term_days"] if priced else None,
+            "last_date": priced[-1]["req_date"] if priced else None, "qty": priced[-1]["qty"] if priced else None,
+            "best": sum(r["best"] for r in rows), "chosen": sum(r["chosen"] for r in rows)}
+
+
+def quote_suppliers(con, date_from, date_to, not_bought=False):
+    """Список поставщиков из заявок за период: заявок, позиций, ответили ценой, лучшая цена, выбран; покупали ли у них."""
+    rows = [dict(r) for r in con.execute("SELECT * FROM supplier_quotes WHERE req_date BETWEEN ? AND ?", (date_from, date_to))]
+    bought = {r[0] for r in con.execute("SELECT DISTINCT partner_key FROM supplier_lines")}
+    by = {}
+    for r in rows:
+        by.setdefault(r["partner_key"], []).append(r)
+    out = []
+    for key, rs in by.items():
+        if not_bought and key in bought:
+            continue
+        out.append({"key": key, "name": rs[0]["partner"], "inn": rs[0]["inn"], "requests": len({r["req_id"] for r in rs}),
+                    "items": len({r["item_key"] for r in rs}), "priced": sum(1 for r in rs if r["price"]), "best": sum(r["best"] for r in rs),
+                    "chosen": sum(r["chosen"] for r in rs), "bought": key in bought, "last": max(r["req_date"] for r in rs)})
+    return sorted(out, key=lambda x: (-x["requests"], x["name"]))
+
+
+def quote_find_partner(con, key=None, inn=None):
+    if key:
+        r = con.execute("SELECT partner_key FROM supplier_quotes WHERE partner_key=? LIMIT 1", (key,)).fetchone()
+    elif inn:
+        r = con.execute("SELECT partner_key FROM supplier_quotes WHERE inn=? LIMIT 1", (inn.strip(),)).fetchone()
+    else:
+        return None
+    return r[0] if r else None
+
+
+def build_quotes(con, partner_key, date_from, date_to, item_key=None):
+    """Страница поставщика в режиме «Заявки поставщикам»: плитки, позиции и цены из его предложений, динамика, альтернативы, история."""
+    rows = [dict(r) for r in con.execute("SELECT * FROM supplier_quotes WHERE partner_key=? AND req_date BETWEEN ? AND ?", (partner_key, date_from, date_to))]
+    name = rows[0]["partner"] if rows else (con.execute("SELECT partner FROM supplier_quotes WHERE partner_key=? LIMIT 1", (partner_key,)).fetchone() or [""])[0]
+    bought = bool(con.execute("SELECT 1 FROM supplier_lines WHERE partner_key=? LIMIT 1", (partner_key,)).fetchone())
+    groups = {}
+    for r in rows:
+        groups.setdefault((r["item_key"], r["unit"]), []).append(r)
+    items = []
+    for (ik, unit), rs in groups.items():
+        alt = {a[0] for a in con.execute("SELECT DISTINCT partner_key FROM supplier_quotes WHERE item_key=? AND unit=? AND price IS NOT NULL AND partner_key<>? "
+                                         "AND req_date BETWEEN ? AND ?", (ik, unit, partner_key, date_from, date_to))}
+        items.append({"key": ik, "item": rs[0]["item"], "unit": unit, **_quote_item_stats(rs), "alternatives": len(alt)})
+    items.sort(key=lambda x: (-x["requests"], x["item"]))
+    tiles = {"requests": len({r["req_id"] for r in rows}) if rows else None, "items": sum(1 for i in items if i["priced"]) if rows else None,
+             "best": sum(r["best"] for r in rows) if rows else None, "chosen": sum(r["chosen"] for r in rows) if rows else None}
+    out = {"partner": {"key": partner_key, "name": name, "bought": bought}, "period": [date_from, date_to], "tiles": tiles, "items": items, "meta": meta(con)}
+    hist = sorted(rows, key=lambda r: (r["req_date"], r["req_number"]), reverse=True)
+    out["history"] = [{"date": r["req_date"], "doc": r["req_number"], "item": r["item"], "unit": r["unit"], "qty": r["qty"], "price": r["price"],
+                       "amount": r["amount"], "term": r["term_days"], "best": r["best"], "chosen": r["chosen"]}
+                      for r in hist if not item_key or r["item_key"] == item_key]
+    if item_key:
+        cur = next((i for i in items if i["key"] == item_key), None)
+        unit = cur["unit"] if cur else ""
+        by_month = {}
+        for r in rows:
+            if r["item_key"] == item_key and r["price"]:
+                by_month.setdefault(r["req_date"][:7], []).append(r["price"])
+        out["dynamics"] = [{"month": m, "price": round(sum(v) / len(v), 2)} for m, v in sorted(by_month.items())]
+        others = {}
+        for a in con.execute("SELECT * FROM supplier_quotes WHERE item_key=? AND unit=? AND price IS NOT NULL AND partner_key<>? AND req_date BETWEEN ? AND ?",
+                             (item_key, unit, partner_key, date_from, date_to)):
+            others.setdefault(a["partner_key"], []).append(dict(a))
+        out["alternatives"] = sorted(({"key": k, "name": rs[0]["partner"], "inn": rs[0]["inn"], **_quote_item_stats(rs)} for k, rs in others.items()),
+                                     key=lambda x: (x["last"] is None, x["last"] or 0))
+        out["item"] = cur
+    return out
+
+
 def fetch(onec, today=None):
-    """Загрузка из 1С: список строк закупок за SINCE_DAYS; ошибка 1С поднимается наверх — прежние данные не затираются."""
+    """Только строки закупок (поступления минус возвраты) — см. fetch_all."""
+    return fetch_all(onec, today, quotes=False)[0]
+
+
+def fetch_all(onec, today=None, quotes=True):
+    """Загрузка из 1С: (строки закупок, предложения поставщиков из заявок в отдел снабжения) за SINCE_DAYS;
+    ошибка 1С поднимается наверх — прежние данные не затираются."""
     today = today or dt.date.today()
     since = (today - dt.timedelta(days=SINCE_DAYS)).isoformat()
     q = lambda e, p=None: onec._odata(e, {"$format": "json", **(p or {})})
@@ -64,7 +189,13 @@ def fetch(onec, today=None):
         for d in docs:
             d["_currency"] = currencies.get(d.get("Валюта_Key"), RUB)
         lines += lines_from_docs(docs, kind, partners, items)
-    return lines
+    offers = []
+    if quotes:
+        docs = q("Document_ТТК_ЗаявкаВОтделСнабжения", {
+            "$filter": "DeletionMark eq false and Posted eq true and СтатусЗаявки eq 'Отработана' and Date ge datetime'%sT00:00:00'" % since,
+            "$select": "Ref_Key,Number,Date," + ",".join(f"Поставщик{i}_Key" for i in range(1, 11)) + ",ТаблицаТовары"})
+        offers = quotes_from_docs(docs, partners, items, units)
+    return lines, offers
 
 
 def store(con, lines, now=None):

@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS kp_letters (
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, created TEXT, deadline TEXT, closed TEXT, status TEXT);
 
+-- открытые задачи для вкладки «Загрузка» (app/workload.py). Отдельно от tasks: та таблица питает KPI по срокам
+-- и содержит только задачи со сроком. estimate и spent — часы (оценка времени и списанное время), start — плановое
+-- начало, parent — id родительской задачи (родитель с открытыми подзадачами в загрузку не входит)
+CREATE TABLE IF NOT EXISTS workload_tasks (
+  id TEXT PRIMARY KEY, emp TEXT, title TEXT, status TEXT, created TEXT, start TEXT, deadline TEXT,
+  estimate REAL, spent REAL, parent TEXT, task_id TEXT);
+
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, revenue REAL, cost REAL, signed INTEGER,
   signed_date TEXT, due_date TEXT, paid_date TEXT);
@@ -123,7 +130,7 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
 
 CREATE TABLE IF NOT EXISTS supply_funnel (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, customer_order TEXT, client TEXT, stage TEXT, doc TEXT,
-  status TEXT, created_at TEXT, closed_at TEXT, due_at TEXT, order_dt TEXT);
+  status TEXT, created_at TEXT, closed_at TEXT, due_at TEXT, order_dt TEXT, suppliers INTEGER);
 
 -- значения, которые руководитель вводит вручную к записям из 1С (срок и дата оплаты реализации, брак, отсрочка…);
 -- после каждой синхронизации заново накладываются на таблицу (app/manual.py)
@@ -166,6 +173,13 @@ CREATE TABLE IF NOT EXISTS supplier_lines (
 CREATE INDEX IF NOT EXISTS supplier_lines_partner ON supplier_lines (partner_key, doc_date);
 CREATE INDEX IF NOT EXISTS supplier_lines_item ON supplier_lines (item_key, doc_date);
 CREATE TABLE IF NOT EXISTS supplier_meta (key TEXT PRIMARY KEY, value TEXT);
+-- «Заявки поставщикам»: предложения поставщиков из заявок в отдел снабжения (статус «Отработана»), по строке заявки и поставщику;
+-- price пусто — поставщика запрашивали, цены нет; best — лучшая цена в строке; chosen — выбран текущим поставщиком строки
+CREATE TABLE IF NOT EXISTS supplier_quotes (
+  id TEXT PRIMARY KEY, req_id TEXT, req_number TEXT, req_date TEXT, partner_key TEXT, partner TEXT, inn TEXT, item_key TEXT, item TEXT,
+  unit TEXT, qty REAL, price REAL, amount REAL, term_days INTEGER, best INTEGER, chosen INTEGER);
+CREATE INDEX IF NOT EXISTS supplier_quotes_partner ON supplier_quotes (partner_key, req_date);
+CREATE INDEX IF NOT EXISTS supplier_quotes_item ON supplier_quotes (item_key, req_date);
 
 CREATE TABLE IF NOT EXISTS manual_fields (
   tbl TEXT, ref TEXT, field TEXT, value TEXT, author TEXT, updated TEXT,
@@ -241,14 +255,14 @@ CREATE TABLE IF NOT EXISTS sync_log (
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
-               "deal_failures"]
+               "deal_failures", "workload_tasks"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
-                                   ("due_at", "TEXT"), ("order_dt", "TEXT")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
+                                   ("due_at", "TEXT"), ("order_dt", "TEXT"), ("suppliers", "INTEGER")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
                  "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")],
                  "forwarder_orders": [("fact_sum", "REAL")],

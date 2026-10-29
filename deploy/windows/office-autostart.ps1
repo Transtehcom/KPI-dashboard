@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Force (Join-Path $root "data") | Out-Null
 function Log($msg) {
     $line = "{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $msg
     if ((Test-Path $log) -and (Get-Item $log).Length -gt 1MB) { Move-Item $log "$log.old" -Force }
-    Add-Content -Path $log -Value $line -Encoding UTF8
+    try { Add-Content -Path $log -Value $line -Encoding UTF8 } catch {}  # занятый журнал не должен останавливать сторожа
 }
 
 # второй экземпляр не нужен: порт 8081 и порт туннеля уже заняты первым
@@ -67,6 +67,11 @@ Start-Sleep -Seconds 3
 $tun = Start-Tunnel
 while ($true) {
     Start-Sleep -Seconds 15
-    if ($dash.HasExited) { Log "дашборд остановился (код $($dash.ExitCode)), перезапуск"; $dash = Start-Dashboard }
-    if ($tun.HasExited) { Log "туннель закрылся (код $($tun.ExitCode)), переподключение"; $tun = Start-Tunnel }
+    # любая ошибка внутри цикла (занят журнал, сбой запуска) не должна молча завершать сторожа
+    try {
+        if ($dash.HasExited) { Log "дашборд остановился (код $($dash.ExitCode)), перезапуск"; $dash = Start-Dashboard }
+        if ($tun.HasExited) { Log "туннель закрылся (код $($tun.ExitCode)), переподключение"; $tun = Start-Tunnel }
+    } catch {
+        try { Log "ошибка сторожа: $($_.Exception.Message)" } catch {}
+    }
 }

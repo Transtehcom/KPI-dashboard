@@ -808,66 +808,16 @@ class Engine:
         return out
 
     def calc_competitive_purchases(self, e, ctx, p):
-        emp = e["login"]
-        first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
-        rows = self.q("SELECT * FROM supplier_orders WHERE emp=? AND dt>=? AND dt<=?", emp, first, last)
-        # лот собирается из всех его заказов (в том числе других месяцев) и относится к месяцу первого заказа
-        lot_ids = sorted({r["lot"] for r in rows if r["lot"]})
-        lots = {}
-        if lot_ids:
-            for r in self.q(f"SELECT * FROM supplier_orders WHERE emp=? AND lot IN ({','.join('?' * len(lot_ids))})",
-                            emp, *lot_ids):
-                lots.setdefault(r["lot"], []).append(r)
-            lots = {k: v for k, v in lots.items() if first <= min(i["dt"] or "" for i in v)[:10] <= last}
-        for r in rows:
-            if not r["lot"]:
-                lots.setdefault(r["doc"] or r["id"], []).append(r)
-        det, base, good, excluded, pending = [], 0, 0, 0, 0
-        for lot, items in lots.items():
-            total = sum(i["amount_novat"] or 0 for i in items)
-            if total < p["threshold"]:
-                continue
-            suppliers = ", ".join(dict.fromkeys(i["supplier"] for i in items if i["supplier"]))
-            kp_count = max((i["kp_count"] or 0) for i in items)
-            if any(i["single_source"] for i in items) or any(i["emergency"] for i in items):
-                excluded += 1
-                det.append([lot, suppliers, total, kp_count, "исключена: " + (
-                    "монополия" if any(i["single_source"] for i in items) else "аварийная")])
-                continue
-            base += 1
-            # соответствие КП техзаданию и наличие сканов отмечает руководитель: без отметки лот ждёт ввода
-            if any(i["relevant"] is None or i["evidence"] is None for i in items):
-                pending += 1
-                det.append([lot, suppliers, total, kp_count, "ждёт ввода: КП по ТЗ, сканы"])
-                continue
-            # отсутствие конкуренции можно обосновать служебной запиской, аффилированность — нет
-            no_contest = []
-            if kp_count < p["kp_min"]:
-                no_contest.append(f"КП: {kp_count} из {p['kp_min']}")
-            if not all(i["relevant"] for i in items):
-                no_contest.append("КП не соответствуют ТЗ")
-            if not all(i["evidence"] for i in items):
-                no_contest.append("нет сканов/сравнительной таблицы")
-            affiliated = any(i["affiliated"] for i in items)
-            justified = any(i["justified"] for i in items)
-            if affiliated:
-                status = "; ".join(no_contest + ["аффилированность"])
-            elif not no_contest:
-                good += 1
-                status = "конкурентная"
-            elif justified:
-                good += 1
-                status = "без конкурса, есть утверждённое обоснование"
-            else:
-                status = "; ".join(no_contest)
-            det.append([lot, suppliers, total, kp_count, status])
-        share = good / base if base and not pending else None
+        """Отработанные заявки в отдел снабжения месяца (по дате заявки), у которых указано не менее kp_min поставщиков."""
+        rows = self.q("SELECT * FROM supply_funnel WHERE emp=? AND dt>=? AND dt<=? AND stage IN ('done','ordered') ORDER BY dt",
+                      e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
+        good = [r for r in rows if (r["suppliers"] or 0) >= p["kp_min"]]
         return {
-            "components": [comp("Доля конкурентных закупок", share, p["target"], "%", source=SRC_INPUT)],
-            "extra": [{"label": f"Лотов от {p['threshold']:,.0f} ₽ в базе расчёта".replace(",", " "), "value": base},
-                      {"label": "Засчитано", "value": good}, {"label": "Исключено (монополия, авария)", "value": excluded},
-                      {"label": "Ждут ввода", "value": pending}],
-            "details": {"columns": ["Лот / заказ", "Поставщик", "Сумма без НДС, ₽", "КП", "Итог"], "rows": det},
+            "components": [comp("Доля заявок с поставщиками ≥ %d" % p["kp_min"], len(good) / len(rows) if rows else None,
+                                p["target"], "%", source=SRC_1C)],
+            "extra": [{"label": "Отработанных заявок в месяце", "value": len(rows)}, {"label": "С нужным числом поставщиков", "value": len(good)}],
+            "details": {"columns": ["Заявка", "Дата", "Поставщиков", "Итог"],
+                        "rows": [[r["doc"], r["dt"], r["suppliers"] or 0, "да" if r in good else "нет"] for r in rows]},
         }
 
     def calc_supply_funnel(self, e, ctx, p):

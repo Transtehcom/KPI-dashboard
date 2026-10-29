@@ -65,9 +65,16 @@ def get(con, record_id):
     return r
 
 
-def pending(con, limit):
+def pending(con, limit, ids=None):
     """Очередь: не расшифрованные, ошибки и тексты прежней модели (попыток < MAX_ATTEMPTS) — строго от новых звонков
-    к старым: свежие звонки смотрят чаще, и разбор (только по текстам текущей модели) идёт в том же порядке."""
+    к старым: свежие звонки смотрят чаще, и разбор (только по текстам текущей модели) идёт в том же порядке.
+    ids — ручная обработка выбранных звонков: попытки не ограничиваются."""
+    if ids is not None:
+        ids = list(ids)
+        return [dict(r) for r in con.execute(
+            "SELECT c.id, c.file FROM call_records c LEFT JOIN call_transcripts t ON t.id = c.id "
+            f"WHERE c.file IS NOT NULL AND c.id IN ({','.join('?' * len(ids)) or 'NULL'}) "
+            "AND (t.id IS NULL OR t.error IS NOT NULL OR t.engine <> ?) ORDER BY c.dt DESC", (*ids, ENGINE))]
     return [dict(r) for r in con.execute(
         "SELECT c.id, c.file FROM call_records c LEFT JOIN call_transcripts t ON t.id = c.id "
         "WHERE c.file IS NOT NULL AND (t.id IS NULL OR (t.attempts < ? AND (t.error IS NOT NULL OR t.engine <> ?))) "
@@ -89,12 +96,12 @@ def save(con, record_id, res, phrases, spent=None):
         con.commit()
 
 
-def run(con, config, records_dir, log=print, worker=None):
-    """Расшифровать очередь. Возвращает (готово, ошибок)."""
+def run(con, config, records_dir, log=print, worker=None, ids=None, progress=None):
+    """Расшифровать очередь (или выбранные звонки ids). Возвращает (готово, ошибок); progress(готово, ошибок) — после каждого."""
     s = settings(config)
-    if not s["transcribe"]:
+    if not s["transcribe"] and ids is None:
         return 0, 0
-    rows = pending(con, s["transcribe_per_run"])
+    rows = pending(con, s["transcribe_per_run"], ids)
     if not rows:
         return 0, 0
     by_path = {os.path.normcase(os.path.join(records_dir, r["file"])): r["id"] for r in rows}
@@ -141,6 +148,8 @@ def run(con, config, records_dir, log=print, worker=None):
                     failed += 1
                 else:
                     ok += 1
+                if progress:
+                    progress(ok, failed)
             p.wait()
         finally:
             timer.cancel()

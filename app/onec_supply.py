@@ -120,7 +120,7 @@ def fetch_supply_funnel(onec, ds, date_from, date_to):
         "$filter": f"DeletionMark eq false and Date ge datetime'{_when(date_from)}' "
                    f"and Date le datetime'{date_to.isoformat()}T23:59:59'",
         "$select": "Ref_Key,Number,Date,ДокументОснования,СтатусЗаявки,ДатаЗакрытияЗаявки,СрокОтработкиДо,"
-                   "ОтветственныйСнабжение/Description"})
+                   "ОтветственныйСнабжение/Description," + ",".join(SUPPLIERS)})
     orders = {}
     for c in onec._odata("Document_ЗаказКлиента", {
             "$format": "json", "$filter": f"Date ge datetime'{_when(date_from)}'",  # с пометкой удаления — тоже, как в «Отчёте ОП»
@@ -138,5 +138,6 @@ def fetch_supply_funnel(onec, ds, date_from, date_to):
                     "dt": r["Date"][:10], "doc": r["Number"].strip(), "customer_order": ", ".join(nums) or None,
                     "stage": stage, "status": r.get("СтатусЗаявки"), "created_at": r["Date"][:19],
                     "closed_at": _moment(r.get("ДатаЗакрытияЗаявки")), "due_at": _moment(r.get("СрокОтработкиДо")),
-                    "order_dt": found[0][0] if found else None})
+                    "order_dt": found[0][0] if found else None,
+                    "suppliers": sum(1 for s in SUPPLIERS if r.get(s) and r[s] != EMPTY)})
     return out

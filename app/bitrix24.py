@@ -124,6 +124,19 @@ class Bitrix24:
         return int(s.startswith("да") or s in ("yes", "y", "+", "выявлена"))
 
     @staticmethod
+    def next_step_activity(a, call_activity_id):
+        """Подходит ли дело CRM как «следующий шаг» после звонка: любое дело, кроме самого этого звонка и других звонков телефонии
+        (повторный звонок тому же клиенту следующим шагом не считается; запланированное дело «Связаться с клиентом» — считается)."""
+        return str(a.get("ID")) != str(call_activity_id) and a.get("PROVIDER_ID") != "VOXIMPLANT_CALL"
+
+    @staticmethod
+    def lpr(v):
+        """Поле «ЛПР» заполнено по существу: прочерк, точка, «+», «нет» и подсказка поля «ФИО лица» не считаются."""
+        if isinstance(v, str) and v.strip().lower().strip(" .-—–_+") in ("", "фио лица", "фио", "ф.и.о. лица", "ф.и.о"):
+            return 0
+        return Bitrix24.flag(v)
+
+    @staticmethod
     def filled(v):
         """Текст по существу: пустое поле, прочерк или «нет» не считаются заполнением (поле может быть обязательным)."""
         s = str(v or "").strip().lower().strip(" .-—–_")
@@ -186,25 +199,35 @@ class Bitrix24:
         lpr_fields = self.f.get("contact_is_lpr") or []
         lpr_fields = [lpr_fields] if isinstance(lpr_fields, str) else list(lpr_fields)
         lead_lpr_field = self.f.get("lead_lpr")
+        company_lpr_field = self.f.get("company_lpr")  # если задано, ЛПР определяется только по полю компании (поля контакта и лида не учитываются)
+        if company_lpr_field:
+            lpr_fields, lead_lpr_field = [], None
         contact_select = ["ID", "NAME", "LAST_NAME", "POST", "COMPANY_ID"] + lpr_fields
         contacts = self.by_ids("crm.contact.list", bound["CONTACT"], contact_select)
+        leads_of_calls = self.by_ids("crm.lead.list", bound["LEAD"],
+                                     ["ID", "TITLE", "COMPANY_ID"] + ([lead_lpr_field] if lead_lpr_field else []))
         companies_of_calls = self.by_ids("crm.company.list",
-                                         bound["COMPANY"] | {str(c["COMPANY_ID"]) for c in contacts.values() if c.get("COMPANY_ID")},
-                                         ["ID", "TITLE"])
-        leads_of_calls = self.by_ids("crm.lead.list", bound["LEAD"], ["ID", "TITLE"] + ([lead_lpr_field] if lead_lpr_field else []))
+                                         bound["COMPANY"] | {str(c["COMPANY_ID"]) for c in contacts.values() if c.get("COMPANY_ID")} |
+                                         ({str(l["COMPANY_ID"]) for l in leads_of_calls.values() if l.get("COMPANY_ID")} if company_lpr_field else set()),
+                                         ["ID", "TITLE"] + ([company_lpr_field] if company_lpr_field else []))
         secr = [s.lower() for s in self.cfg.get("secretary_posts", [])]
+        company_has_lpr = set()
 
         def contact_flags(c):
             if not c:
                 return 0, 0
             post = (c.get("POST") or "").lower()
             is_secr = int(any(s in post for s in secr))
-            is_lpr = int(any(self.flag(c.get(f)) for f in lpr_fields)) if lpr_fields else int(bool(post) and not is_secr)
+            if company_lpr_field:
+                return int(str(c.get("COMPANY_ID")) in company_has_lpr), is_secr
+            is_lpr = int(any(self.lpr(c.get(f)) for f in lpr_fields)) if lpr_fields else int(bool(post) and not is_secr)
             return is_lpr, is_secr
 
-        # компании, у которых в CRM уже есть контакт-ЛПР: звонок по такой компании даёт «информацию об ЛПР»
-        company_has_lpr = set()
+        # компании, у которых в CRM уже есть ЛПР: звонок по такой компании даёт «информацию об ЛПР»
         company_ids = sorted(bound["COMPANY"], key=int)
+        if company_lpr_field:
+            company_has_lpr = {i for i, c in companies_of_calls.items() if self.lpr(c.get(company_lpr_field))}
+            company_ids = []
         for i in range(0, len(company_ids), 50):
             for c in self.list_all("crm.contact.list", {"filter": {"COMPANY_ID": company_ids[i:i + 50]},
                                                         "select": contact_select}):
@@ -213,7 +236,7 @@ class Bitrix24:
             if lead_lpr_field:  # и лиды компании с заполненным полем «ЛПР»: звонок на компанию, а не на сам лид
                 for ld in self.list_all("crm.lead.list", {"filter": {"COMPANY_ID": company_ids[i:i + 50]},
                                                          "select": ["ID", "COMPANY_ID", lead_lpr_field]}):
-                    if self.flag(ld.get(lead_lpr_field)):
+                    if self.lpr(ld.get(lead_lpr_field)):
                         company_has_lpr.add(str(ld.get("COMPANY_ID")))
 
         def entity_info(etype, eid):
@@ -230,7 +253,9 @@ class Bitrix24:
                 return int(eid in company_has_lpr), 0, companies_of_calls.get(eid, {}).get("TITLE", "")
             if etype == "LEAD":
                 ld = leads_of_calls.get(eid, {})
-                return (self.flag(ld.get(lead_lpr_field)) if lead_lpr_field else 0), 0, ld.get("TITLE", "")
+                if company_lpr_field:
+                    return int(str(ld.get("COMPANY_ID")) in company_has_lpr), 0, ld.get("TITLE", "")
+                return (self.lpr(ld.get(lead_lpr_field)) if lead_lpr_field else 0), 0, ld.get("TITLE", "")
             return 0, 0, ""
 
         rows, records = [], []
@@ -245,7 +270,7 @@ class Bitrix24:
             t0 = dt.datetime.fromisoformat(start)
             nxt = 0
             for a in by_owner.get(owner, []):
-                if str(a["ID"]) == str(c.get("CRM_ACTIVITY_ID")):
+                if not self.next_step_activity(a, c.get("CRM_ACTIVITY_ID")):
                     continue
                 created = dt.datetime.fromisoformat(str(a["CREATED"])[:19])
                 if t0 <= created <= t0 + dt.timedelta(days=1):
@@ -372,13 +397,19 @@ class Bitrix24:
             v = self.f.get(key) or []
             return [v] if isinstance(v, str) else list(v)
         lf = {k: fields_of("lead_" + k) for k in ("need", "budget", "lpr", "solvency")}
+        if company_lpr_field:
+            lf["lpr"] = []  # ЛПР — только по полю компании лида
         lead_statuses = self.lead_statuses()
         yes = self._enum_yes("crm.lead.fields", [f for v in lf.values() for f in v])
         leads = self.list_all("crm.lead.list", {
             "filter": {"ASSIGNED_BY_ID": uids, ">=DATE_MODIFY": df},
-            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "DATE_CREATE", "CONTACT_ID"] +
+            "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "DATE_CREATE", "CONTACT_ID", "COMPANY_ID"] +
                       [f for v in lf.values() for f in v]})
         lead_contacts = self.by_ids("crm.contact.list", [l.get("CONTACT_ID") for l in leads], ["ID"] + lpr_fields)
+        lead_companies_lpr = set()
+        if company_lpr_field:
+            lead_companies_lpr = {i for i, c in self.by_ids("crm.company.list", [l.get("COMPANY_ID") for l in leads],
+                                                            ["ID", company_lpr_field]).items() if self.lpr(c.get(company_lpr_field))}
         planned = set()
         ids = [l["ID"] for l in leads]
         for i in range(0, len(ids), 50):
@@ -390,14 +421,15 @@ class Bitrix24:
                     planned.add(str(a["OWNER_ID"]))
 
         def has(l, key):
-            return int(any(str(l.get(f)) in yes[f] if f in yes else self.flag(l.get(f)) for f in lf[key]))
+            return int(any(str(l.get(f)) in yes[f] if f in yes else (self.lpr if key == "lpr" else self.flag)(l.get(f)) for f in lf[key]))
         rows = []
         for l in leads:
             login = emp(l.get("ASSIGNED_BY_ID"))
             if not login:
                 continue
             contact = lead_contacts.get(str(l.get("CONTACT_ID")))
-            lpr = has(l, "lpr") or int(bool(contact) and any(self.flag(contact.get(f)) for f in lpr_fields))
+            lpr = has(l, "lpr") or int(bool(contact) and any(self.lpr(contact.get(f)) for f in lpr_fields)) or \
+                int(str(l.get("COMPANY_ID")) in lead_companies_lpr)
             rows.append({"id": "lead" + str(l["ID"]), "emp": login, "title": l.get("TITLE"),
                          "first_contact": str(l.get("DATE_CREATE"))[:10], "qualified_date": None,
                          "status": l.get("STATUS_ID"),
@@ -448,6 +480,35 @@ class Bitrix24:
                          "closed": self.iso(t.get("closedDate")), "status": str(t.get("status"))}
                         for t in tasks if emp(t.get("responsibleId")) and t.get("deadline")]
         return out
+
+    # ---------- открытые задачи для вкладки «Загрузка»
+    def fetch_workload_tasks(self, employees):
+        """employees: {b24_user_id: login}. Открытые задачи (новая, ждёт выполнения, выполняется) с оценкой времени.
+
+        Оценка (TIME_ESTIMATE) и списанное время (TIME_SPENT_IN_LOGS) приходят секундами, в таблицу кладутся часами.
+        Отдельно от fetch(): там только задачи со сроком для KPI, а загрузке нужны и задачи без оценки и без срока —
+        чтобы показать, у кого оценки не проставлены."""
+        uids = [int(u) for u in employees]
+        if not uids:
+            return []
+        self.log("Б24: открытые задачи для загрузки")
+        tasks = self.list_all("tasks.task.list", {
+            "filter": {"RESPONSIBLE_ID": uids, "REAL_STATUS": [1, 2, 3]},
+            "select": ["ID", "TITLE", "STATUS", "RESPONSIBLE_ID", "CREATED_DATE", "START_DATE_PLAN", "DEADLINE",
+                       "TIME_ESTIMATE", "TIME_SPENT_IN_LOGS", "PARENT_ID"]}, key="tasks")
+        hours = lambda v: round(int(v or 0) / 3600, 2)
+        rows = []
+        for t in tasks:
+            login = employees.get(int(t.get("responsibleId") or 0))
+            if not login:
+                continue
+            parent = t.get("parentId")
+            rows.append({"id": "wl" + str(t["id"]), "task_id": str(t["id"]), "emp": login, "title": t.get("title"),
+                         "status": str(t.get("status")), "created": self.iso(t.get("createdDate")),
+                         "start": self.iso(t.get("startDatePlan")), "deadline": self.iso(t.get("deadline")),
+                         "estimate": hours(t.get("timeEstimate")), "spent": hours(t.get("timeSpentInLogs")),
+                         "parent": str(parent) if parent not in (None, "", "0", 0) else None})
+        return rows
 
     # ---------- воронки для вкладки «Воронки»: текущий срез сделок и лидов CRM
     @staticmethod

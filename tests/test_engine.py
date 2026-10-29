@@ -322,11 +322,9 @@ class EngineTest(unittest.TestCase):
         insert(self.con, "supplier_orders", [order(1, "2026-09-03", 600000, deferred_share=None, deferral_days=None,
                                                    relevant=None, evidence=None, kp_count=3)])
         self.assertEqual(self.item("supply", "deferred_payment", "2026-09")["status"], "awaiting")
-        self.assertEqual(self.item("supply", "competitive_purchases", "2026-09")["status"], "awaiting")
-        for f, v in (("deferred_share", "30"), ("deferral_days", "14"), ("relevant", "1"), ("evidence", "1")):
+        for f, v in (("deferred_share", "30"), ("deferral_days", "14"), ):
             manual.set_value(self.con, "supplier_orders", "o1", f, v, "boss")
         self.assertEqual(self.calc("supply", "deferred_payment", "2026-09")["components"][0]["fact"], 1.0)
-        self.assertEqual(self.calc("supply", "competitive_purchases", "2026-09")["components"][0]["fact"], 1.0)
 
     # ---------------------------------------------------------------- активные клиенты
     def test_active_clients_past_month_uses_snapshot(self):
@@ -346,20 +344,16 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM clients_monthly").fetchone()[0], 1)
 
     # ---------------------------------------------------------------- снабжение
-    def test_lot_spanning_months_counted_once_in_first_month(self):
-        insert(self.con, "supplier_orders", [order(1, "2026-08-28", 300000, lot="L1", kp_count=1),
-                                             order(2, "2026-09-02", 300000, lot="L1", kp_count=3)])
-        aug = self.calc("supply", "competitive_purchases", "2026-08")
-        sep = self.calc("supply", "competitive_purchases", "2026-09")
-        self.assertEqual(aug["components"][0]["fact"], 1.0)  # 3 КП в лоте, сумма 600 000
-        self.assertIsNone(sep["components"][0]["fact"])
-
-    def test_justification_does_not_cover_affiliation(self):
-        insert(self.con, "supplier_orders", [order(1, "2026-09-02", 600000, kp_count=1, justified=1),
-                                             order(2, "2026-09-03", 600000, affiliated=1, justified=1)])
+    def test_competitive_purchases_counts_requests_with_three_suppliers(self):
+        insert(self.con, "supply_funnel", [
+            {"id": "f1", "emp": "supply", "dt": "2026-09-02", "doc": "З1", "stage": "ordered", "suppliers": 3},
+            {"id": "f2", "emp": "supply", "dt": "2026-09-03", "doc": "З2", "stage": "done", "suppliers": 2},
+            {"id": "f3", "emp": "supply", "dt": "2026-09-04", "doc": "З3", "stage": "done", "suppliers": 7},
+            {"id": "f4", "emp": "supply", "dt": "2026-09-05", "doc": "З4", "stage": "open", "suppliers": 1},
+            {"id": "f5", "emp": "supply", "dt": "2026-10-01", "doc": "З5", "stage": "done", "suppliers": 0}])
         r = self.calc("supply", "competitive_purchases", "2026-09")
-        self.assertEqual(r["components"][0]["fact"], 0.5)
-        self.assertIn("аффилированность", r["details"]["rows"][1][4])
+        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 3)
+        self.assertIsNone(self.calc("supply", "competitive_purchases", "2026-08")["components"][0]["fact"])
 
     def test_split_orders_raise_warning(self):
         insert(self.con, "supplier_orders", [order(1, "2026-09-02", 300000, lot="L1"),
@@ -411,6 +405,21 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([Bitrix24.yes(v) for v in no], [0] * len(no))
         self.assertEqual([Bitrix24.filled(v) for v in ["Ежемесячные КП по БПЛА", "звонок раз в неделю"]], [1, 1])
         self.assertEqual([Bitrix24.filled(v) for v in ["", None, "-", " — ", "нет", "Нет."]], [0] * 6)
+
+    def test_next_step_is_any_activity_except_telephony_calls(self):
+        from app.bitrix24 import Bitrix24
+        f = Bitrix24.next_step_activity
+        self.assertFalse(f({"ID": "5", "PROVIDER_ID": "CRM_TODO"}, "5"))  # сам звонок
+        self.assertFalse(f({"ID": "6", "TYPE_ID": "2", "PROVIDER_ID": "VOXIMPLANT_CALL"}, "5"))  # повторный звонок
+        for provider in ("CRM_TODO", "CRM_TASKS_TASK", "CRM_EMAIL", None):
+            self.assertTrue(f({"ID": "7", "PROVIDER_ID": provider}, "5"), provider)
+
+    def test_lpr_field_ignores_dashes_plus_and_placeholder(self):
+        from app.bitrix24 import Bitrix24
+        no = ["", None, "-", "—", ".", "+", " + ", "нет", "Нет", "ФИО лица", "ф.и.о. лица", False, "0"]
+        yes = ["Иванов Иван Петрович", "Иванов И.И., директор", "1", True, ["5"]]
+        self.assertEqual([Bitrix24.lpr(v) for v in no], [0] * len(no))
+        self.assertEqual([Bitrix24.lpr(v) for v in yes], [1] * len(yes))
 
     def test_lead_qualified_once_and_lost_leads_skipped(self):
         full = {"need": 1, "budget": 1, "lpr": 1, "solvency": 1, "next_step": 1}

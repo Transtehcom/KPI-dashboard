@@ -76,6 +76,18 @@ class SalesPanelTest(unittest.TestCase):
         self.assertTrue(o["С-1"]["pre_exec"] and o["С-1"]["debt_late"] is None)
         self.assertTrue(not o["И-2"]["pre_exec"] and o["И-2"]["debt_late"] is None)
 
+    def test_autofill_from_supply_sales_and_bitrix_without_overwriting_manual(self):
+        self.con.execute("INSERT INTO supply_funnel (id, customer_order, stage, doc) VALUES ('s1','00ЦБ-1','ordered','00ЦБ-9_1')")
+        self.con.execute("INSERT INTO sales (id, doc, signed) VALUES ('r1','Реализация 00ЦБ-1 от 01.10',1)")
+        self.obj(id="И-1", type="Исполнение", stage="Передача в исполнение", order_1c="00ЦБ-1")
+        self.obj(id="И-2", type="Исполнение", stage="Передача в исполнение", order_1c="00ЦБ-1", handover="Не принято", docs="Не принято")
+        self.obj(id="Б24-С-77", stage="КП")
+        o = {x["id"]: x for x in sp.build(self.con, TEAM, now=NOW, portal="b24.example.ru")["objects"]}
+        self.assertEqual((o["И-1"]["handover"], o["И-1"]["docs"], o["И-1"]["proof"]), ("Принято", "Принято", "Заявка снабжения 00ЦБ-9_1"))
+        self.assertEqual(o["И-1"]["need"], "")
+        self.assertEqual((o["И-2"]["handover"], o["И-2"]["docs"], o["И-2"]["auto"]), ("Не принято", "Не принято", []))
+        self.assertEqual(o["Б24-С-77"]["url"], "https://b24.example.ru/crm/deal/details/77/")
+
     def test_rejects_unknown_stage(self):
         with self.assertRaises(ValueError):
             self.obj(id="С-1", stage="Выдумка")

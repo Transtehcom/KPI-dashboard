@@ -1,9 +1,11 @@
 """Панель «Метрики → Отдел продаж» по макету «Метрики ОП.xlsx» (листы «Продажи», «Реестр», «Действия»).
 
-Реестр объектов и действия вводятся вручную (в Битриксе нет сроков этапов, флагов готовности расчёта и вопросов ИД);
-долг и срок оплаты объекта берутся из 1С (дебиторка), если указан связанный заказ. Формулы листов перенесены 1:1.
+Объекты реестра подгружаются из 1С и Битрикса; срок этапа, флаги готовности расчёта, действия и вопросы ИД вводятся вручную
+(в системах их нет). Из систем берутся: долг и срок оплаты (дебиторка 1С), приём заказа снабжением (заявка снабжения),
+подписанная реализация и ссылка на карточку Битрикса — пока поле не заполнено вручную. Формулы листов перенесены 1:1.
 """
 import datetime as dt
+import re
 
 # этап → (результат этапа, группа, где фиксировать) — справочник внизу листа «Реестр»
 STAGES = [
@@ -169,13 +171,36 @@ def _others(sel, sa, team, emp):
     return [row] if os_ or row["late"] or row["waiting"] else []
 
 
-def build(con, team, now=None, channel="Все", emp="Все"):
+def _autofill(con, o, handed, signed, portal):
+    """Пустые поля из систем: ссылка на карточку Битрикса; для заказа 1С — приём снабжением (есть отработанная заявка снабжения)
+    и подписанная реализация. Ручной ввод руководителя не перезаписывается; список заполненных полей — в o["auto"]."""
+    o["auto"] = []
+    m = re.fullmatch(r"Б24-([СЛ])-(.+)", o["id"] or "")
+    if m and portal and not o["url"]:
+        o["url"] = f"https://{portal}/crm/{'deal' if m.group(1) == 'С' else 'lead'}/details/{m.group(2)}/"
+        o["auto"].append("url")
+    order = (o["order_1c"] or "").strip()
+    if order and order in handed and not o["handover"]:
+        o["handover"] = "Принято"
+        o["auto"].append("handover")
+        if not o["proof"]:
+            o["proof"] = "Заявка снабжения " + handed[order]
+            o["auto"].append("proof")
+    if order and not o["docs"] and any(order in d for d in signed):
+        o["docs"] = "Принято"
+        o["auto"].append("docs")
+
+
+def build(con, team, now=None, channel="Все", emp="Все", portal=None):
     """team: {login: имя} сотрудников ОП. Возвращает панель, реестр и действия с расчётными полями."""
     now = now or dt.datetime.now()
     today = now.date()
     objs = {}
+    handed = {(r[0] or "").strip(): r[1] for r in con.execute("SELECT customer_order, doc FROM supply_funnel WHERE stage='ordered' AND customer_order<>''")}
+    signed = [r[0] or "" for r in con.execute("SELECT doc FROM sales WHERE signed=1")]
     for r in con.execute("SELECT * FROM sales_objects ORDER BY rowid"):
         o = dict(r)
+        _autofill(con, o, handed, signed, portal)
         d1c = _debt_1c(con, o["order_1c"])
         o["debt_1c"] = d1c is not None
         if d1c:

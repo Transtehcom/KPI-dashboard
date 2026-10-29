@@ -73,5 +73,60 @@ class SuppliersTest(unittest.TestCase):
         self.assertTrue(sup.suppliers(self.con, "2026-07-01", "2026-09-30"))
 
 
+def request_doc(ref, number, date, suppliers, lines, current="pa"):
+    d = {"Ref_Key": ref, "Number": number, "Date": date, **{f"Поставщик{i}_Key": ZERO for i in range(1, 11)}}
+    for i, k in enumerate(suppliers, 1):
+        d[f"Поставщик{i}_Key"] = k
+    d["ТаблицаТовары"] = []
+    for n, (item, qty, prices) in enumerate(lines, 1):
+        row = {"LineNumber": str(n), "Номенклатура_Key": item, "Количество": qty, "ЕдиницаИзмерения_Key": ZERO, "ТекущийПоставщик_Key": current}
+        for i in range(1, 11):
+            p = prices[i - 1] if i <= len(prices) else 0
+            row.update({f"ЦенаПоставки{i}": p, f"СуммаПоставки{i}": p * qty, f"Срок{i}": "14" if p else "0"})
+        d["ТаблицаТовары"].append(row)
+    return d
+
+
+class QuotesTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.con = connect(os.path.join(self.dir.name, "t.sqlite"))
+        docs = [request_doc("r1", "000001", "2026-08-12T10:00:00", ["pa", "pb"], [("rope", 100, [50.0, 47.0]), ("clamp", 10, [30.0, 0])]),
+                request_doc("r2", "000002", "2026-09-18T10:00:00", ["pa", "pb"], [("rope", 100, [55.0, 0])], current="pa")]
+        sup.store_quotes(self.con, sup.quotes_from_docs(docs, PARTNERS, ITEMS, {}))
+        # покупали только у А
+        sup.store(self.con, sup.lines_from_docs([doc("d1", "П-1", "2026-07-10T10:00:00", "pa", [("rope", 100, 4650, 0)])], "in", PARTNERS, ITEMS))
+
+    def tearDown(self):
+        self.con.close()
+        self.dir.cleanup()
+
+    def test_quotes_best_chosen_and_no_price(self):
+        rows = {(r["req_number"], r["partner_key"], r["item_key"]): r for r in self.con.execute("SELECT * FROM supplier_quotes")}
+        self.assertEqual((rows[("000001", "pb", "rope")]["best"], rows[("000001", "pa", "rope")]["best"]), (1, 0))
+        self.assertEqual((rows[("000001", "pa", "rope")]["chosen"], rows[("000001", "pb", "rope")]["chosen"]), (1, 0))
+        self.assertNotIn(("000001", "pb", "clamp"), rows)  # цены нет — строки нет вообще
+        self.assertEqual(rows[("000001", "pa", "rope")]["term_days"], 14)
+
+    def test_supplier_list_and_not_bought_filter(self):
+        lst = {s["name"]: s for s in sup.quote_suppliers(self.con, "2026-01-01", "2026-12-31")}
+        self.assertEqual((lst["Поставщик А"]["requests"], lst["Поставщик А"]["bought"]), (2, True))
+        self.assertEqual((lst["Поставщик Б"]["priced"], lst["Поставщик Б"]["best"], lst["Поставщик Б"]["bought"]), (1, 1, False))
+        self.assertEqual([s["name"] for s in sup.quote_suppliers(self.con, "2026-01-01", "2026-12-31", not_bought=True)], ["Поставщик Б"])
+
+    def test_partner_page_prices_change_and_alternatives(self):
+        d = sup.build_quotes(self.con, "pa", "2026-01-01", "2026-12-31", "rope")
+        rope = d["item"]
+        self.assertEqual((rope["first"], rope["last"], rope["requests"], rope["chosen"]), (50.0, 55.0, 2, 2))
+        self.assertAlmostEqual(rope["change"], 0.1, places=3)
+        self.assertEqual([m["month"] for m in d["dynamics"]], ["2026-08", "2026-09"])
+        self.assertEqual([(a["name"], a["last"]) for a in d["alternatives"]], [("Поставщик Б", 47.0)])
+        self.assertEqual(d["tiles"]["requests"], 2)
+
+    def test_empty_period_is_none(self):
+        d = sup.build_quotes(self.con, "pa", "2026-01-01", "2026-02-01")
+        self.assertEqual((d["tiles"]["requests"], d["items"]), (None, []))
+
+
 if __name__ == "__main__":
     unittest.main()

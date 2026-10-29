@@ -149,6 +149,36 @@ class QueueTest(unittest.TestCase):
         self.assertEqual((a["call1"]["offer"], a["call1"]["summary"][:16]), (True, "Мария Мельникова"))
         self.assertIsNone(a["call3"])
 
+    def test_manual_job_transcribes_missing_and_analyzes_selected(self):
+        import time
+        self.assertEqual(call_analysis.todo(self.con, ["call1", "call2", "call3"]), {"call1": False, "call2": False, "call3": True})
+
+        def fake_transcribe(con, config, rdir, log, ids=None, progress=None):  # «расшифровывает» call3 текущей моделью
+            self.assertEqual(ids, ["call3"])
+            con.execute("UPDATE call_transcripts SET engine=? WHERE id='call3'", (self.tr.ENGINE,))
+            con.commit()
+            return 1, 0
+        with self.fake_run(), mock.patch.object(self.tr, "run", fake_transcribe):
+            ok, msg = call_analysis.start_job(self.con, ANYTIME, ["call1", "call2", "call3"])
+            self.assertTrue(ok)
+            for _ in range(100):
+                if not call_analysis.JOB["running"]:
+                    break
+                time.sleep(0.05)
+        self.assertEqual((call_analysis.JOB["running"], call_analysis.JOB["done"], call_analysis.JOB["failed"]), (False, 3, 0))
+        self.assertEqual(len(self.sent), 2)  # call2 — короткий, без Claude
+        self.assertEqual(call_analysis.todo(self.con, ["call1", "call2", "call3"]), {})
+        ok, msg = call_analysis.start_job(self.con, ANYTIME, ["call1", "call2", "call3"])
+        self.assertFalse(ok)  # всё уже обработано
+        with self.fake_run():  # один звонок — заново
+            ok, _ = call_analysis.start_job(self.con, ANYTIME, ["call1"], force=True)
+            for _ in range(100):
+                if not call_analysis.JOB["running"]:
+                    break
+                time.sleep(0.05)
+        self.assertTrue(ok)
+        self.assertEqual(len(self.sent), 3)
+
     def test_analyze_hours_window_over_midnight(self):
         import datetime as dt
         cfg = {"call_records": {"analyze_hours": ["17:30", "08:00"]}}
