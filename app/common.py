@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS crm_deals (
   stage_id TEXT, stage TEXT, stage_sort INTEGER, semantic TEXT, title TEXT, client TEXT, amount REAL,
   created TEXT, stage_since TEXT, snapshot TEXT, entity TEXT);
 
+-- «Воронки → Факт»: переходы лидов и сделок по стадиям (crm.stagehistory.list) и карточки этих записей, в том числе закрытых
+CREATE TABLE IF NOT EXISTS stage_moves (
+  id TEXT PRIMARY KEY, entity TEXT, rid TEXT, category_id TEXT, category TEXT, stage_id TEXT, stage TEXT, stage_sort INTEGER,
+  semantic TEXT, ts TEXT);
+CREATE INDEX IF NOT EXISTS idx_stage_moves_ts ON stage_moves(entity, ts);
+CREATE TABLE IF NOT EXISTS fact_records (
+  id TEXT PRIMARY KEY, emp TEXT, responsible_id TEXT, responsible TEXT, category_id TEXT, category TEXT,
+  stage_id TEXT, stage TEXT, stage_sort INTEGER, semantic TEXT, title TEXT, client TEXT, amount REAL,
+  created TEXT, stage_since TEXT, snapshot TEXT, entity TEXT);
+
 CREATE TABLE IF NOT EXISTS leads (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, first_contact TEXT, qualified_date TEXT,
   need INTEGER, budget INTEGER, lpr INTEGER, solvency INTEGER, next_step INTEGER, status TEXT);
@@ -253,7 +263,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 """
 
 # таблицы, которые полностью перезаписываются при синхронизации
-SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
+SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
                "deal_failures", "workload_tasks"]
 

@@ -37,6 +37,18 @@ class SuppliersTest(unittest.TestCase):
         self.con.close()
         self.dir.cleanup()
 
+    def test_search_by_supplier_item_and_document(self):
+        names = lambda **kw: sorted(x["name"] for x in sup.suppliers(self.con, "2026-01-01", "2026-12-31", **kw))
+        self.assertEqual(names(), ["Поставщик А", "Поставщик Б"])
+        self.assertEqual(names(search="поставщик б"), ["Поставщик Б"])        # по названию, без учёта регистра
+        self.assertEqual(names(search="111"), ["Поставщик А"])                # по ИНН
+        self.assertEqual(names(search="зажим"), ["Поставщик А"])              # по номенклатуре внутри поставщика
+        self.assertEqual(names(search="п-3"), ["Поставщик Б"])                # по номеру документа из истории закупок
+        self.assertEqual(names(search="трос зажим"), ["Поставщик А"])         # все слова — у одного поставщика
+        self.assertEqual(names(search="зажим п-3"), [])
+        found = sup.suppliers(self.con, "2026-01-01", "2026-12-31", search="зажим")[0]["found"]
+        self.assertEqual(found, ["номенклатура: Зажим"])
+
     def test_net_purchases_with_returns_and_prices(self):
         d = sup.build(self.con, "pa", "2026-07-01", "2026-09-30")
         rope = next(i for i in d["items"] if i["key"] == "rope")

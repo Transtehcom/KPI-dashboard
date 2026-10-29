@@ -94,8 +94,32 @@ def _quote_item_stats(rows):
             "best": sum(r["best"] for r in rows), "chosen": sum(r["chosen"] for r in rows)}
 
 
-def quote_suppliers(con, date_from, date_to, not_bought=False):
-    """Список поставщиков из заявок за период: заявок, позиций, ответили ценой, лучшая цена, выбран; покупали ли у них."""
+def _words(search):
+    return [w for w in str(search or "").lower().replace("ё", "е").split() if w]
+
+
+def _norm(s):
+    return str(s or "").lower().replace("ё", "е")
+
+
+def search_hits(rows, words, doc_field, doc_label):
+    """Поиск по поставщику и его содержимому: каждое слово запроса должно встретиться в названии, ИНН, номенклатуре или
+    номере документа поставщика. Возвращает None — не подходит, иначе список «где нашлось» (до 3 номенклатур и 3 документов)."""
+    head = _norm(rows[0]["partner"] + " " + (rows[0]["inn"] or ""))
+    items = {r["item"]: _norm(r["item"]) for r in rows}
+    docs = {r[doc_field]: _norm(r[doc_field]) for r in rows if r.get(doc_field)}
+    for w in words:
+        if w not in head and not any(w in t for t in items.values()) and not any(w in t for t in docs.values()):
+            return None
+    found = [f"номенклатура: {n}" for n, t in items.items() if any(w in t for w in words)][:3]
+    found += [f"{doc_label}: {n}" for n, t in docs.items() if any(w in t for w in words)][:3]
+    return found
+
+
+def quote_suppliers(con, date_from, date_to, not_bought=False, search=None):
+    """Список поставщиков из заявок за период: заявок, позиций, ответили ценой, лучшая цена, выбран; покупали ли у них.
+    search — слова поиска по названию, ИНН, номенклатуре и номерам заявок поставщика."""
+    words = _words(search)
     rows = [dict(r) for r in con.execute("SELECT * FROM supplier_quotes WHERE req_date BETWEEN ? AND ?", (date_from, date_to))]
     bought = {r[0] for r in con.execute("SELECT DISTINCT partner_key FROM supplier_lines")}
     by = {}
@@ -105,7 +129,10 @@ def quote_suppliers(con, date_from, date_to, not_bought=False):
     for key, rs in by.items():
         if not_bought and key in bought:
             continue
-        out.append({"key": key, "name": rs[0]["partner"], "inn": rs[0]["inn"], "requests": len({r["req_id"] for r in rs}),
+        found = search_hits(rs, words, "req_number", "заявка") if words else None
+        if words and found is None:
+            continue
+        out.append({"key": key, "name": rs[0]["partner"], "inn": rs[0]["inn"], "found": found, "requests": len({r["req_id"] for r in rs}),
                     "items": len({r["item_key"] for r in rs}), "priced": sum(1 for r in rs if r["price"]), "best": sum(r["best"] for r in rs),
                     "chosen": sum(r["chosen"] for r in rs), "bought": key in bought, "last": max(r["req_date"] for r in rs)})
     return sorted(out, key=lambda x: (-x["requests"], x["name"]))
@@ -244,15 +271,20 @@ def _item_stats(rows):
             "change": round(last / first - 1, 4) if first else None, "docs": len({r["doc"] for r in rows})}
 
 
-def suppliers(con, date_from, date_to):
-    """Список поставщиков за период: закупки нетто, позиций, документов."""
+def suppliers(con, date_from, date_to, search=None):
+    """Список поставщиков за период: закупки нетто, позиций, документов. search — слова поиска по названию, ИНН,
+    номенклатуре и номерам документов поставщика (история закупок); найденное возвращается в found."""
+    words = _words(search)
     rows = [dict(r) for r in con.execute("SELECT * FROM supplier_lines WHERE currency=? AND doc_date BETWEEN ? AND ?", (RUB, date_from, date_to))]
     by = {}
     for r in rows:
         by.setdefault(r["partner_key"], []).append(r)
     out = []
     for key, rs in by.items():
-        out.append({"key": key, "name": rs[0]["partner"], "inn": rs[0]["inn"], "amount": _net(rs)[1],
+        found = search_hits(rs, words, "doc", "документ") if words else None
+        if words and found is None:
+            continue
+        out.append({"key": key, "name": rs[0]["partner"], "inn": rs[0]["inn"], "found": found, "amount": _net(rs)[1],
                     "items": len({r["item_key"] for r in rs}), "docs": len({r["doc"] for r in rs if r["kind"] == "in"}),
                     "last": max(r["doc_date"] for r in rs)})
     return sorted(out, key=lambda x: -x["amount"])

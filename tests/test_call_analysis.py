@@ -99,7 +99,7 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual([l[1] for l in res["lines"]], ["К", "К", ""])
 
 
-ANYTIME = {"call_records": {"analyze_hours": []}}  # тесты очереди — без окна времени
+ANYTIME = {}
 
 
 class QueueTest(unittest.TestCase):
@@ -132,9 +132,22 @@ class QueueTest(unittest.TestCase):
             return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
         return mock.patch.object(call_analysis.subprocess, "run", run)
 
-    def test_queue_sends_only_long_current_transcripts_and_stores_masked(self):
+    def analyze_current(self):
+        """Разобрать все звонки с текущей расшифровкой без разбора (как ручная обработка): (разобрано, ошибок, лимит)."""
+        ok = failed = 0
+        for r in self.con.execute("SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
+                                  "LEFT JOIN call_analysis a ON a.id = c.id WHERE t.engine=? AND a.result IS NULL "
+                                  "ORDER BY c.dt DESC", (self.tr.ENGINE,)).fetchall():
+            res = call_analysis.analyze_row(self.con, ANYTIME, dict(r), {}, log=lambda *a: None)
+            if res == "limit":
+                return ok, failed, True
+            ok += res == "ok"
+            failed += res == "failed"
+        return ok, failed, False
+
+    def test_analysis_sends_only_long_current_transcripts_and_stores_masked(self):
         with self.fake_run():
-            self.assertEqual(call_analysis.run(self.con, ANYTIME, log=lambda *a: None), (2, 0, False))
+            self.assertEqual(self.analyze_current(), (2, 0, False))
         self.assertEqual(len(self.sent), 1)  # call2 — слишком короткий, call3 — старая модель
         self.assertNotIn("Мельникова", self.sent[0])
         self.assertNotIn("Нытвинский", self.sent[0])
@@ -144,7 +157,7 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(call_analysis.get(self.con, "call1")["summary"], "Мария Мельникова договорилась выслать КП")
         self.assertEqual(call_analysis.get(self.con, "call2")["call_type"], "недозвон")
         with self.fake_run():
-            self.assertEqual(call_analysis.run(self.con, ANYTIME, log=lambda *a: None), (0, 0, False))  # всё уже разобрано
+            self.assertEqual(self.analyze_current(), (0, 0, False))  # всё уже разобрано
         a = {c["id"]: c["analysis"] for c in self.cr.listing(self.con, {})}
         self.assertEqual((a["call1"]["offer"], a["call1"]["summary"][:16]), (True, "Мария Мельникова"))
         self.assertIsNone(a["call3"])
@@ -179,35 +192,14 @@ class QueueTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(len(self.sent), 3)
 
-    def test_analyze_hours_window_over_midnight(self):
-        import datetime as dt
-        cfg = {"call_records": {"analyze_hours": ["17:30", "08:00"]}}
-        at = lambda hm: call_analysis.in_hours(cfg, dt.datetime(2026, 10, 21, *map(int, hm.split(":"))))
-        self.assertEqual([at(x) for x in ("17:29", "17:30", "23:59", "00:00", "07:59", "08:00", "12:00")],
-                         [False, True, True, True, True, False, False])
-        self.assertTrue(call_analysis.in_hours({"call_records": {"analyze_hours": []}}))
-        with self.fake_run(), mock.patch.object(call_analysis, "in_hours", return_value=False):
-            self.assertEqual(call_analysis.run(self.con, cfg, log=lambda *a: None), (0, 0, False))
-        self.assertEqual(self.sent, [])  # вне окна Claude не вызывается
-
     def test_usage_limit_stops_without_counting_attempt(self):
         with self.fake_run(error="Claude AI usage limit reached|1761058800"):
-            self.assertEqual(call_analysis.run(self.con, ANYTIME, log=lambda *a: None)[2], True)
+            self.assertEqual(self.analyze_current()[2], True)
         self.assertIsNone(self.con.execute("SELECT 1 FROM call_analysis WHERE id='call1'").fetchone())
-
-    def test_new_prompt_version_redoes_only_kpi_calls_since_october(self):
-        with self.fake_run():
-            call_analysis.run(self.con, ANYTIME, log=lambda *a: None)
-        self.con.execute("UPDATE call_analysis SET version = version - 1")
-        self.assertEqual(call_analysis.pending(self.con, 10), [])  # звонок короче 2 минут — не переделывается
-        self.con.execute("UPDATE call_records SET duration = 180")
-        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call2", "call1"])
-        self.con.execute("UPDATE call_records SET dt = '2026-09-30T10:00:00' WHERE id='call1'")  # до REDO_SINCE
-        self.assertEqual([r["id"] for r in call_analysis.pending(self.con, 10)], ["call2"])
 
     def test_secretary_from_claude_and_manager_mark(self):
         with self.fake_run({**ANSWER, "secretary": True}):
-            call_analysis.run(self.con, ANYTIME, log=lambda *a: None)
+            self.analyze_current()
         self.assertEqual(call_analysis.secretary_marks(self.con, ["call1"]), {"call1": {"ai": 1, "manual": None}})
         call_analysis.set_secretary(self.con, "call1", 0, "boss")
         a = {c["id"]: c["analysis"] for c in self.cr.listing(self.con, {})}
@@ -221,7 +213,7 @@ class QueueTest(unittest.TestCase):
 
     def test_purge_keeps_flags_but_drops_names(self):
         with self.fake_run():
-            call_analysis.run(self.con, ANYTIME, log=lambda *a: None)
+            self.analyze_current()
         self.con.execute("UPDATE call_records SET dt='2020-01-01T10:00:00' WHERE id='call1'")
         self.cr.purge_old(self.con, {"call_records": {"keep_days": 30}})
         a = call_analysis.get(self.con, "call1")

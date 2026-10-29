@@ -96,7 +96,7 @@ class MoneyTest(unittest.TestCase):
         d = money.build(self.con)
         rows = {o["id"]: o for o in d["owe"]}
         self.assertEqual(set(rows), {"a", "b"})  # оплаченный этап не показывается
-        self.assertEqual((rows["a"]["status"], rows["a"]["plan"]), ("Не обещано", None))
+        self.assertEqual((rows["a"]["status"], rows["a"]["plan"]), ("По договору", "2026-10-20"))  # просроченная дата платежа тоже показывается
         self.assertEqual((rows["b"]["plan"], d["owe_late"]), ("2026-10-25", 700))
         money.save_expect(self.con, "a", "2026-10-24")
         a = {o["id"]: o for o in money.build(self.con)["owe"]}["a"]
@@ -132,6 +132,16 @@ class OneCMoneyTest(unittest.TestCase):
         open_ = onec_money.open_plan([r("Receipt", 100, "2026-10-30"), r("Expense", 40, "2026-10-30"),  # остаток 60
                                       r("Receipt", 50, "2026-11-05"), r("Expense", 50, "2026-11-05")])  # закрыт
         self.assertEqual([(x["date"], x["amount"]) for x in open_], [("2026-10-30", 60)])
+
+    def test_client_debt_sums_positive_balances_of_orders(self):
+        st = "ТТК_ВЗакуп"
+        orders = [{"ОбъектРасчетов_Key": k, "Статус": st} for k in "abcd"] + [
+            {"ОбъектРасчетов_Key": "e", "Статус": "НеСогласован"}, {"ОбъектРасчетов_Key": "f", "Статус": "Закрыт"}]  # другие статусы не считаются
+        balance = [{"ОбъектРасчетов_Key": "a", "СуммаBalance": 17445.59}, {"ОбъектРасчетов_Key": "b", "СуммаBalance": 0},
+                   {"ОбъектРасчетов_Key": "c", "СуммаBalance": -500}, {"ОбъектРасчетов_Key": "x", "СуммаBalance": 999},  # не заказ клиента
+                   {"ОбъектРасчетов_Key": "d", "СуммаBalance": 100}, {"ОбъектРасчетов_Key": "d", "СуммаBalance": 50.01},
+                   {"ОбъектРасчетов_Key": "e", "СуммаBalance": 4199536.76}, {"ОбъектРасчетов_Key": "f", "СуммаBalance": 701362.61}]  # разные валюты/аналитики
+        self.assertEqual(onec_money.client_debt(orders, balance), {"amount": 17595.6, "orders": 2})
 
     def test_request_rows(self):
         req = {"Ref_Key": "k", "Number": "00ЦБ-1 ", "Date": "2026-10-20T10:00:00", "Статус": "КОплате", "ХозяйственнаяОперация": "ПеречислениеВБюджет",

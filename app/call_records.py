@@ -335,14 +335,6 @@ def run(con, b24, config, log=print):
         ok, failed = transcripts.run(con, config, records_dir(config), log)
         if ok or failed:
             msg.append(f"расшифровано: {ok}" + (f", ошибок: {failed}" if failed else ""))
-        _status["message"] = "Записи звонков: " + "; ".join(msg) + "; идёт разбор звонков…"
-        from . import call_analysis
-        ok, failed, limited = call_analysis.run(con, config, log)
-        if not call_analysis.in_hours(config):
-            msg.append(f"разбор Claude — с {call_analysis.settings(config)['analyze_hours'][0]}")
-        elif ok or failed or limited:
-            msg.append(f"разобрано: {ok}" + (f", ошибок: {failed}" if failed else "")
-                       + ("; лимит Claude — продолжу позже" if limited else ""))
         left = con.execute("SELECT COUNT(*) FROM call_records WHERE file IS NULL AND purged IS NULL AND attempts < ?",
                            (MAX_ATTEMPTS,)).fetchone()[0]
         if left:

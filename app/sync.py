@@ -77,6 +77,15 @@ def run(con, config, force_demo=False):
                     status = "error"
                     log.append(f"Ошибка Битрикс24 (воронки): {e}")
                     traceback.print_exc()
+                try:  # «Воронки → Факт»: переходы по стадиям за последние дни (config.funnel_fact_days, по умолчанию 120)
+                    since = (dt.date.today() - dt.timedelta(days=int(config.get("funnel_fact_days", 120)))).isoformat()
+                    moves, records = b24.fetch_crm_fact(by_uid, since, config.get("deal_funnel", {}))
+                    writes.append(("Б24", "stage_moves", moves, None))
+                    writes.append(("Б24", "fact_records", records, None))
+                except Exception as e:  # noqa
+                    status = "error"
+                    log.append(f"Ошибка Битрикс24 (воронки, факт): {e}")
+                    traceback.print_exc()
                 try:
                     data = b24.fetch(by_uid, date_from)
                     if config.get("letters_sheet", {}).get("url"):
@@ -162,7 +171,7 @@ def run(con, config, force_demo=False):
                             if table in KEEP_UNMAPPED:  # и ответственные не из дашборда («1c:ФИО»)
                                 owners = logins + [r[0] for r in con.execute(
                                     f"SELECT DISTINCT emp FROM {table} WHERE emp LIKE ?", (UNMAPPED + "%",))]
-                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "workload_tasks") else owners,
+                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "stage_moves", "fact_records", "workload_tasks") else owners,
                                          date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки

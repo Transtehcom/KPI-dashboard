@@ -18,9 +18,7 @@ from .transcripts import ENGINE
 MODEL = "sonnet"
 TIMEOUT = 300
 CALL_TYPES = ["продажа", "тендер", "исполнение", "снабжение", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
-PROMPT_VERSION = 4  # меняется вместе с инструкцией: разборы прежней версии делаются заново (см. pending)
-# заново разбираются только звонки для KPI (исходящие от min_call_seconds) с этого дня: v4 добавила «секретарь»
-REDO_SINCE = "2026-10-01"
+PROMPT_VERSION = 4  # меняется вместе с инструкцией: разбор прежней версии при ручной обработке считается недоделанным
 OBJECTIONS = ["цена", "сроки", "нет потребности", "уже есть поставщик", "нет бюджета", "не ЛПР", "нужно согласование",
               "условия оплаты", "качество", "другое"]
 TONES = ["позитивный", "нейтральный", "негативный"]
@@ -182,38 +180,15 @@ def analyze(segments, meta, config, crm_names=()):
 
 # ---------- очередь разбора в дашборде (таблица call_analysis)
 
-# analyze_hours — когда можно тратить лимит подписки на разбор: [«с», «до»] по местному времени, окно может переходить
-# через полночь; пусто — в любое время
-DEFAULTS = {"analyze": True, "analyze_per_run": 30, "analyze_min_chars": 80, "analyze_hours": ["17:30", "08:00"]}
+# Разбор Claude запускает только руководитель вручную (раздел «Звонки», кнопка «Обработать…»): лимит подписки
+# автоматически не тратится.
+DEFAULTS = {"analyze_min_chars": 80}
 LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|лимит|429|overloaded", re.I)
 MAX_ATTEMPTS = 3
 
 
 def settings(config):
     return {**DEFAULTS, **(config.get("call_records") or {})}
-
-
-def in_hours(config, now=None):
-    """Сейчас — разрешённое время для разбора (analyze_hours)."""
-    hours = settings(config).get("analyze_hours")
-    if not hours:
-        return True
-    t = (now or dt.datetime.now()).strftime("%H:%M")
-    start, end = hours
-    return start <= t < end if start <= end else (t >= start or t < end)
-
-
-def pending(con, limit, min_call=120):
-    """Расшифрованные текущей моделью звонки без разбора — от новых к старым. Разбор прежней версии инструкции
-    переделывается только у звонков для KPI (исходящие от min_call секунд) с REDO_SINCE — лимит подписки не тратится
-    на старые и служебные звонки."""
-    return [dict(r) for r in con.execute(
-        "SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
-        "LEFT JOIN call_analysis a ON a.id = c.id WHERE c.file IS NOT NULL AND t.engine = ? "
-        "AND (a.id IS NULL OR (a.version < ? AND a.attempts < ? AND c.dt >= ? AND c.direction = 'out' "
-        "AND c.duration >= ?) OR (a.error IS NOT NULL AND a.attempts < ?)) "
-        "ORDER BY c.dt DESC LIMIT ?", (ENGINE, PROMPT_VERSION, MAX_ATTEMPTS, REDO_SINCE, int(min_call), MAX_ATTEMPTS,
-                                      int(limit)))]
 
 
 def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None):
@@ -297,25 +272,6 @@ def analyze_row(con, config, r, titles, log=print):
         return "failed"
     save(con, r["id"], res, roles, mapping, call, spent=round(time.time() - t, 1))
     return "ok"
-
-
-def run(con, config, log=print):
-    """Разобрать очередь. Возвращает (разобрано, ошибок, остановлено_по_лимиту)."""
-    s = settings(config)
-    if not s["analyze"] or not in_hours(config):
-        return 0, 0, False
-    titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
-    ok = failed = 0
-    for r in pending(con, s["analyze_per_run"], (config.get("bitrix24") or {}).get("min_call_seconds", 120)):
-        if not in_hours(config):  # окно закончилось посреди прохода
-            break
-        res = analyze_row(con, config, r, titles, log)
-        if res == "limit":  # остановиться до следующей синхронизации
-            log("Разбор звонков: продолжу при следующей синхронизации")
-            return ok, failed, True
-        ok += res == "ok"
-        failed += res == "failed"
-    return ok, failed, False
 
 
 # ---------- ручная обработка звонков из раздела «Звонки»: расшифровка (если нет) и разбор Claude, в любое время суток

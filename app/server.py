@@ -234,8 +234,6 @@ class App:
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_from": call_records.keep_from(self.config),
-                "analyze_hours": call_analysis.settings(self.config).get("analyze_hours"),
-                "analyze": bool(call_analysis.settings(self.config).get("analyze")),
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
                 "download": call_records.status() if is_mgr else None}
 
@@ -491,8 +489,11 @@ class Handler(BaseHTTPRequestHandler):
                     logins = [x for x in (q.get("login") or "").split(",") if x]  # несколько ответственных через запятую
                     # отделы через запятую; «_none» — ответственные без отдела (нет в разделе «Сотрудники»)
                     deps = [("" if x == "_none" else x) for x in q["department"].split(",") if x] if q.get("department") else None
+                    mode = q.get("mode") or "date"
+                    if mode not in ("date", "fact"):
+                        raise BadRequest("Неизвестный вид воронок")
                     return self.send_json(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
-                                                      date_from, date_to, date_field, deps))
+                                                      date_from, date_to, date_field, deps, mode))
                 if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
                     if not date_from and not date_to:  # период не выбран — текущий месяц, как в KPI
@@ -680,7 +681,7 @@ class Handler(BaseHTTPRequestHandler):
                         if key:
                             res.update(onec_suppliers.build_quotes(app.con, key, date_from, date_to, q.get("item") or None))
                         else:
-                            res["list"] = onec_suppliers.quote_suppliers(app.con, date_from, date_to, q.get("not_bought") == "1")
+                            res["list"] = onec_suppliers.quote_suppliers(app.con, date_from, date_to, q.get("not_bought") == "1", q.get("search"))
                         return self.send_json(res)
                     key = onec_suppliers.find_partner(app.con, q.get("partner"), q.get("inn"))
                     if (q.get("partner") or q.get("inn")) and not key:
@@ -688,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
                     if key:
                         res.update(onec_suppliers.build(app.con, key, date_from, date_to, q.get("item") or None))
                     else:
-                        res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to)
+                        res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to, q.get("search"))
                     return self.send_json(res)
                 if path == "/api/workload" and method == "GET":  # вкладка «Загрузка»: руководитель — все, сотрудник — только он сам
                     portal = urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc

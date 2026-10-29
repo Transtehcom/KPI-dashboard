@@ -408,6 +408,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .mt tr.tot th, .mt tr.tot td { font-weight: 700; border-top: 2px solid var(--line-strong); }
 .mt td.late, .dt td.late, .stat .v.late { color: var(--bad); font-weight: 600; }
 .stats.stats5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.stats.stats3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 700px) { .stats.stats3 { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1100px) { .stats.stats5 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .mt thead th { vertical-align: top; }
 .mt th .th-note { display: block; margin: 3px 0 0 auto; min-width: 130px; max-width: 190px; font-size: 11px; font-weight: 400; line-height: 1.3;
@@ -754,14 +756,15 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (!state.month || !months.includes(state.month)) state.month = PREVIEW ? PREVIEW.default_month : b.current_month;
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
+    if (isFunnelHash(h)) state.fMode = h === "funnel-fact" ? "fact" : "date";
     if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
     else if (h === "workload" && !PREVIEW) { state.view = "workload"; if (!isMgr) state.login = b.me.login; }
-    else if (!isMgr) { state.view = h === "funnel" ? "funnel" : "emp"; state.login = b.me.login; }
+    else if (!isMgr) { state.view = isFunnelHash(h) ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
     else if (h === "money" && !PREVIEW) { state.view = "money"; }
     else if (h.split("?")[0] === "suppliers" && !PREVIEW) { state.view = "suppliers"; supFromHash(h); }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
-    else if (h === "funnel") { state.view = "funnel"; }
+    else if (isFunnelHash(h)) { state.view = "funnel"; }
     else if (metricsView(h) && !PREVIEW) { state.view = metricsView(h); }
     else { state.view = "team"; }
     renderShell();
@@ -807,7 +810,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a><a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${PREVIEW ? "" : `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${PREVIEW ? "" : `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -822,7 +825,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     document.getElementById("rulesBtn").addEventListener("click", showRules);
     root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
       ev.preventDefault();
-      if (a.dataset.tab === "funnel") { state.view = "funnel"; location.hash = "funnel"; }
+      if (a.dataset.tab === "funnel") { state.view = "funnel"; state.fMode = a.dataset.fmode === "fact" ? "fact" : "date"; location.hash = state.fMode === "fact" ? "funnel-fact" : "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
       else if (a.dataset.tab === "workload") { state.view = "workload"; location.hash = "workload"; }
       else if (a.dataset.tab === "money") { state.view = "money"; location.hash = "money"; }
@@ -873,6 +876,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   }
   function openEmp(login) { const fromFunnel = state.view === "funnel"; state.view = "emp"; state.login = login; location.hash = "emp-" + login; if (fromFunnel) renderShell(); load(); window.scrollTo(0, 0); }
 
+  const isFunnelHash = (h) => h === "funnel" || h === "funnel-fact";
   let sideCache = {};
   async function load() {
     const main = document.getElementById("main");
@@ -893,7 +897,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         const [dFrom, dTo] = funnelPeriod();
         const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
         const dep = state.fDep == null ? "" : `&department=${encodeURIComponent(state.fDep || "_none")}`;
-        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}${dep}`);
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&mode=${state.fMode === "fact" ? "fact" : "date"}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}${dep}`);
         const logins = (state.fLogins || []).join(",");
         const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
           logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
@@ -1183,7 +1187,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
   // разбор звонка Claude: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
-  let anWhen = "разбор позже";
+  let anWhen = "не обработан";
   const anCell = (c) => {
     const a = c.analysis;
     const mgr = state.boot.me.role === "manager" && c.audio === "ready";
@@ -1252,7 +1256,6 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
       (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
     const emps = d.employees, multi = emps.length > 1;
-    anWhen = d.analyze === false ? "разбор выключен" : d.analyze_hours ? `разбор с ${d.analyze_hours[0]}` : "разбор позже";  // когда Claude разбирает звонки  // администратор или руководитель отдела
     const title = d.deal != null ? `по сделке ${d.deal}` : periodLabel(d.date_from, d.date_to);
     // сортировка щелчком по заголовку; при равенстве — новые звонки выше
     const sort = state.cSort || { key: "dt", dir: -1 };
@@ -1464,12 +1467,17 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const q = supQuery(h);
     state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h, mode: q.mode === "requests" ? "requests" : "" };
   }
-  async function loadSuppliers(refresh) {
-    clearTimeout(supTimer);
+  function supParams(refresh) {
     const s = (state.sup = state.sup || {}), p = new URLSearchParams();
     for (const k of ["partner", "inn", "item", "date_from", "date_to"]) if (s[k]) p.set(k, s[k]);
     if (s.mode === "requests") { p.set("mode", "requests"); if (s.notBought) p.set("not_bought", "1"); }
+    if (s.search && !s.partner && !s.inn) p.set("search", s.search);  // поиск по списку; в карточке поставщика фильтруются её таблицы
     if (refresh) p.set("refresh", "1");
+    return p;
+  }
+  async function loadSuppliers(refresh) {
+    clearTimeout(supTimer);
+    const p = supParams(refresh);
     try {
       const d = await api("/api/suppliers?" + p);
       renderSuppliers(d);
@@ -1499,8 +1507,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       body = supRequestsBody(d, { pc, day, pr });
     } else if (d.list) {
       const pg = supPageInfo(d.list.length);
-      body = `<section class="panel"><div class="panel-h"><h2>Поставщики</h2><span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Закупки, ₽</th><th class="n">Позиций</th><th class="n">Поступлений</th><th>Последняя закупка</th></tr></thead><tbody>
-        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.amount, 2)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.docs)}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
+      body = `<section class="panel"><div class="panel-h"><h2>Поставщики</h2>${supSearchHtml()}<span class="muted small" id="supCount">${supCountText(d)}</span></div><div class="panel-b"><div class="panel-b" id="supList">${supListInner(d, false)}</div></section>`;
     } else {
       const it = d.item;
       body = `<section class="stats">
@@ -1509,7 +1516,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <div class="panel stat"><div class="eyebrow">Позиций с ростом цены</div><div class="v">${nf(T.growth)}</div><div class="h">последняя цена выше первой за период</div></div>
         <div class="panel stat"><div class="eyebrow">Позиций без альтернатив</div><div class="v">${nf(T.no_alt)}</div><div class="h">других поставщиков за период нет</div></div></section>
         ${d.foreign_lines ? `<div class="muted small">Строки в иностранной валюте (${nf(d.foreign_lines)}) в суммы и сравнение цен не входят.</div>` : ""}
-        <section class="panel"><div class="panel-h"><h2>Номенклатура и цены</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу = сумма / количество</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Объём</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средневзв. цена, ₽</th><th class="n">Изменение</th><th class="n">Закупки, ₽</th><th>Последняя закупка</th><th class="n">Альтернатив</th></tr></thead><tbody>
+        <section class="panel"><div class="panel-h"><h2>Номенклатура и цены</h2>${supSearchHtml(true)}<span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу = сумма / количество</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Объём</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средневзв. цена, ₽</th><th class="n">Изменение</th><th class="n">Закупки, ₽</th><th>Последняя закупка</th><th class="n">Альтернатив</th></tr></thead><tbody>
         ${d.items.map((x) => `<tr class="mrow${it && it.key === x.key ? " on" : ""}" data-item="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.item)}</td><td>${esc(x.unit || "—")}</td><td class="n">${nf(x.qty, 2)}</td><td class="n">${nf(x.first, 2)}</td><td class="n">${nf(x.last, 2)}</td><td class="n">${nf(x.avg, 2)}</td><td class="n">${pc(x.change)}</td><td class="n">${nf(x.amount, 2)}</td><td>${day(x.last_date)}</td><td class="n">${x.alternatives ? nf(x.alternatives) : `<span class="muted">нет</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Закупок за период нет</span>`}</div></section>`;
       if (it) {
         const dyn = d.dynamics || [];
@@ -1529,6 +1536,9 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${r.kind === "ret" ? "Возврат " : "Поступление "}${esc(r.doc)}</td><td class="wrap">${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.qty, 2)}</td><td class="n">${nf(r.price, 2)}</td><td class="n">${r.kind === "ret" ? "−" : ""}${nf(r.amount, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
     }
     const main = document.getElementById("main");
+    // страница перерисовывается сама (идёт загрузка из 1С, смена периода…): курсор и набранный текст остаются на месте
+    const ae = document.activeElement, keep = ae && (ae.id === "supQ" || ae.id === "supCardQ")
+      ? { id: ae.id, value: ae.value, start: ae.selectionStart, end: ae.selectionEnd } : null;
     main.innerHTML = head + body;
     const go = (patch) => { Object.assign(state.sup, patch); loadSuppliers(); };
     main.querySelectorAll("[data-sup]").forEach((r) => r.addEventListener("click", () => go({ partner: r.dataset.sup, inn: "", item: "" })));
@@ -1541,6 +1551,43 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const nb = document.getElementById("supNotBought");
     if (nb) nb.addEventListener("change", (e) => go({ notBought: e.target.checked, page: 0 }));
     pgBind(main, state.sup, loadSuppliers);
+    const sq = document.getElementById("supQ");
+    if (sq) {  // список обновляется на месте: строка ввода не пересоздаётся, поэтому набор и вставка не сбиваются
+      sq.addEventListener("input", () => {
+        clearTimeout(state.supQT);
+        state.supQT = setTimeout(async () => {
+          const my = (state.supSeq = (state.supSeq || 0) + 1);
+          state.sup.search = sq.value.trim(); state.sup.page = 0;
+          try {
+            const d2 = await api("/api/suppliers?" + supParams());
+            const box = document.getElementById("supList");
+            if (my !== state.supSeq || !box || !d2.list) return;  // пришёл устаревший ответ или список уже закрыт
+            box.innerHTML = supListInner(d2, d2.mode === "requests");
+            const cnt = document.getElementById("supCount"); if (cnt) cnt.textContent = supCountText(d2);
+            supBindList(box);
+          } catch (e) { if (e.message !== "auth") toast(e.message); }
+        }, 300);
+      });
+    }
+    const cq = document.getElementById("supCardQ");  // карточка: строки номенклатуры и истории скрываются сразу, без запроса
+    if (cq) {
+      const apply = () => {
+        const w = cq.value.toLowerCase().replace(/ё/g, "е").split(/\s+/).filter(Boolean); state.sup.cq = cq.value;
+        main.querySelectorAll("table.sup-t tbody tr:not([data-sup])").forEach((tr) => { const t = tr.textContent.toLowerCase().replace(/ё/g, "е"); tr.hidden = !w.every((x) => t.includes(x)); });
+      };
+      cq.addEventListener("input", apply);
+      if (cq.value) apply();
+    }
+    if (keep) {
+      const el = document.getElementById(keep.id);
+      if (el) {
+        const changed = el.value !== keep.value;  // пока шёл запрос, текст успел измениться — берём то, что набрано сейчас
+        if (changed) el.value = keep.value;
+        el.focus();
+        try { el.setSelectionRange(keep.start, keep.end); } catch (e) { /* поле без выделения */ }
+        if (changed) el.dispatchEvent(new Event("input"));  // применить набранное: обновить список или таблицы карточки
+      }
+    }
   }
   // постраничный показ списков: по 20 / 50 / 100 строк, выбор запоминается в браузере и общий для всех списков.
   // st — объект состояния списка {size, page}; pgBind после отрисовки подключает выбор размера и кнопки «Назад / Далее»
@@ -1564,6 +1611,21 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     }));
     root.querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { st.page = (st.page || 0) + Number(b.dataset.pg); again(); }));
   }
+  // тело списка поставщиков (пейджер и таблица): отдельно, чтобы поиск обновлял только его и не пересоздавал строку ввода
+  function supListInner(d, isReq) {
+    const day = (v) => (v ? ruDay(v.slice(0, 10)) : "—"), pg = supPageInfo(d.list.length), s = state.sup;
+    return isReq ? `${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Заявок</th><th class="n">Позиций</th><th class="n">Ответил ценой</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Закупки</th><th>Последняя заявка</th></tr></thead><tbody>
+        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}${supFound(x)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.requests)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.priced)}</td><td class="n">${nf(x.best)}</td><td class="n">${nf(x.chosen)}</td><td>${x.bought ? "были" : `<span class="muted">не было</span>`}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">Заявок за период нет</span>`}` : `${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Закупки, ₽</th><th class="n">Позиций</th><th class="n">Поступлений</th><th>Последняя закупка</th></tr></thead><tbody>
+        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}${supFound(x)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.amount, 2)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.docs)}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">${s.search ? "По запросу ничего не найдено" : "Закупок за период нет"}</span>`}`;
+  }
+  function supBindList(root) {
+    root.querySelectorAll("[data-sup]").forEach((r) => r.addEventListener("click", () => { Object.assign(state.sup, { partner: r.dataset.sup, inn: "", item: "" }); loadSuppliers(); }));
+    pgBind(root, state.sup, loadSuppliers);
+  }
+  const supCountText = (d) => `${nf(d.list.length)} ${state.sup.search ? "найдено" : "за период"} · нажмите на строку`;
+  // поиск по поставщикам: название, ИНН, номенклатура и документы (история закупок / заявки); в карточке — по её таблицам
+  const supSearchHtml = (card) => `<input type="search" id="${card ? "supCardQ" : "supQ"}" class="sup-q" placeholder="${card ? "Поиск по номенклатуре и истории…" : "Поиск: поставщик, ИНН, номенклатура, документ…"}" value="${esc((card ? state.sup.cq : state.sup.search) || "")}" style="min-width:${card ? 240 : 300}px" aria-label="Поиск">`;
+  const supFound = (x) => (x.found && x.found.length ? `<div class="muted small" style="margin-top:2px">${x.found.map((f) => esc(f)).join(" · ")}</div>` : "");
   const supPageInfo = (total) => pgInfo(state.sup, total);
   const supPagerHtml = (total) => pgHtml(state.sup, total, "поставщиков");
   // «Заявки поставщикам»: предложения поставщиков из заявок в отдел снабжения (статус «Отработана»), оформление как у закупок
@@ -1579,8 +1641,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (d.list) {
       const pg = supPageInfo(d.list.length);
       return `<section class="panel"><div class="panel-h"><h2>Поставщики в заявках</h2><label class="small"><input type="checkbox" id="supNotBought" ${state.sup.notBought ? "checked" : ""}> только те, у кого не было закупок</label>
-        <span class="muted small">${nf(d.list.length)} за период · нажмите на строку</span></div><div class="panel-b">${supPagerHtml(d.list.length)}${d.list.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Поставщик</th><th>ИНН</th><th class="n">Заявок</th><th class="n">Позиций</th><th class="n">Ответил ценой</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Закупки</th><th>Последняя заявка</th></tr></thead><tbody>
-        ${d.list.slice(pg.from, pg.to).map((x) => `<tr class="mrow" data-sup="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.name)}</td><td>${esc(x.inn || "—")}</td><td class="n">${nf(x.requests)}</td><td class="n">${nf(x.items)}</td><td class="n">${nf(x.priced)}</td><td class="n">${nf(x.best)}</td><td class="n">${nf(x.chosen)}</td><td>${x.bought ? "были" : `<span class="muted">не было</span>`}</td><td>${day(x.last)}</td></tr>`).join("")}</tbody></table></div>${d.list.length > 20 ? supPagerHtml(d.list.length) : ""}` : `<span class="muted">Заявок за период нет</span>`}</div></section>`;
+        ${supSearchHtml()}<span class="muted small" id="supCount">${supCountText(d)}</span></div><div class="panel-b"><div class="panel-b" id="supList">${supListInner(d, true)}</div></section>`;
     }
     const T = d.tiles, it = d.item;
     let html = `${d.partner && d.partner.bought === false ? `<div class="muted small">Закупок у этого поставщика в 1С не было — он только в заявках.</div>` : ""}
@@ -1589,7 +1650,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <div class="panel stat"><div class="eyebrow">Позиций с ценой</div><div class="v">${nf(T.items)}</div></div>
         <div class="panel stat"><div class="eyebrow">Лучшая цена</div><div class="v">${nf(T.best)}</div><div class="h">строк заявок, где его цена минимальная</div></div>
         <div class="panel stat"><div class="eyebrow">Выбран поставщиком</div><div class="v">${nf(T.chosen)}</div><div class="h">строк заявок</div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Номенклатура и предложения</h2><span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу, как внёс снабженец</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Заявок</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средняя, ₽</th><th class="n">Мин., ₽</th><th class="n">Изменение</th><th class="n">Срок, дн.</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Последний ответ</th><th class="n">Альтернатив</th></tr></thead><tbody>
+      <section class="panel"><div class="panel-h"><h2>Номенклатура и предложения</h2>${supSearchHtml(true)}<span class="muted small">нажмите на позицию — динамика цены, альтернативы и история · цена за единицу, как внёс снабженец</span></div><div class="panel-b">${d.items.length ? `<div class="scroll"><table class="mt sup-t"><thead><tr><th>Номенклатура</th><th>Ед.</th><th class="n">Заявок</th><th class="n">Первая цена, ₽</th><th class="n">Последняя цена, ₽</th><th class="n">Средняя, ₽</th><th class="n">Мин., ₽</th><th class="n">Изменение</th><th class="n">Срок, дн.</th><th class="n">Лучшая цена</th><th class="n">Выбран</th><th>Последний ответ</th><th class="n">Альтернатив</th></tr></thead><tbody>
         ${d.items.map((x) => `<tr class="mrow${it && it.key === x.key ? " on" : ""}" data-item="${esc(x.key)}" style="cursor:pointer"><td>${esc(x.item)}</td><td>${esc(x.unit || "—")}</td><td class="n">${nf(x.requests)}</td><td class="n">${nf(x.first, 2)}</td><td class="n">${nf(x.last, 2)}</td><td class="n">${nf(x.avg, 2)}</td><td class="n">${nf(x.min, 2)}</td><td class="n">${pc(x.change)}</td><td class="n">${x.term != null ? nf(x.term) : "—"}</td><td class="n">${nf(x.best)}</td><td class="n">${nf(x.chosen)}</td><td>${day(x.last_date)}</td><td class="n">${x.alternatives ? nf(x.alternatives) : `<span class="muted">нет</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Заявок за период нет</span>`}</div></section>`;
     if (it) {
       html += `<section class="panel"><div class="panel-h"><h2>${esc(it.item)}</h2><span class="muted small">динамика средней цены предложений по месяцам, ₽/${esc(it.unit || "ед.")}</span></div><div class="panel-b">${supChart(d.dynamics)}</div></section>
@@ -1677,17 +1738,16 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <div class="sub">Платёжный календарь на ${nf(d.calendar.length)} дней с ${ruDay(d.asof)}. Суммы в рублях с копейками; другие валюты — отдельно, без пересчёта.</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters sp-add" style="margin:0">
         <label>Дата среза<input type="date" id="mAsof" value="${esc(d.asof_manual || d.asof)}"></label>
-        <label title="Часть остатка, которой нельзя распоряжаться: вычитается из «Доступно на начало»">Недоступные средства, ₽<input type="number" step="0.01" id="mAdjust" value="${d.adjust}" style="width:150px"></label>
+        <label title="Часть остатка, которой нельзя распоряжаться: вычитается из остатка на начало платёжного календаря">Недоступные средства, ₽<input type="number" step="0.01" id="mAdjust" value="${d.adjust}" style="width:150px"></label>
         <button class="btn" id="mAsofToday" title="Дата среза — всегда сегодня">Сегодня</button>
         <button class="btn primary" id="mRefresh" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button></div>
         <span class="muted small">Из 1С: ${S.at ? "загружено " + when(S.at) : "ещё не загружено"}${S.last_move ? " · последнее движение по счетам " + when(S.last_move) + " (OData — копия базы за прошлый день)" : ""}</span></div>
         ${S.error ? `<div class="panel-b" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(S.error)}. Показаны суммы последней успешной загрузки${S.at ? " (" + when(S.at) + ")" : ""}.</div>` : ""}
         ${!S.at && !d.refreshing ? `<div class="panel-b">Данных из 1С ещё нет — нажмите «Обновить из 1С».</div>` : ""}</section>
-      <section class="stats">
-        <div class="panel stat"><div class="eyebrow">Доступно на начало</div><div class="v">${m2(T.start)}</div><div class="h">по счетам и кассам${d.adjust ? ", за вычетом недоступных" : ""}</div></div>
+      <section class="stats stats3">
+        <div class="panel stat"><div class="eyebrow">Дебиторская задолженность</div><div class="v">${d.client_debt == null ? "—" : m2(d.client_debt)}</div><div class="h">${d.client_debt == null ? "появится после «Обновить из 1С»" : `«Долг клиента» по ${nf(d.client_debt_orders)} заказам клиентов (1С)`}</div></div>
         <div class="panel stat"><div class="eyebrow">Поступления периода</div><div class="v">${m2(T.in)}</div></div>
         <div class="panel stat"><div class="eyebrow">Выплаты периода</div><div class="v">${m2(T.out)}</div><div class="h">только согласованные с датой</div></div>
-        <div class="panel stat"><div class="eyebrow">Минимум остатка</div><div class="v"${neg(T.low)}>${m2(T.low)}</div></div>
       </section>
       <details class="panel" data-keep ${open[0] ? "open" : ""}><summary class="panel-h" style="cursor:pointer"><h2 style="display:inline">Остатки по счетам и кассам</h2> <span class="muted small">${nf(d.cash.length)} · итого в рублях ${m2(d.cash_rub)}</span></summary>
         <div class="panel-b">${d.cash.length ? `<table class="mt"><thead><tr><th>Счёт / касса</th><th class="n">Остаток</th><th>Валюта</th><th>Последнее движение</th></tr></thead><tbody>
@@ -1708,7 +1768,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
           <label class="small">Ожидаем <input name="plan" type="date"></label><button class="btn primary">Добавить</button></form></details>
         ${d.owe.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt sp-edit"><thead><tr><th>Клиент</th><th>Основание</th><th>Вид</th><th class="n">К получению</th><th class="n">Долг за отгрузку</th><th>По договору</th><th>Ожидаем</th><th class="n">Просрочка, дней</th><th>Статус даты</th><th></th></tr></thead><tbody>
           ${d.owe.map((o) => o.src === "1c" ? `<tr data-rid="${esc(o.id)}" class="mrow"><td>${esc(o.party)}</td><td>${esc(o.basis || "—")}</td><td>${esc(o.type)}</td><td class="n">${m2(o.amount)}${cur(o.currency)}</td><td class="n">${o.owed ? m2(o.owed) : "—"}</td><td>${o.contract ? ruDay(o.contract) : "—"}</td>
-            <td class="in"><input data-expect type="date" value="${esc(o.promised ? o.plan : "")}" title="Обещанная клиентом дата оплаты${o.plan && !o.promised ? " (сейчас по договору: " + ruDay(o.plan) + ")" : ""}"></td><td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td></td></tr>
+            <td class="in"><input data-expect type="date" value="${esc(o.plan || "")}" title="${o.promised ? "Обещанная клиентом дата оплаты" : "Дата платежа из правил оплаты заказа в 1С; чтобы указать обещание клиента, измените дату"}"></td><td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td></td></tr>
             <tr class="mdetail" hidden><td colspan="10" class="muted small">${esc(o.detail || "")}</td></tr>`
           : `<tr data-iid="${o.id}" data-kind="in" class="mrow"><td class="in">${inp("party", o.party, "text", 180)}</td><td class="in">${inp("basis", o.basis, "text", 160)}</td><td class="in">${sel("type", o.type, O.in_types)}</td>
             <td class="in">${inp("amount", o.amount, "number", 130)}</td><td class="in">${inp("owed", o.owed, "number", 130)}</td><td class="in">${inp("contract", o.contract, "date")}</td><td class="in">${inp("plan", o.plan, "date")}</td>
@@ -2043,7 +2103,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     return ["", ""];
   }
   document.addEventListener("click", (e) => {  // список ответственных и меню «Метрики» закрываются по клику мимо них
-    for (const id of ["mMenu", "sMenu"]) { const mm = document.getElementById(id); if (mm && mm.open && !mm.contains(e.target)) mm.open = false; }
+    for (const id of ["mMenu", "sMenu", "fMenu"]) { const mm = document.getElementById(id); if (mm && mm.open && !mm.contains(e.target)) mm.open = false; }
     const det = document.getElementById("fResp");
     if (det && det.open && !det.contains(e.target)) { det.open = false; state.fRespOpen = false; }
   });
@@ -2060,11 +2120,13 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const snapTxt = snap ? ruDay(snap[0]) + " " + snap[1] : "—";
 
     // --- фильтры: период, ответственные (несколько), воронка сделок
-    const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage";
+    const fact = state.fMode === "fact" && !PREVIEW;  // «Факт»: движение по истории стадий, а не срез открытых записей
+    const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage" && !fact;
     const perHtml = PREVIEW ? "" : `${periodHtml(per, "f")}
-          ${per.mode !== "all" ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
+          ${per.mode !== "all" && !fact ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
     const perRange = dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`.trim();
-    const perTxt = !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${perRange}.`;
+    const perTxt = fact ? ` Что произошло ${dFrom || dTo ? perRange : "за всё время, по которому есть история стадий"}: создано, перешло на стадии этапов, закрыто — по истории стадий Битрикс24, в том числе по уже закрытым записям. Одна запись может попасть в несколько этапов.`
+      : !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${perRange}.`;
     const resp = new Map();  // ответственные из обеих воронок в одном списке
     FUNNELS.forEach((x) => d[x.kind].filters.responsibles.forEach((r) => {
       const o = resp.get(r.value) || { value: r.value, name: r.name, count: 0 };
@@ -2093,13 +2155,13 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       const shape = (i) => bars
         ? `<div class="fn-bar"><i style="width:${Math.max(1.5, w[i] * 100)}%;height:${amt ? Math.round(12 + 30 * tone[i]) : 28}px;background:${toneColor(tone[i])}"></i></div>`
         : `<div class="fn-shape">${funnelShape(i, ss.length, tone[i])}</div>`;
-      return `<section class="panel"><div class="panel-h"><h2>${x.title}</h2><span class="muted small">${nf(fx.total)} ${x.gen} в воронке</span></div>
+      return `<section class="panel"><div class="panel-h"><h2>${x.title}</h2><span class="muted small">${nf(fx.total)} ${x.gen} ${fact ? "затронуто за период" : "в воронке"}</span></div>
         <div class="fn" role="list">
         ${ss.map((s, i) => `<div class="fn-row ${x.kind === K.kind && i === sel ? "sel" : ""}" role="listitem" tabindex="0" data-kind="${x.kind}" data-sec="${i}" aria-label="${x.title}, ${esc(s.title)}: ${s.count}">
           ${shape(i)}
           <div class="fn-lab"><span class="t">${esc(s.title)}</span><span class="c">${nf(s.count)}</span>
             ${amt ? `<span class="a">${money(s.amount)}</span>` : ""}
-            <span class="h">${s.share_of_total != null ? `${pct(s.share_of_total, 1)} воронки` : ""}${s.avg_days_on_stage != null ? ` · в среднем ${nf(s.avg_days_on_stage)} дн. на стадии` : ""}</span></div>
+            <span class="h">${s.share_of_total != null ? `${pct(s.share_of_total, 1)} ${fact ? "затронутых" : "воронки"}` : ""}${s.avg_days_on_stage != null && !fact ? ` · в среднем ${nf(s.avg_days_on_stage)} дн. на стадии` : ""}</span></div>
         </div>`).join("")}
         </div>
         <div class="fn-legend"><span class="fn-scale"></span><span>${bars ? "Длина полосы — количество. " : ""}${amt ? `Цвет${bars ? " и толщина" : ""} — сумма: чем темнее, тем больше. Шкала логарифмическая: видна разница и между тысячами, и между миллиардами` : "Цвет — количество: чем темнее, тем больше"}.</span></div></section>`;
@@ -2151,7 +2213,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <table class="pr pr-params"><tbody>
           <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
           <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
-          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки</td></tr>
+          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; ${fact ? "факт: создание, переходы по стадиям и закрытие за период" : "учитываются открытые сейчас лиды и сделки"}</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
       ${(() => {
@@ -2165,8 +2227,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const amt = hasAmount(f), manyCats = f.filters.categories.length > 1;
     const other = FUNNELS.filter((x) => d[x.kind].other_stages.length);
     main.innerHTML = `
-      <div class="head no-print"><div><div class="eyebrow">Битрикс24 · CRM</div><h1>Воронки лидов и сделок</h1>
-        <div class="sub">Текущее состояние открытых лидов и сделок на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
+      <div class="head no-print"><div><div class="eyebrow">Битрикс24 · CRM${fact ? " · факт" : ""}</div><h1>Воронки лидов и сделок${fact ? " — факт" : ""}</h1>
+        <div class="sub">${fact ? "Движение лидов и сделок по истории стадий" : "Текущее состояние открытых лидов и сделок"} на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
         <div class="filters">
           ${perHtml}
           ${PREVIEW ? "" : `<label for="fDep">Отдел<select id="fDep"><option value="__all">Все</option>${deps.map((x) => `<option value="${esc(x.value)}" ${state.fDep === x.value ? "selected" : ""}>${esc(x.name)} (${x.count})</option>`).join("")}</select></label>`}
@@ -2189,10 +2251,10 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
             <div><div class="eyebrow" style="margin-bottom:8px">По стадиям</div>${hbars(cur.by_stage, "count", (x) => `${esc(x.stage)}${manyCats ? ` <small>· ${esc(x.category)}</small>` : ""}`, amt)}</div>
             <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, amt ? "amount" : "count", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронки только этого сотрудника">${esc(x.name)}</button>`, amt)}</div>
           </div>
-          <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>${K.one}</th><th>Клиент</th><th>Ответственный</th>${manyCats ? "<th>Воронка</th>" : ""}<th>${K.stage}</th>${amt ? "<th>Сумма, ₽</th>" : ""}<th>Дней на стадии</th></tr></thead><tbody>
+          <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>${K.one}</th><th>Клиент</th><th>Ответственный</th>${manyCats ? "<th>Воронка</th>" : ""}<th>${fact ? "Стадия перехода" : K.stage}</th>${amt ? "<th>Сумма, ₽</th>" : ""}<th>${fact ? "Дней с перехода" : "Дней на стадии"}</th></tr></thead><tbody>
             ${cur.deals.slice(0, 150).map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(r.client)}</td><td>${esc(r.responsible)}</td>${manyCats ? `<td>${esc(r.category)}</td>` : ""}<td>${esc(r.stage)}</td>
               ${amt ? `<td class="n">${nf(r.amount)}</td>` : ""}<td class="n">${r.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
-          ${cur.deals.length > 150 ? `<div class="muted small">Показаны первые 150 из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">На этом этапе сейчас ничего нет.</div>`}
+          ${cur.deals.length > 150 ? `<div class="muted small">Показаны первые 150 из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">${fact ? "За период на этом этапе ничего не было." : "На этом этапе сейчас ничего нет."}</div>`}
         </div></section>
       ${other.map((x) => `<details class="panel more no-print" style="border-top:0"><summary>${x.title}: стадии вне этапов воронки · ${d[x.kind].other_stages.length}</summary><div class="more-b">
         <div class="desc">Записи на этих стадиях не попали ни в один этап, заданный списком стадий. Чтобы учесть стадию, добавьте её название в config.json → ${d[x.kind].config_key} → sections.</div>
@@ -2454,13 +2516,14 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
     if (state.boot.me.role !== "manager") {
-      const view = h === "funnel" ? "funnel" : h === "workload" ? "workload" : "emp";
-      if (view !== state.view) { state.view = view; renderShell(); load(); }
+      const view = isFunnelHash(h) ? "funnel" : h === "workload" ? "workload" : "emp";
+      const fm = h === "funnel-fact" ? "fact" : "date";
+      if (view !== state.view || (view === "funnel" && state.fMode !== fm)) { state.view = view; if (view === "funnel") state.fMode = fm; renderShell(); load(); }
       return;
     }
     if (h.startsWith("emp-") && h.slice(4) !== state.login) { state.view = "emp"; state.login = h.slice(4); load(); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
-    else if (h === "funnel" && state.view !== "funnel") { state.view = "funnel"; renderShell(); load(); }
+    else if (isFunnelHash(h) && (state.view !== "funnel" || state.fMode !== (h === "funnel-fact" ? "fact" : "date"))) { state.view = "funnel"; state.fMode = h === "funnel-fact" ? "fact" : "date"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
     else if (h === "workload" && state.view !== "workload") { state.view = "workload"; renderShell(); load(); }
     else if (h === "money" && state.view !== "money") { state.view = "money"; renderShell(); load(); }

@@ -569,6 +569,33 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(leads["total_amount"], 300)
         self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
 
+    def test_deal_funnel_fact_counts_movement_in_period(self):
+        rec = lambda i, created, stage, sem="P", emp="pm": {
+            "id": f"deal{i}", "entity": "deal", "emp": emp, "responsible_id": "14", "responsible": "ПМ", "category_id": "0",
+            "category": "Общая", "stage_id": stage, "stage": stage, "stage_sort": 1, "semantic": sem, "title": f"Сделка {i}",
+            "amount": 100, "created": created, "stage_since": created, "snapshot": "2026-10-20T09:00:00"}
+        mv = lambda i, n, stage, ts, sem="P": {"id": f"deal{i}:{n}", "entity": "deal", "rid": f"deal{i}", "category_id": "0",
+                                               "category": "Общая", "stage_id": stage, "stage": stage, "stage_sort": 1,
+                                               "semantic": sem, "ts": ts}
+        replace_rows(self.con, "fact_records", [
+            rec(1, "2026-09-05T10:00:00", "WON", "S"),        # создана и выиграна в сентябре
+            rec(2, "2026-08-20T10:00:00", "PREPARATION"),     # создана раньше, в сентябре перешла в подготовку
+            rec(3, "2026-10-02T10:00:00", "NEW"),             # октябрьская
+        ])
+        replace_rows(self.con, "stage_moves", [
+            mv(1, 1, "NEW", "2026-09-05T10:00:00"), mv(1, 2, "PREPARATION", "2026-09-06T10:00:00"), mv(1, 3, "WON", "2026-09-20T10:00:00", "S"),
+            mv(2, 1, "NEW", "2026-08-20T10:00:00"), mv(2, 2, "PREPARATION", "2026-09-10T10:00:00"),
+            mv(3, 1, "NEW", "2026-10-02T10:00:00")])
+        f = deal_funnel(self.con, {"employees": []}, date_from="2026-09-01", date_to="2026-09-30", mode="fact")
+        self.assertEqual(f["mode"], "fact")
+        self.assertEqual({s["title"]: s["count"] for s in f["sections"]},
+                         {"Создано в периоде": 1, "В работе": 2, "Преддоговорные сделки": 2, "Договорные сделки": 0,
+                          "Закрыто успешно": 1, "Закрыто неуспешно": 0})
+        self.assertEqual(f["total"], 2)  # октябрьская сделка в сентябре не участвует
+        oct_ = deal_funnel(self.con, {"employees": []}, date_from="2026-10-01", date_to="2026-10-31", mode="fact")
+        self.assertEqual({s["title"]: s["count"] for s in oct_["sections"]}["Создано в периоде"], 1)
+        self.assertEqual(f["other_stages"], [])
+
     def test_funnel_department_filter(self):
         def row(i, emp, rid):
             return {"id": f"d{i}", "entity": "deal", "emp": emp, "responsible_id": rid, "responsible": f"Сотрудник {i}",

@@ -37,10 +37,13 @@ def _first_reach(events, amount):
 
 def stage_rows(stages, moves):
     """stages: [(дата платежа, сумма этапа)]; moves: [(день, «Receipt» | «Expense», сумма)] из РасчетыСКлиентами.
-    Возвращает [{n, amount, ship_date, due_date, paid_date}] — этапы, по которым есть отгруженный долг."""
+    Возвращает [{n, amount, ship_date, due_date, paid_date}] — этапы, по которым есть отгруженный долг.
+    У неоплаченного этапа amount — остаток: оплаты по заказу идут в зачёт этапов по порядку, и частично оплаченный
+    этап уменьшается на уже полученное (как «Долг клиента» в «Карточке расчётов с клиентами»)."""
     shipped = sorted((d, v) for d, kind, v in moves if kind == "Receipt" and v)
     paid = sorted((d, v) for d, kind, v in moves if kind == "Expense" and v)
     total_shipped = sum(v for _, v in shipped)
+    total_paid = sum(v for _, v in paid)
     out, cum, prev = [], 0.0, 0.0
     for n, (due, amount) in enumerate(sorted(stages), 1):
         cum += amount
@@ -48,8 +51,10 @@ def stage_rows(stages, moves):
         if target - prev < TOLERANCE:
             continue
         ship = _first_reach(shipped, target)
-        out.append({"n": n, "amount": round(target - prev, 2), "ship_date": ship, "due_date": due,
-                    "paid_date": _first_reach(paid, target)})
+        paid_date = _first_reach(paid, target)
+        left = target - prev - min(max(total_paid - prev, 0.0), target - prev)  # неоплаченный остаток этапа
+        out.append({"n": n, "amount": round(target - prev if paid_date else left, 2), "ship_date": ship, "due_date": due,
+                    "paid_date": paid_date})
         prev = target
     return out
 

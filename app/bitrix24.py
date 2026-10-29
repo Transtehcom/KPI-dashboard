@@ -697,6 +697,63 @@ class Bitrix24:
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         return rows
 
+    def fetch_crm_fact(self, employees, since, dcfg):
+        """Переходы лидов и сделок по стадиям с даты since (ГГГГ-ММ-ДД) и карточки этих записей (в том числе закрытых):
+        для «Воронки → Факт». Возвращает (переходы → stage_moves, записи → fact_records)."""
+        self.log("Б24: история стадий лидов и сделок")
+        stages, statuses = self.deal_stages(), self.lead_statuses()
+        moves, owners = [], {"lead": set(), "deal": set()}
+        for entity, type_id in (("lead", 1), ("deal", 2)):
+            flt = {">=CREATED_TIME": since}
+            if entity == "deal" and dcfg.get("category_ids"):
+                flt["CATEGORY_ID"] = dcfg["category_ids"]
+            for h in self.list_all("crm.stagehistory.list", {"entityTypeId": type_id, "filter": flt, "order": {"ID": "ASC"}}, key="items"):
+                stage_id = h.get("STAGE_ID") or h.get("STATUS_ID")  # у лидов поля называются STATUS_*
+                cid = str(h.get("CATEGORY_ID") or "0") if entity == "deal" else "lead"
+                if entity == "deal":
+                    st = (stages.get(cid) or {"stages": {}})["stages"].get(stage_id, {})
+                    cat = (stages.get(cid) or {}).get("name") or cid
+                else:
+                    st, cat = statuses.get(stage_id, {}), "Лиды"
+                owners[entity].add(h["OWNER_ID"])
+                moves.append({"id": f"{entity}{h['OWNER_ID']}:{h['ID']}", "entity": entity, "rid": f"{entity}{h['OWNER_ID']}",
+                              "category_id": cid, "category": cat, "stage_id": stage_id, "stage": st.get("name") or stage_id,
+                              "stage_sort": st.get("sort", 0), "semantic": h.get("STAGE_SEMANTIC_ID") or h.get("STATUS_SEMANTIC_ID"),
+                              "ts": self.iso(h.get("CREATED_TIME"))})
+        deals = self.by_ids("crm.deal.list", owners["deal"], ["ID", "TITLE", "ASSIGNED_BY_ID", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID",
+                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_ID"])
+        leads = self.by_ids("crm.lead.list", owners["lead"], ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "STATUS_SEMANTIC_ID",
+                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_TITLE"])
+        companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals.values()], ["ID", "TITLE"])
+        users = self._user_names(d.get("ASSIGNED_BY_ID") for d in [*deals.values(), *leads.values()])
+        snap = time.strftime("%Y-%m-%dT%H:%M:%S")
+        records = []
+        for d in deals.values():
+            cid = str(d.get("CATEGORY_ID") or "0")
+            cat = stages.get(cid, {"name": cid, "stages": {}})
+            st = cat["stages"].get(d.get("STAGE_ID"), {})
+            rid = str(d.get("ASSIGNED_BY_ID") or "")
+            records.append({
+                "id": "deal" + str(d["ID"]), "entity": "deal", "emp": employees.get(int(rid)) if rid else None,
+                "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
+                "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
+                "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
+                "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
+        for d in leads.values():
+            st = statuses.get(d.get("STATUS_ID"), {})
+            rid = str(d.get("ASSIGNED_BY_ID") or "")
+            records.append({
+                "id": "lead" + str(d["ID"]), "entity": "lead", "emp": employees.get(int(rid)) if rid else None,
+                "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": "lead", "category": "Лиды",
+                "stage_id": d.get("STATUS_ID"), "stage": st.get("name") or d.get("STATUS_ID"), "stage_sort": st.get("sort", 0),
+                "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "",
+                "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
+                "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
+        known = {r["id"] for r in records}
+        return [m for m in moves if m["rid"] in known], records  # переходы удалённых записей не нужны
+
     def fetch_crm_leads(self, employees, fcfg):
         """Текущий срез открытых лидов для воронки лидов (хранится в той же таблице crm_deals, entity = lead)."""
         self.log("Б24: лиды для воронки")

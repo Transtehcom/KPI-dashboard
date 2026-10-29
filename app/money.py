@@ -47,7 +47,9 @@ def _num(v, what, required=False):
 def settings(con):
     s = {r[0]: r[1] for r in con.execute("SELECT key, value FROM money_settings")}
     return {"adjust": float(s["adjust"]) if s.get("adjust") not in (None, "") else 0.0, "asof": s.get("asof") or None,
-            "synced_at": s.get("synced_at") or None, "error": s.get("error") or None}
+            "synced_at": s.get("synced_at") or None, "error": s.get("error") or None,
+            "client_debt": float(s["client_debt"]) if s.get("client_debt") else None,
+            "client_debt_orders": int(s["client_debt_orders"]) if s.get("client_debt_orders") else 0}
 
 
 def save_settings(con, b):
@@ -121,7 +123,7 @@ def build(con, today=None):
     for r in con.execute("SELECT id, client, doc, amount, due_date FROM receivables WHERE (paid_date IS NULL OR paid_date = '') "
                          "AND amount > 0 ORDER BY due_date, client"):
         due = _date(r["due_date"])
-        exp = promises.get(r["id"]) or (r["due_date"] if due and due >= asof else None)
+        exp = promises.get(r["id"]) or (r["due_date"] if due else None)  # «Ожидаем» — обещание клиента, иначе «Дата платежа» из правил оплаты заказа
         owe.append({"id": r["id"], "src": "1c", "party": r["client"], "basis": r["doc"], "type": "Отгрузка", "amount": r["amount"],
                     "owed": r["amount"], "contract": r["due_date"], "plan": exp, "promised": r["id"] in promises, "currency": "руб.",
                     "detail": "Дебиторская задолженность: неоплаченный этап графика оплаты заказа " + (r["doc"] or "")})
@@ -175,6 +177,7 @@ def build(con, today=None):
             "sync": {"at": st["synced_at"], "error": st["error"], "last_move": max((c["last"] for c in cash), default=None)},
             "tiles": {"start": start, "in": round(sum(c["in"] for c in cal), 2), "out": round(sum(c["out"] for c in cal), 2),
                       "low": low, "shortfall": max(0.0, -low), "low_date": next(c["date"] for c in cal if c["end"] == low)},
+            "client_debt": st["client_debt"], "client_debt_orders": st["client_debt_orders"],
             "owe": owe, "owe_total": round(sum(o["owed"] for o in owe), 2),
             "owe_late": round(sum(o["owed"] for o in owe if o["late_days"] > 0), 2),
             "owe_advance": round(sum(o["amount"] for o in owe if o["type"] == "Аванс"), 2),

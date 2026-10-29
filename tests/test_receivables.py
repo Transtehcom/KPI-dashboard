@@ -29,6 +29,14 @@ class StageRowsTest(unittest.TestCase):
         self.assertEqual([(r["amount"], r["due_date"], r["paid_date"]) for r in rows],
                          [(200, "2026-09-01", "2026-08-25"), (800, "2026-10-15", "2026-10-20")])
 
+    def test_partial_payment_reduces_open_stage(self):
+        # заказ 00ЦБ-000060: 27,71% / 72,29%, отгружено всё, оплачено 8,5 + 5 + 0,783 млн — долг по карточке расчётов 16 099 069,84
+        stages = [("2025-05-12", 8418931.41), ("2025-08-15", 21963354.43)]
+        moves = [("2025-07-01", "Receipt", 30382285.84), ("2025-05-12", "Expense", 8500000.0),
+                 ("2025-09-05", "Expense", 5000000.0), ("2025-09-19", "Expense", 783216.0)]
+        rows = stage_rows(stages, moves)
+        self.assertEqual([(r["amount"], r["paid_date"]) for r in rows], [(8418931.41, "2025-05-12"), (16099069.84, None)])
+
     def test_due_is_payment_date_from_order_rules(self):
         # срок оплаты — «Дата платежа» из правил оплаты как есть, без поправки на дату отгрузки
         rows = stage_rows([("2026-10-13", 100)], [("2026-07-14", "Receipt", 100)])

@@ -122,7 +122,8 @@ def fetch(onec, today=None):
                      "currency": currencies.get(s["currency_key"], "руб."), "contract": s["date"], "plan": s["date"],
                      "approval": "Не согласовано", "priority": None})
     cust_orders = {o["Ref_Key"]: o for o in q("Document_ЗаказКлиента", {"$filter": "DeletionMark eq false",
-                                                                       "$expand": "Контрагент", "$select": "Ref_Key,Number,Date,Контрагент/Description"})}
+                                                                       "$expand": "Контрагент", "$select": "Ref_Key,Number,Date,Статус,ОбъектРасчетов_Key,Контрагент/Description"})}
+    debt = client_debt(cust_orders.values(), q("AccumulationRegister_РасчетыСКлиентами/Balance()"))
     for s in open_plan(q("AccumulationRegister_РасчетыСКлиентамиПланОплат_RecordType", {"$filter": "Active eq true", "$select": sel})):
         if s["variant"] not in ADVANCE_VARIANTS or s["date"] < today:  # давние открытые этапы — не оплаты, а недозакрытый план
             continue
@@ -133,7 +134,24 @@ def fetch(onec, today=None):
                      "detail": "План оплаты заказа клиента (" + s["variant"] + ")", "amount": s["amount"],
                      "currency": currencies.get(s["currency_key"], "руб."), "contract": s["date"], "plan": s["date"],
                      "approval": None, "priority": None})
-    return {"cash": cash, "plan": plan}
+    return {"cash": cash, "plan": plan, "debt": debt}
+
+
+# в сумму «Долга клиента» идут только заказы в этих статусах (решение от 29.10.2026)
+COUNT_ORDER_STATUSES = {"ТТК_ВЗакуп"}
+
+
+def client_debt(orders, balance):
+    """Дебиторская задолженность — сумма столбца «Долг клиента» списка «Заказы клиентов» в 1С: остаток «Сумма» регистра
+    РасчетыСКлиентами по объекту расчётов заказа; в сумму идут только долги (переплата и аванс в минус не вычитаются),
+    учитываются только заказы в статусе «ТТК_ВЗакуп». Возвращает {"amount": ₽, "orders": число заказов с долгом}."""
+    by_obj = {}
+    for b in balance:
+        k = b.get("ОбъектРасчетов_Key")
+        by_obj[k] = by_obj.get(k, 0.0) + (b.get("СуммаBalance") or 0)
+    debts = [by_obj[o["ОбъектРасчетов_Key"]] for o in orders
+             if o.get("Статус") in COUNT_ORDER_STATUSES and by_obj.get(o.get("ОбъектРасчетов_Key"), 0) > 0.005]
+    return {"amount": round(sum(debts), 2), "orders": len(debts)}
 
 
 def store(con, data, now=None):
@@ -147,6 +165,9 @@ def store(con, data, now=None):
             "approval", "priority"]
     con.executemany(f"INSERT OR REPLACE INTO money_plan ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                     [[p[c] for c in cols] for p in data["plan"]])
+    if data.get("debt"):
+        con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt', ?)", (str(data["debt"]["amount"]),))
+        con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt_orders', ?)", (str(data["debt"]["orders"]),))
     con.execute("INSERT OR REPLACE INTO money_settings VALUES ('synced_at', ?)", (now,))
     con.execute("INSERT OR REPLACE INTO money_settings VALUES ('error', '')")
 
