@@ -11,6 +11,7 @@ TENDER_VALID = ("Действует", "Выиграно", "Проиграно") 
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
 SRC_HAND = "Ввод руководителя"  # записи, которые руководитель вносит в дашборде (штрафы)
+REJECTED = "Отклонён"  # статус тендера 1С для KPI «Операционная дисциплина и качество подачи»
 CRITERIA_TITLES = {"docs": "Документооборот", "tasks": "Задачи в Битрикс24", "quality": "Качество документации"}
 EPS = 1e-9
 
@@ -382,15 +383,15 @@ class Engine:
         }
 
     def calc_tender_operations(self, e, ctx, p):
-        """Сделки сотрудника, проваленные в месяце в воронке «Реализация» (стадия «Сделка провалена» —
-        причина «Сделка провалена при подготовке предложения»; bitrix24.deal_failures). Норма — 0."""
-        rows = self.q("SELECT * FROM deal_failures WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt",
-                      e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
+        """Тендеры 1С (ТТК_Тендер) сотрудника как ведущего менеджера в статусе «Отклонён» с датой тендера в месяце
+        (onec_report.fetch_tenders → tenders_1c). Даты отклонения в 1С нет: «Дата итогов» почти всегда пуста. Норма — 0."""
+        rows = self.q("SELECT * FROM tenders_1c WHERE emp=? AND status=? AND dt>=? AND dt<=? ORDER BY dt",
+                      e["login"], REJECTED, ctx["first"].isoformat(), ctx["last"].isoformat())
         return {
-            "components": [comp("Сделки, проваленные при подготовке предложения", len(rows), p.get("failures_max", 0),
-                                "шт", op="<=", source=SRC_B24)],
-            "details": {"columns": ["Сделка", "Клиент", "Дата провала", "Причина"],
-                        "rows": [[r["title"], r["client"], r["dt"], r["reason"]] for r in rows]},
+            "components": [comp("Тендеры в статусе «Отклонён»", len(rows), p.get("failures_max", 0),
+                                "шт", op="<=", source=SRC_1C)],
+            "details": {"columns": ["Тендер", "Клиент", "Дата тендера", "Лот"],
+                        "rows": [[r["doc"], r["client"], r["dt"], r["title"]] for r in rows]},
         }
 
     def calc_exec_discipline(self, e, ctx, p):

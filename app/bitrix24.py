@@ -159,10 +159,13 @@ class Bitrix24:
         return str(v)[:19]
 
     # ---------- сбор
-    def fetch(self, employees, date_from):
-        """employees: {b24_user_id: login}. Возвращает словарь таблица → список строк."""
+    def fetch(self, employees, date_from, record_employees=None):
+        """employees: {b24_user_id: login} — сотрудники с KPI. record_employees — те, чьи записи звонков нужны
+        разделу «Звонки» (все сотрудники с ID в Б24; по умолчанию — employees). Возвращает словарь таблица → строки."""
         uids = [int(u) for u in employees]
         emp = lambda uid: employees.get(int(uid)) if uid not in (None, "") else None
+        record_employees = record_employees or employees
+        rec_emp = lambda uid: record_employees.get(int(uid)) if uid not in (None, "") else None
         df = date_from.isoformat()
         df_long = (date_from - dt.timedelta(days=150)).isoformat()
         out = {}
@@ -182,7 +185,7 @@ class Bitrix24:
         # звонки (телефония): исходящие и входящие; в KPI идут только исходящие (direction = out)
         self.log("Б24: звонки")
         calls = self.list_all("voximplant.statistic.get", {
-            "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": uids},
+            "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": sorted(set(uids) | {int(u) for u in record_employees})},
             "SORT": "CALL_START_DATE", "ORDER": "ASC"})
         # к чему привязаны звонки и встречи: контакт, компания или лид
         bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set()}
@@ -260,12 +263,24 @@ class Bitrix24:
 
         rows, records = [], []
         for c in calls:
-            login = emp(c.get("PORTAL_USER_ID"))
-            if not login:
+            login, rec_login = emp(c.get("PORTAL_USER_ID")), rec_emp(c.get("PORTAL_USER_ID"))
+            if not (login or rec_login):
                 continue
             start = str(c.get("CALL_START_DATE"))[:19]
             direction = "out" if str(c.get("CALL_TYPE")) == "1" else "in"  # 2 — входящий, 3 — с переадресацией, 4 — обратный
             is_lpr, is_secr, client = entity_info(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID"))
+            contact = f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID") \
+                else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])
+            # запись разговора: копия на Диске Б24 (RECORD_FILE_ID) или ссылка на АТС (CALL_RECORD_URL) — для раздела «Звонки»
+            if rec_login and (c.get("RECORD_FILE_ID") or c.get("CALL_RECORD_URL")):
+                records.append({"id": "call" + str(c["ID"]), "call_id": c.get("CALL_ID"), "emp": rec_login, "dt": start,
+                                "direction": direction, "duration": int(c.get("CALL_DURATION") or 0),
+                                "phone": c.get("PHONE_NUMBER"), "crm_entity": contact if c.get("CRM_ENTITY_ID") else None,
+                                "client": client, "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None,
+                                "record_file_id": str(c.get("RECORD_FILE_ID") or "") or None,
+                                "record_url": c.get("CALL_RECORD_URL") or None})
+            if not login:  # звонки сотрудника без KPI — только записи, в KPI не идут
+                continue
             owner = (OWNER_TYPES.get(c.get("CRM_ENTITY_TYPE"), 0), str(c.get("CRM_ENTITY_ID")))
             t0 = dt.datetime.fromisoformat(start)
             nxt = 0
@@ -276,20 +291,10 @@ class Bitrix24:
                 if t0 <= created <= t0 + dt.timedelta(days=1):
                     nxt = 1
                     break
-            # с кем разговор: сущность CRM, а если звонок не привязан — номер телефона
-            contact = f"{c['CRM_ENTITY_TYPE']}:{c['CRM_ENTITY_ID']}" if c.get("CRM_ENTITY_ID") \
-                else "tel:" + str(c.get("PHONE_NUMBER") or c["ID"])
+            # с кем разговор (contact): сущность CRM, а если звонок не привязан — номер телефона
             rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": direction,
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
                          "next_step": nxt, "status": "done", "subject": "", "client": client, "contact": contact})
-            # запись разговора: копия на Диске Б24 (RECORD_FILE_ID) или ссылка на АТС (CALL_RECORD_URL)
-            if c.get("RECORD_FILE_ID") or c.get("CALL_RECORD_URL"):
-                records.append({"id": "call" + str(c["ID"]), "call_id": c.get("CALL_ID"), "emp": login, "dt": start,
-                                "direction": direction, "duration": int(c.get("CALL_DURATION") or 0),
-                                "phone": c.get("PHONE_NUMBER"), "crm_entity": contact if c.get("CRM_ENTITY_ID") else None,
-                                "client": client, "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None,
-                                "record_file_id": str(c.get("RECORD_FILE_ID") or "") or None,
-                                "record_url": c.get("CALL_RECORD_URL") or None})
         out["call_records"] = records
         meeting_files = self._meeting_calendar_files(df)
         for a in acts:
@@ -482,34 +487,68 @@ class Bitrix24:
                         for t in tasks if emp(t.get("responsibleId")) and t.get("deadline")]
         return out
 
-    # ---------- открытые задачи для вкладки «Загрузка»
-    def fetch_workload_tasks(self, employees):
-        """employees: {b24_user_id: login}. Открытые задачи (новая, ждёт выполнения, выполняется) с оценкой времени.
+    # ---------- задачи для вкладки «Загрузка»: выполнение и качество, без часов (ТЗ «Загрузка сотрудников» 2.1)
+    HISTORY_FIELDS = {"NEW", "STATUS", "DEADLINE", "RESPONSIBLE_ID", "RESULT", "UF_TASK_WEBDAV_FILES"}
 
-        Оценка (TIME_ESTIMATE) и списанное время (TIME_SPENT_IN_LOGS) приходят секундами, в таблицу кладутся часами.
-        Отдельно от fetch(): там только задачи со сроком для KPI, а загрузке нужны и задачи без оценки и без срока —
-        чтобы показать, у кого оценки не проставлены."""
-        uids = [int(u) for u in employees]
+    @staticmethod
+    def ekb(v):
+        """Время Б24 (ISO со смещением или Unix-время) → «ГГГГ-ММ-ДДTЧЧ:ММ:СС» по Екатеринбургу (UTC+5)."""
+        if v in (None, "", "0", 0):
+            return None
+        tz = dt.timezone(dt.timedelta(hours=5))
+        s = str(v)
+        try:
+            d = dt.datetime.fromtimestamp(int(s), tz) if s.isdigit() else dt.datetime.fromisoformat(s)
+        except ValueError:
+            return s[:19]
+        return (d.astimezone(tz) if d.tzinfo else d).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def fetch_task_ledger(self, include, lookback_days):
+        """(пользователи портала — для имён постановщиков, задачи) для «Загрузки». include — ID сотрудников Б24,
+        чьи задачи нужны (раздел «Сотрудники»; None — все активные сотрудники портала).
+        Задачи — открытые и изменённые за lookback_days, с историей статусов, сроков, ответственного и результата.
+        Время работы (оценка, списания, таймеры) не запрашивается."""
+        self.log("Б24: сотрудники и задачи для загрузки")
+        users = [u for u in self.list_all("user.get", {"FILTER": {"ACTIVE": True}}) if u.get("USER_TYPE") == "employee"]
+        people = [{"id": "u" + str(u["ID"]), "uid": int(u["ID"]),
+                   "name": " ".join(x for x in (u.get("LAST_NAME"), u.get("NAME")) if x).strip() or "ID " + str(u["ID"]),
+                   "position": u.get("WORK_POSITION") or None, "dept": str((u.get("UF_DEPARTMENT") or [""])[0]),
+                   "tracked": int(include is None or int(u["ID"]) in include)} for u in users]
+        uids = [p["uid"] for p in people if p["tracked"]]
         if not uids:
-            return []
-        self.log("Б24: открытые задачи для загрузки")
-        tasks = self.list_all("tasks.task.list", {
-            "filter": {"RESPONSIBLE_ID": uids, "REAL_STATUS": [1, 2, 3]},
-            "select": ["ID", "TITLE", "STATUS", "RESPONSIBLE_ID", "CREATED_DATE", "START_DATE_PLAN", "DEADLINE",
-                       "TIME_ESTIMATE", "TIME_SPENT_IN_LOGS", "PARENT_ID"]}, key="tasks")
-        hours = lambda v: round(int(v or 0) / 3600, 2)
+            return people, []
+        select = ["ID", "TITLE", "STATUS", "PRIORITY", "RESPONSIBLE_ID", "CREATED_BY", "CREATED_DATE", "DEADLINE",
+                  "CLOSED_DATE", "TASK_CONTROL", "GROUP_ID", "PARENT_ID", "TAGS"]
+        since = (dt.date.today() - dt.timedelta(days=lookback_days)).isoformat()
+        tasks = {}
+        for flt in ({"RESPONSIBLE_ID": uids, "REAL_STATUS": [1, 2, 3, 4, 6]}, {"RESPONSIBLE_ID": uids, ">=CHANGED_DATE": since}):
+            for t in self.list_all("tasks.task.list", {"filter": flt, "select": select}, key="tasks"):
+                tasks[str(t["id"])] = t
+        res, _ = self.batch({tid: ("tasks.task.history.list", {"taskId": tid}) for tid in tasks})
         rows = []
-        for t in tasks:
-            login = employees.get(int(t.get("responsibleId") or 0))
-            if not login:
-                continue
-            parent = t.get("parentId")
-            rows.append({"id": "wl" + str(t["id"]), "task_id": str(t["id"]), "emp": login, "title": t.get("title"),
-                         "status": str(t.get("status")), "created": self.iso(t.get("createdDate")),
-                         "start": self.iso(t.get("startDatePlan")), "deadline": self.iso(t.get("deadline")),
-                         "estimate": hours(t.get("timeEstimate")), "spent": hours(t.get("timeSpentInLogs")),
-                         "parent": str(parent) if parent not in (None, "", "0", 0) else None})
-        return rows
+        for tid, t in tasks.items():
+            hist = []
+            for h in (res.get(tid) or {}).get("list") or []:
+                if h.get("field") not in self.HISTORY_FIELDS:
+                    continue
+                v = h.get("value") or {}
+                was, now = v.get("from"), v.get("to")
+                if h["field"] == "DEADLINE":
+                    was, now = self.ekb(was), self.ekb(now)
+                hist.append([self.ekb(h.get("createdDate")), h["field"], was, now, int((h.get("user") or {}).get("id") or 0)])
+            hist.sort(key=lambda x: x[0] or "")
+            tags = [x.get("title") for x in t["tags"].values()] if isinstance(t.get("tags"), dict) else []
+            group = t.get("group") if isinstance(t.get("group"), dict) else {}
+            gid, parent = str(t.get("groupId") or "0"), t.get("parentId")
+            rows.append({"id": tid, "uid": int(t.get("responsibleId") or 0), "title": t.get("title"), "status": str(t.get("status")),
+                         "priority": str(t.get("priority") or "1"),
+                         "project": group.get("name") or (f"Проект {gid}" if gid != "0" else None),
+                         "tags": json.dumps([x for x in tags if x], ensure_ascii=False), "creator": int(t.get("createdBy") or 0),
+                         "control": int(t.get("taskControl") == "Y"), "created": self.ekb(t.get("createdDate")),
+                         "deadline": self.ekb(t.get("deadline")), "closed": self.ekb(t.get("closedDate")),
+                         "parent": str(parent) if parent not in (None, "", "0", 0) else None,
+                         "history": json.dumps(hist, ensure_ascii=False)})
+        return people, rows
 
     # ---------- воронки для вкладки «Воронки»: текущий срез сделок и лидов CRM
     @staticmethod

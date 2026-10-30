@@ -87,7 +87,9 @@ def run(con, config, force_demo=False):
                     log.append(f"Ошибка Битрикс24 (воронки, факт): {e}")
                     traceback.print_exc()
                 try:
-                    data = b24.fetch(by_uid, date_from)
+                    # записи звонков — по всем сотрудникам с ID в Б24 (раздел «Звонки»), KPI — только с должностью
+                    everyone = {int(e["b24_user_id"]): e["login"] for e in config["employees"] if e.get("b24_user_id")}
+                    data = b24.fetch(by_uid, date_from, record_employees=everyone)
                     if config.get("letters_sheet", {}).get("url"):
                         data.pop("kp_letters", None)  # письма с КП берутся из журнала исходящих (ниже)
                     for table, rows in data.items():
@@ -96,10 +98,10 @@ def run(con, config, force_demo=False):
                     status = "error"
                     log.append(f"Ошибка Битрикс24 (данные для KPI): {e}")
                     traceback.print_exc()
-                try:  # открытые задачи для вкладки «Загрузка»: свои сотрудники (workload.members), не только с должностью
-                    wl = workload.members(config)
-                    if wl:
-                        writes.append(("Б24", "workload_tasks", b24.fetch_workload_tasks(wl), None))
+                try:  # задачи с историей для вкладки «Загрузка»: сотрудники из раздела «Сотрудники» с ID в Б24
+                    people, ledger = b24.fetch_task_ledger({p["uid"] for p in workload.members(config)}, workload.LOOKBACK_DAYS)
+                    writes.append(("Б24", "task_people", people, None))
+                    writes.append(("Б24", "task_ledger", ledger, None))
                 except Exception as e:  # noqa
                     status = "error"
                     log.append(f"Ошибка Битрикс24 (задачи для загрузки): {e}")
@@ -171,7 +173,7 @@ def run(con, config, force_demo=False):
                             if table in KEEP_UNMAPPED:  # и ответственные не из дашборда («1c:ФИО»)
                                 owners = logins + [r[0] for r in con.execute(
                                     f"SELECT DISTINCT emp FROM {table} WHERE emp LIKE ?", (UNMAPPED + "%",))]
-                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "stage_moves", "fact_records", "workload_tasks") else owners,
+                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "stage_moves", "fact_records", "task_ledger", "task_people") else owners,
                                          date_field=date_field,
                                          date_from=date_from.isoformat(), commit=False)
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки

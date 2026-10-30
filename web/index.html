@@ -376,16 +376,33 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .proc-pop .sub { padding-left: 26px; }
 .mdl-pop { min-width: 250px; }
 .mdl-pop button { display: flex; align-items: center; gap: 12px; }
-.mdl-pop button .k { margin-left: auto; color: var(--muted); font-size: 12px; }
+.mdl-pop button .k { margin-left: auto; color: var(--fg-3); font-size: 12px; }
 .mdl-pop button .ck { width: 14px; color: var(--accent); }
 .mdl-pop hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
-.mdl-eff { padding: 6px 12px 4px; font-size: 12px; color: var(--muted); max-width: 270px; line-height: 1.4; }
-.mdl-pop .rec { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
+.mdl-eff { padding: 6px 12px 4px; font-size: 12px; color: var(--fg-3); max-width: 270px; line-height: 1.4; }
+.mdl-pop .rec { font-size: 11px; color: var(--fg-3); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
 .proc-pop .rng { display: flex; flex-direction: column; gap: 6px; padding: 6px 12px 8px 26px; font-size: 13px; }
 .proc-pop .rng[hidden] { display: none; }
 .proc-pop .rng label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .proc-pop .rng .btn { align-self: flex-start; }
 .calls .pick { width: 16px; height: 16px; cursor: pointer; }
+.cchart { display: flex; align-items: flex-end; gap: 3px; height: 170px; padding-top: 8px; border-bottom: 1px solid var(--line); }
+.cchart .col { flex: 1 1 0; min-width: 4px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.cchart .seg-out { background: var(--accent); }
+.cchart .seg-in { background: var(--good); }
+.cchart .col:hover { opacity: .8; }
+.cchart-x { display: flex; gap: 3px; font-size: 11px; color: var(--fg-3); }
+.cchart-x span { flex: 1 1 0; min-width: 4px; text-align: center; white-space: nowrap; overflow: visible; }
+.cchart-leg { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+.cchart-leg i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
+.ares { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ares h3 { margin: 0 0 10px; font-size: 14px; }
+.ares-kpi { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
+.ares-kpi b { display: block; font-size: 22px; }
+.ares-kpi span { font-size: 12px; color: var(--fg-3); }
+.ares-row { display: grid; grid-template-columns: 120px 1fr 90px; align-items: center; gap: 10px; font-size: 13px; margin: 4px 0; }
+.ares-bar { height: 12px; background: var(--surface-2); }
+.ares-bar i { display: block; height: 100%; background: var(--accent); }
 .an-proc { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .tab-menu { position: relative; }
 .tab-menu summary { list-style: none; cursor: pointer; padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); white-space: nowrap; }
@@ -640,6 +657,18 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   .wl-warn { background: var(--warn-soft); }
   .wl-bad { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
   .wl-none { color: var(--fg-3); }
+  .wl-table th { white-space: normal; min-width: 64px; vertical-align: bottom; }
+  .wl-table td:first-child { min-width: 240px; white-space: normal; }
+  .wl-table td { vertical-align: top; }
+  .wl-total td { border-top: 2px solid var(--line); background: var(--surface-2); }
+  .wl-sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .wl-tasks td.wrap { white-space: normal; min-width: 220px; max-width: 340px; }
+  .wl-tasks td.wrap.small { min-width: 200px; }
+  .link-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: inherit; }
+  .link-btn:hover { color: var(--accent); text-decoration: underline; }
+  .wl-kpis { display: flex; gap: 28px; flex-wrap: wrap; }
+  .wl-kpis b { display: block; font-size: 22px; }
+  .wl-kpis span { font-size: 12px; color: var(--fg-3); }
   .wl-row { cursor: pointer; }
   .wl-row:hover td { background: var(--surface-2); }
   .wl-row.open td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
@@ -1298,6 +1327,37 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <div class="mdl-eff">Чем выше уровень усилий, тем более тщательные ответы — но это занимает больше времени и быстрее расходует лимит подписки.</div>
         ${EFFORTS.map(([id, name]) => `<button type="button" data-effort="${id}"><span class="ck">${id === ef ? "✓" : ""}</span>${name}${id === "medium" ? ` <span class="rec">Рекомендуется</span>` : ""}</button>`).join("")}</div></details>`;
     };
+    const claudeResults = () => {  // итоги разбора Claude по звонкам списка: типы, предложения, договорённости, секретарь
+      const an = calls.filter((c) => c.analysis), n = an.length;
+      if (!n) return `<div class="ares"><h3>Результаты обработки Claude</h3><div class="muted small">За период обработанных звонков нет${state.boot.me.role === "manager" ? " — запустите «Обработать…»" : ""}.</div></div>`;
+      const cnt = (f) => an.filter(f).length, pct = (v) => `${nf(v)} (${nf(v / n * 100)}%)`;
+      const types = {}; an.forEach((c) => { const t = c.analysis.call_type || "не определён"; types[t] = (types[t] || 0) + 1; });
+      const rows = Object.entries(types).sort((a, b) => b[1] - a[1]), top = rows[0][1];
+      return `<div class="ares"><h3>Результаты обработки Claude</h3>
+        <div class="ares-kpi"><div><b>${nf(n)}</b><span>обработано из ${nf(calls.length)}</span></div><div><b>${nf(cnt((c) => c.analysis.offer))}</b><span>с предложением</span></div>
+          <div><b>${nf(cnt((c) => c.analysis.agreement))}</b><span>с договорённостью</span></div><div><b>${nf(cnt((c) => c.analysis.secretary))}</b><span>только секретарь</span></div></div>
+        ${rows.map(([t, v]) => `<div class="ares-row"><span>${esc(t)}</span><span class="ares-bar"><i style="width:${v / top * 100}%"></i></span><span class="n">${pct(v)}</span></div>`).join("")}</div>`;
+    };
+    const callsChart = () => {  // звонки по дням (длинный период — по месяцам): исходящие и входящие
+      if (!calls.length) return "";
+      const days = calls.map((c) => c.dt.slice(0, 10)).sort(), first = days[0], last = days[days.length - 1];
+      const span = (new Date(last) - new Date(first)) / 864e5 + 1, byMonth = span > 62;
+      const keys = [], put = (k) => { if (!keys.includes(k)) keys.push(k); };
+      if (byMonth) { let [y, m] = first.split("-").map(Number); const [ly, lm] = last.split("-").map(Number); while (y < ly || (y === ly && m <= lm)) { put(`${y}-${pad2(m)}`); if (++m > 12) { m = 1; y++; } } }
+      else for (let t = new Date(first + "T00:00:00"); isoDay(t) <= last; t.setDate(t.getDate() + 1)) put(isoDay(t));
+      const agg = Object.fromEntries(keys.map((k) => [k, { out: 0, in: 0 }]));
+      calls.forEach((c) => { agg[byMonth ? c.dt.slice(0, 7) : c.dt.slice(0, 10)][c.direction === "out" ? "out" : "in"]++; });
+      const max = Math.max(...keys.map((k) => agg[k].out + agg[k].in)), step = Math.ceil(keys.length / 16);
+      const lab = (k) => (byMonth ? k.slice(5) + "." + k.slice(2, 4) : k.slice(8) + "." + k.slice(5, 7));
+      const tot = (d) => calls.filter((c) => c.direction === d).length;
+      return `<section class="panel"><div class="panel-h"><h2>Звонки ${byMonth ? "по месяцам" : "по дням"}</h2></div><div class="panel-b">
+        <div class="cchart" role="img" aria-label="Звонки ${byMonth ? "по месяцам" : "по дням"}: исходящие и входящие">${keys.map((k) => { const a = agg[k], n = a.out + a.in;
+          return `<div class="col" title="${esc(lab(k))}: исходящих ${a.out}, входящих ${a.in}">${a.in ? `<div class="seg-in" style="height:${a.in / max * 100}%"></div>` : ""}${a.out ? `<div class="seg-out" style="height:${a.out / max * 100}%"></div>` : ""}</div>`; }).join("")}</div>
+        <div class="cchart-x">${keys.map((k, i) => `<span>${i % step === 0 ? esc(lab(k)) : ""}</span>`).join("")}</div>
+        <div class="cchart-leg"><span><i class="seg-out"></i>Исходящие · ${nf(tot("out"))}</span><span><i class="seg-in"></i>Входящие · ${nf(tot("in"))}</span><span class="muted">Всего · ${nf(calls.length)} · максимум за ${byMonth ? "месяц" : "день"} · ${nf(max)}</span></div>
+        ${claudeResults()}
+      </div></section>`;
+    };
     const th = (key, label) => `<th aria-sort="${sort.key === key ? (sort.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-h${sort.key === key ? " on" : ""}" data-sort="${key}" title="Сортировать">${label}<span aria-hidden="true">${sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</span></button></th>`;
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
@@ -1326,6 +1386,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
           Записи появляются после синхронизации с Битрикс24${d.keep_from ? `. Сейчас хранятся записи с ${ruDay(d.keep_from)}: текущий и прошлый месяц, более старые удаляются 10-го числа` : ""}.</div></section>
+      ${callsChart()}
       ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
         <form class="inline-form" id="cLogForm"><label for="cLogFrom">С</label><input id="cLogFrom" type="date" value="${esc(log ? log.date_from : state.cLogFrom || "")}">
           <label for="cLogTo">по</label><input id="cLogTo" type="date" value="${esc(log ? log.date_to : state.cLogTo || "")}"><button class="btn" type="submit">Показать</button></form>
@@ -1568,7 +1629,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const pc = (v) => {  // изменение цены: чёрные цифры на бледном красном (рост) или зелёном (снижение) квадрате; ноль — без заливки
       if (v == null) return "—";
       const t = `${v > 0 ? "+" : ""}${nf(v * 100, 1)} %`, c = Math.round(v * 1000) > 0 ? "bad" : Math.round(v * 1000) < 0 ? "good" : "";
-      return c ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;color:#111;background:color-mix(in srgb, var(--${c}) 20%, transparent)">${t}</span>` : `<span style="color:var(--muted)">${t}</span>`;
+      return c ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;color:#111;background:color-mix(in srgb, var(--${c}) 20%, transparent)">${t}</span>` : `<span style="color:var(--fg-3)">${t}</span>`;
     };
     const day = (v) => (v ? ruDay(v.slice(0, 10)) : "—");
     const when = (v) => (v ? ruDay(v.slice(0, 10)) + " " + v.slice(11, 16) : "—");
@@ -1746,37 +1807,120 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
   function renderWorkload(d) {
-    const st = state.wl || (state.wl = { open: "" });
-    const url = (uid, id) => (d.portal ? `https://${d.portal}/company/personal/user/${uid}/tasks/task/view/${id}/` : null);
-    const taskA = (uid, id) => { const u = url(uid, id); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(id)}</a>` : esc(id); };
-    const cls = (w) => (!w.hours ? "wl-none" : w.percent > d.overload ? "wl-bad" : w.percent > d.warn ? "wl-warn" : "wl-ok");
-    const head = d.mondays.map((m, i) => `<th class="n" title="Неделя с ${ruDay(m)}">${ruDay(m).slice(0, 5)}${i === 0 ? '<br><span class="muted small">эта</span>' : ""}</th>`).join("");
-    const cell = (w) => `<td class="n wl ${cls(w)}" title="${nf(w.hours, 1)} ч из ${nf(w.capacity)} ч · пик дня ${w.peak}%${w.absent_days ? ` · отсутствие: ${w.absent_days} дн.` : ""}">${w.hours ? (w.percent > 900 ? "∞" : w.percent + "%") + `<div class="muted small" style="font-weight:400">${nf(w.hours, 1)} из ${nf(w.capacity)} ч</div>` : "—"}</td>`;
-    const weekList = (t) => d.mondays.map((m, i) => (t.per_week[i] ? `<span style="white-space:nowrap">${ruDay(m).slice(0, 5)}: <b>${nf(t.per_week[i], 1)} ч</b></span>` : "")).filter(Boolean).join(" &nbsp;·&nbsp; ");
-    const detail = (p) => {
-      const lacking = d.no_estimate.filter((t) => t.login === p.login);
-      return `<tr class="wl-detail"><td colspan="${d.mondays.length + 3}">${p.tasks.length
-        ? `<table class="dt"><thead><tr><th>Задача</th><th>Срок</th><th class="n">Всего осталось</th><th>Как распределены часы по неделям</th></tr></thead><tbody>${p.tasks.map((t) => `<tr><td style="white-space:normal">${taskA(p.b24_user_id, t.task_id)} · ${esc((t.title || "").slice(0, 70))}</td><td>${t.deadline ? ruDay(t.deadline) : "—"}</td><td class="n">${nf(t.hours, 1)} ч</td><td>${weekList(t)}</td></tr>`).join("")}</tbody></table>`
-        : '<span class="muted small">Нет задач с оценкой и сроком — в расчёт нечего включать.</span>'}${lacking.length ? `<div class="small" style="margin-top:8px"><span class="wl-flag">Не учтены (нет оценки времени):</span> ${lacking.map((t) => taskA(p.b24_user_id, t.task_id) + " · " + esc((t.title || "").slice(0, 40))).join("; ")}</div>` : ""}</td></tr>`;
+    const t0 = new Date(), mon = new Date(t0); mon.setDate(t0.getDate() - ((t0.getDay() + 6) % 7));
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    const st = state.wl || (state.wl = { per: { mode: "range", from: isoDay(mon), to: isoDay(sun) }, dept: "", uid: "", project: "", tag: "", prio: "", status: "", only: "", list: null });
+    const [a, b] = periodRange(st.per);
+    const day = (v) => (v || "").slice(0, 10);
+    const inP = (v) => !!v && (!a || day(v) >= a) && (!b || day(v) <= b);
+    const url = (t) => (d.portal ? `https://${d.portal}/company/personal/user/${t.uid}/tasks/task/view/${t.id}/` : null);
+    const taskA = (t) => { const u = url(t); return `${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t.id)}</a>` : esc(t.id)} · ${esc(t.title || "")}`; };
+    const person = Object.fromEntries(d.people.map((p) => [p.uid, p]));
+    const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort((x, y) => String(x).localeCompare(String(y), "ru"));
+    const depts = uniq(d.people.map((p) => p.dept)), projects = uniq(d.tasks.map((t) => t.project)), tags = uniq(d.tasks.flatMap((t) => t.tags));
+    const STATUSES = { open: "Открытые", done: "Завершённые", review: "На проверке", rework: "На доработке", blocked: "Заблокированные" };
+    const confirmed = (t) => t.remarks.filter((r) => !r.review);
+    // фильтры, кроме периода: отдел, сотрудник, проект, тип (тег), приоритет, статус, просрочки и замечания
+    const pass = (t) => (!st.dept || (person[t.uid] || {}).dept === st.dept) && (!st.uid || String(t.uid) === st.uid)
+      && (!st.project || t.project === st.project) && (!st.tag || t.tags.includes(st.tag)) && (!st.prio || (st.prio === "2" ? t.priority === "2" : t.priority !== "2"))
+      && (!st.status || (st.status === "open" ? t.open : st.status === "done" ? !!t.closed : st.status === "review" ? t.on_review : st.status === "rework" ? t.on_rework : t.blocked))
+      && (st.only !== "overdue" || t.overdue_days > 0) && (st.only !== "remarks" || t.remarks.length > 0);
+    const tasks = d.tasks.filter(pass);
+    // показатели: открытые — срез сейчас, остальное — за выбранный период
+    const M = {
+      open: { t: "Открыто сейчас", f: (t) => t.open },
+      received: { t: "Поступило", f: (t) => inP(t.created) || inP(t.transferred) },
+      done: { t: "Выполнено", f: (t) => inP(t.closed) },
+      ontime: { t: "Сдано в срок", f: (t) => inP(t.closed) && !!t.deadline, num: (t) => t.on_time === true },
+      nodl: { t: "Выполнено без срока", f: (t) => inP(t.closed) && !t.deadline },
+      commit: { t: "Обязательства периода", f: (t) => inP(t.deadline), num: (t) => !!t.closed && (!b || day(t.closed) <= b) },
+      overdue: { t: "Открытые просрочки", f: (t) => t.overdue_days > 0 },
+      clean: { t: "Без замечаний", f: (t) => t.checked && inP(t.accepted), num: (t) => t.quality === "clean" },
+      remarks: { t: "С замечаниями", f: (t) => confirmed(t).some((r) => inP(r.at)) },
+      disputed: { t: "Замечания на разборе", f: (t) => t.remarks.some((r) => r.review && inP(r.at)) },
+      rework: { t: "На доработке", f: (t) => t.on_rework },
+      returns: { t: "Возвраты", f: (t) => t.returns.some(inP) },
+      help: { t: "Помощь руководителя", f: (t) => t.open && (t.help || t.blocked) },
+      review: { t: "На проверке", f: (t) => t.on_review },
+      blocked: { t: "Блокировки", f: (t) => t.open && t.blocked },
+      moves: { t: "Переносы срока", f: (t) => t.moves_ok.some(inP) || t.moves_late.some(inP) },
     };
-    const rows = d.people.map((p) => `<tr class="wl-row${st.open === p.login ? " open" : ""}" data-wl="${esc(p.login)}"><td><b>${esc(p.name)}</b>${p.overloaded ? ' <span class="wl-flag" title="Есть недели с перегрузкой">●</span>' : ""}</td>${p.weeks.map(cell).join("")}<td class="n">${p.no_estimate ? `<b style="color:var(--bad)">${p.no_estimate}</b>` : "0"}</td><td class="n">${p.no_deadline || "0"}</td></tr>${st.open === p.login ? detail(p) : ""}`).join("");
-    const by = {};
-    d.no_estimate.forEach((t) => (by[t.login] = by[t.login] || { name: t.name, uid: t.b24_user_id, items: [] }).items.push(t));
-    const noEst = Object.values(by).sort((a, b) => b.items.length - a.items.length).map((g) => `<tr><td>${esc(g.name)}</td><td class="n">${g.items.length}</td><td style="white-space:normal">${g.items.slice(0, 15).map((t) => taskA(g.uid, t.task_id)).join(", ")}${g.items.length > 15 ? " …" : ""}</td></tr>`).join("");
-    const planned = d.people.reduce((s, p) => s + p.planned, 0);
+    const pick = (ts, k) => ts.filter(M[k].f);
+    const pct = (ts, k) => { const den = pick(ts, k), num = den.filter(M[k].num); return den.length ? `${num.length}/${den.length} · ${nf(num.length / den.length * 100)}%` : `<span class="muted">нет данных</span>`; };
+    const cnt = (uid, k, html) => `<button type="button" class="link-btn" data-wl-list="${uid}|${k}">${html}</button>`;
+    const cell = (ts, uid, k) => {
+      const n = pick(ts, k).length;
+      if (k === "ontime" || k === "commit" || k === "clean") return `<td class="n">${pick(ts, k).length ? cnt(uid, k, pct(ts, k)) : pct(ts, k)}</td>`;
+      if (!n) return `<td class="n muted">0</td>`;
+      if (k === "overdue") { const mx = Math.max(...pick(ts, k).map((t) => t.overdue_days)); return `<td class="n wl-bad">${cnt(uid, k, `${n} · до ${mx} дн.`)}</td>`; }
+      if (k === "returns") { const ev = ts.reduce((s, t) => s + t.returns.filter(inP).length, 0), two = pick(ts, k).filter((t) => t.returns.length >= 2).length;
+        return `<td class="n wl-warn">${cnt(uid, k, `${ev}${two ? ` · повторных ${two}` : ""}`)}</td>`; }
+      if (k === "done") { const ts2 = pick(ts, k), acc = ts2.filter((t) => t.checked).length, nr = ts2.filter((t) => t.mode === "check" && !t.checked).length;
+        return `<td class="n">${cnt(uid, k, `${n}<div class="muted small">${[n - acc - nr ? `без проверки ${n - acc - nr}` : "", acc ? `принято ${acc}` : "", nr ? `не проверено ${nr}` : ""].filter(Boolean).join(" · ")}</div>`)}</td>`; }
+      if (k === "received") { const tr = pick(ts, k).filter((t) => inP(t.transferred)).length; return `<td class="n">${cnt(uid, k, `${n}${tr ? `<div class="muted small">передано ${tr}</div>` : ""}`)}</td>`; }
+      return `<td class="n${k === "remarks" || k === "rework" || k === "help" ? " wl-warn" : ""}">${cnt(uid, k, n)}</td>`;
+    };
+    const nearest = (ts) => { const xs = ts.filter((t) => t.open && t.deadline && t.deadline >= d.generated).map((t) => t.deadline).sort(); return xs.length ? ruMoment(xs[0]) : "—"; };
+    const COLS = ["open", "received", "done", "ontime", "commit", "overdue", "clean", "remarks", "rework", "returns", "help", "review", "blocked"];
+    const people = d.people.filter((p) => (!st.dept || p.dept === st.dept) && (!st.uid || String(p.uid) === st.uid));
+    const row = (p) => { const ts = tasks.filter((t) => t.uid === p.uid);
+      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button>${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${COLS.map((k) => cell(ts, p.uid, k)).join("")}<td class="nw">${nearest(ts)}</td></tr>`; };
+    const totals = `<tr class="wl-total"><td><b>Итого</b></td>${COLS.map((k) => cell(tasks.filter((t) => people.some((p) => p.uid === t.uid)), "all", k)).join("")}<td class="nw">${nearest(tasks)}</td></tr>`;
+    const head = `<th>Сотрудник</th>${COLS.map((k) => `<th class="n">${M[k].t}</th>`).join("")}<th>Ближайший срок</th>`;
+    // блок ИД: делегированные поручения не суммируются с личными задачами ИД
+    const dir = d.director, delegated = dir ? tasks.filter((t) => t.creator === dir && t.uid !== dir) : [];
+    const dirBlock = dir && delegated.length ? `<section class="panel"><div class="panel-h"><h2>Контроль поручений ИД</h2><span class="muted small">Задачи, которые поставил ${esc((person[dir] || {}).name || "ИД")} другим сотрудникам; в личные показатели ИД не входят</span></div><div class="panel-b"><div class="wl-kpis">
+        ${[["open", "Открыто"], ["overdue", "Просрочено"], ["review", "Ждут приёмки ИД"], ["done", "Выполнено за период"], ["remarks", "С замечаниями за период"], ["help", "Вопросы и блокировки"]].map(([k, t]) => `<div><b>${cnt("dir", k, pick(delegated, k).length)}</b><span>${t}</span></div>`).join("")}</div></div></section>` : "";
+    // список задач по нажатию: сотрудник × показатель
+    let listHtml = "";
+    if (st.list) {
+      const { uid, key } = st.list;
+      const base = uid === "dir" ? delegated : uid === "all" ? tasks.filter((t) => people.some((p) => p.uid === t.uid)) : tasks.filter((t) => String(t.uid) === uid);
+      const ts = key === "card" ? base.filter((t) => t.open || inP(t.closed) || inP(t.created)) : pick(base, key);
+      const who = uid === "dir" ? "Поручения ИД" : uid === "all" ? "Все сотрудники" : (person[uid] || {}).name || uid;
+      const fromDir = uid !== "dir" && uid !== "all" && dir && Number(uid) !== dir ? ts.filter((t) => t.creator === dir).length : 0;
+      const q = (t) => t.mode === "check" ? (t.quality === "clean" ? "принято без замечаний" : t.quality === "remarks" ? "с замечаниями" : t.quality === "not_rated" ? "качество не оценено" : "ещё не принята")
+        : (confirmed(t).length ? "есть замечания" : "замечания не зафиксированы");
+      const rem = (t) => t.remarks.length ? t.remarks.map((r) => `<div class="${r.review ? "muted" : "wl-flag"}">${r.type === "срок" ? "Срок" : "Качество"} ${ruMoment(r.at)}: ${esc(r.reason)}${r.review ? " · на разборе" : ""}</div>`).join("") : "—";
+      listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · ${key === "card" ? "задачи" : esc(M[key].t.toLowerCase())}: ${ts.length}</h2>
+        ${fromDir ? `<span class="muted small">из них поручений ИД: ${fromDir}, прочих: ${ts.length - fromDir}</span>` : ""}<button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
+        <div class="panel-b">${ts.length ? `<div class="scroll"><table class="dt wl-tasks"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Постановщик</th><th>Проект · тип</th><th>Приоритет</th><th>Статус</th><th>Первоначальный срок</th><th>Согласованный срок</th><th>Сдано</th><th>Принято</th><th>Просрочка</th><th>Проверка</th><th>Замечания</th><th class="n">Возвраты</th><th>Подтверждение</th></tr></thead><tbody>
+        ${ts.map((t) => `<tr><td class="wrap">${taskA(t)}${t.blocked ? ' <b class="wl-flag">· блокировка</b>' : ""}${t.help ? ' <b class="wl-flag">· вопрос ИД</b>' : ""}</td><td>${esc((person[t.uid] || {}).name || "")}</td><td>${esc(t.creator_name || "—")}</td>
+          <td>${esc(t.project || "—")}${t.tags.length ? `<div class="muted small">${esc(t.tags.join(", "))}</div>` : ""}</td><td>${t.priority === "2" ? "<b>высокий</b>" : "обычный"}</td><td>${esc(t.status_label)}</td>
+          <td class="nw">${ruMoment(t.deadline_orig)}</td><td class="nw">${ruMoment(t.deadline)}${t.moves_ok.length + t.moves_late.length ? `<div class="muted small">переносов ${t.moves_ok.length + t.moves_late.length}${t.moves_late.length ? `, после срока ${t.moves_late.length}` : ""}</div>` : ""}${t.self_moves.length ? `<div class="muted small">исполнитель сдвигал: ${t.self_moves.length}</div>` : ""}</td>
+          <td class="nw">${ruMoment(t.exec_at)}${t.on_time === false ? ' <b class="wl-flag">не в срок</b>' : ""}</td><td class="nw">${t.mode === "check" ? ruMoment(t.accepted) : '<span class="muted">без проверки</span>'}</td>
+          <td class="nw${t.overdue_days ? " wl-bad" : ""}">${t.overdue_days ? `просрочено ${t.overdue_days} дн.` : t.review_delay_days ? `<span class="muted">проверка задержана ${t.review_delay_days} дн.</span>` : "—"}</td>
+          <td>${q(t)}</td><td class="wrap small">${rem(t)}</td><td class="n${t.returns.length ? " wl-warn" : ""}">${t.returns.length || "—"}</td><td>${t.has_result ? "результат приложен" : '<span class="muted">нет подтверждения</span>'}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="muted small">Задач нет.</div>`}</div></section>`;
+    }
+    const sel = (id, label, cur, opts) => `<label for="${id}">${label}<select id="${id}"><option value="">Все</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
     document.getElementById("main").innerHTML = `
-      <div class="head"><div><div class="eyebrow">Загрузка · задачи Битрикс24</div><h1>Загрузка сотрудников</h1>
-        <div class="sub">100% = ${nf(d.day_hours)} часов в день, пн–пт, без праздников и отсутствий. Часы задачи — оценка за вычетом списанного времени, поровну по дням до срока. Рассчитано ${esc(d.generated.replace("T", " "))}.</div></div></div>
-      ${planned ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">В расчёт пока не вошла ни одна задача: у открытых задач не указана оценка времени. Откройте задачу, включите «Учитывать время по задаче» и впишите «Планируемое время» в часах. ${d.has_data ? "" : "Или данные ещё не синхронизированы — нажмите «Обновить данные»."}</div></div>`}
-      <section class="panel"><div class="panel-h"><h2>Недели</h2><span class="muted small">Нажмите на сотрудника, чтобы увидеть задачи</span></div><div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead><tr><th>Сотрудник</th>${head}<th class="n" title="Открытых задач без оценки времени — в расчёт не входят">Без оценки</th><th class="n" title="Задач с оценкой, но без срока — в расчёт не входят">Без срока</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <div class="muted small" style="margin-top:8px"><span class="wl-key wl-ok"></span> до ${d.warn}% &nbsp; <span class="wl-key wl-warn"></span> до ${d.overload}% &nbsp; <span class="wl-key wl-bad"></span> перегрузка &nbsp; «—» нет задач с оценкой<br>Процент = часы задач, которые попадают на неделю ÷ рабочие часы недели (с учётом праздников и отсутствий; текущая неделя — только с сегодняшнего дня).</div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Задачи без оценки</h2><span class="muted small">Оценка времени обязательна</span></div><div class="panel-b">${noEst
-        ? `<div class="scroll"><table class="dt"><thead><tr><th>Исполнитель</th><th class="n">Задач</th><th>Номера</th></tr></thead><tbody>${noEst}</tbody></table></div>`
-        : '<span class="muted small">У всех открытых задач оценка указана.</span>'}</div></section>`;
-    document.querySelectorAll("#main .wl-row").forEach((tr) => tr.addEventListener("click", () => {
-      st.open = st.open === tr.dataset.wl ? "" : tr.dataset.wl;
-      renderWorkload(d);
+      <div class="head"><div><div class="eyebrow">Задачи Битрикс24</div><h1>Кто чем занят и где нужна помощь</h1>
+        <div class="sub">Объём — количество задач, качество — сроки, проверка и замечания. Рабочие часы и процент загрузки не используются. Открытые задачи — срез на ${ruMoment(d.generated)}, остальное — за период ${periodLabel(a, b)}. Время — Екатеринбург.</div></div></div>
+      ${d.has_data ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">Данных пока нет — нажмите «Обновить данные».</div></div>`}
+      <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(st.per, "w")}
+        ${sel("wDept", "Отдел", st.dept, depts.map((x) => [x, x]))}${d.people.length > 1 ? sel("wUid", "Сотрудник", st.uid, d.people.map((p) => [p.uid, p.name])) : ""}
+        ${sel("wProject", "Проект", st.project, projects.map((x) => [x, x]))}${tags.length ? sel("wTag", "Тип (тег)", st.tag, tags.map((x) => [x, x])) : ""}
+        ${sel("wPrio", "Приоритет", st.prio, [["2", "Высокий"], ["1", "Обычный"]])}${sel("wStatus", "Статус", st.status, Object.entries(STATUSES))}
+        ${sel("wOnly", "Отбор", st.only, [["overdue", "Только просрочки"], ["remarks", "Только с замечаниями"]])}
+        <button class="btn" type="button" id="wReset">Сбросить</button></div></div>
+        <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead><tr>${head}</tr></thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
+        <div class="muted small" style="margin-top:8px">Нажмите на сотрудника или число — откроется список задач. «Сдано в срок» — выполненные со сроком; «Обязательства периода» — задачи со сроком в периоде, выполненные к его концу; «Без замечаний» — принятые с первой проверки, только для задач с проверкой («Принять работу после завершения»). Переносом считается изменение срока постановщиком; если срок сдвинул сам исполнитель, оценка идёт по прежнему сроку, а замечание после него — «на разборе». Помощь руководителя — задачи с тегом ${esc(["помощь", "нужна помощь", "вопрос ИД"].join(", "))} или в блокировке (статус «Отложена» или тег «блокировка»).</div></div></section>
+      ${dirBlock}${listHtml}`;
+    const rerender = () => renderWorkload(d);
+    bindPeriod("w", () => st.per, (v) => { st.per = v; }, rerender);
+    [["wDept", "dept"], ["wUid", "uid"], ["wProject", "project"], ["wTag", "tag"], ["wPrio", "prio"], ["wStatus", "status"], ["wOnly", "only"]].forEach(([id, k]) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", () => { st[k] = el.value; rerender(); });
+    });
+    document.getElementById("wReset").addEventListener("click", () => { state.wl = null; rerender(); });
+    document.querySelectorAll("#main [data-wl-list]").forEach((btn) => btn.addEventListener("click", () => {
+      const [uid, key] = btn.dataset.wlList.split("|");
+      st.list = { uid, key }; rerender();
+      const el = document.getElementById("wlList"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }));
+    const cl = document.getElementById("wlClose");
+    if (cl) cl.addEventListener("click", () => { st.list = null; rerender(); });
   }
 
   // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx» и «Краткое ТЗ»)

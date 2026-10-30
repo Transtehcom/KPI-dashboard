@@ -109,12 +109,16 @@ CREATE TABLE IF NOT EXISTS kp_letters (
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, created TEXT, deadline TEXT, closed TEXT, status TEXT);
 
--- открытые задачи для вкладки «Загрузка» (app/workload.py). Отдельно от tasks: та таблица питает KPI по срокам
--- и содержит только задачи со сроком. estimate и spent — часы (оценка времени и списанное время), start — плановое
--- начало, parent — id родительской задачи (родитель с открытыми подзадачами в загрузку не входит)
-CREATE TABLE IF NOT EXISTS workload_tasks (
-  id TEXT PRIMARY KEY, emp TEXT, title TEXT, status TEXT, created TEXT, start TEXT, deadline TEXT,
-  estimate REAL, spent REAL, parent TEXT, task_id TEXT);
+-- задачи Битрикс24 для вкладки «Загрузка» (app/workload.py): открытые и изменённые за полгода, без часов и таймеров.
+-- uid — ответственный (ID в Б24), creator — постановщик, control — «принять работу после завершения»,
+-- history — JSON [[время, поле, было, стало, кто]] по статусам, срокам, ответственному и результату; время — Екатеринбург
+DROP TABLE IF EXISTS workload_tasks;
+CREATE TABLE IF NOT EXISTS task_ledger (
+  id TEXT PRIMARY KEY, uid INTEGER, title TEXT, status TEXT, priority TEXT, project TEXT, tags TEXT, creator INTEGER,
+  control INTEGER, created TEXT, deadline TEXT, closed TEXT, parent TEXT, history TEXT);
+-- сотрудники Б24 для «Загрузки»: имя, должность, отдел (ID отдела; названия — config.workload.departments);
+-- tracked — входит в панель (workload.include_b24_ids), остальные — только для имён постановщиков
+CREATE TABLE IF NOT EXISTS task_people (id TEXT PRIMARY KEY, uid INTEGER, name TEXT, position TEXT, dept TEXT, tracked INTEGER);
 
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, revenue REAL, cost REAL, signed INTEGER,
@@ -266,7 +270,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
-               "deal_failures", "workload_tasks"]
+               "deal_failures", "task_ledger", "task_people"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],

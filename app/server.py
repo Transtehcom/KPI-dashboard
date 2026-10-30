@@ -229,8 +229,8 @@ class App:
         for r in rows:
             r["emp_name"] = names.get(r["emp"], r["emp"])
             r["can_listen"] = call_records.can_listen(self.config, me, r)
-        # кого можно выбрать в фильтре: администратору — сотрудников с KPI, руководителю отдела — свой отдел
-        choices = [e for e in self.config["employees"] if (e.get("position") if allowed is None else e["login"] in allowed)]
+        # кого можно выбрать в фильтре: администратору — сотрудников с ID в Б24 (их звонки выгружаются), руководителю отдела — свой отдел
+        choices = [e for e in self.config["employees"] if (e.get("b24_user_id") if allowed is None else e["login"] in allowed)]
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_from": call_records.keep_from(self.config),
@@ -693,8 +693,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(res)
                 if path == "/api/workload" and method == "GET":  # вкладка «Загрузка»: руководитель — все, сотрудник — только он сам
                     portal = urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc
-                    return self.send_json(workload.build(app.con, app.config, logins=None if is_mgr else {me["login"]},
-                                                         portal=portal or None))
+                    own = (app.user(me["login"]) or {}).get("b24_user_id") if not is_mgr else None
+                    return self.send_json(workload.build(app.con, app.config, uids=None if is_mgr else {int(own)} if own else set(),
+                                                         portal=portal or None, dept_titles=app.rules.get("departments")))
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
                     if not is_mgr:
                         return self.send_json({"error": "Доступно только руководителю"}, 403)
