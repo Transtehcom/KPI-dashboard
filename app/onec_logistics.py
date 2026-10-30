@@ -41,12 +41,23 @@ def _route(results):
     return "; ".join(legs) or None, ", ".join(carriers) or None, round(sum(x.get("СтоимостьСНДС") or 0 for x in chosen), 2)
 
 
+KP_TYPE = "StandardODATA.Document_КоммерческоеПредложениеКлиенту"
+
+
+def kp_deadlines(onec, since):
+    """{КП клиенту: «Срок действия»} — в заявке на расчёт ТР «Отработать до» показывает срок действия КП-основания."""
+    return {k["Ref_Key"]: _date(k.get("СрокДействия")) and str(k["СрокДействия"])[:19] for k in onec._odata(
+        "Document_КоммерческоеПредложениеКлиенту", {
+            "$format": "json", "$filter": f"Date ge datetime'{_when(since)}'", "$select": "Ref_Key,СрокДействия"})}
+
+
 def fetch_transport_requests(onec, ds, date_from, date_to):
     rows = onec._odata("Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов", {
         "$format": "json", "$expand": "ОтветственныйЛогист,Менеджер",
         "$filter": f"Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
         "$select": "Ref_Key,Number,Date,Posted,DeletionMark,Статус,АдресДоставки,ИсторияСтатусов,РезультатыРасчета,"
-                   "ОтветственныйЛогист/Description,Менеджер/Description"})
+                   "ДокументОснование,ДокументОснование_Type,ОтветственныйЛогист/Description,Менеджер/Description"})
+    deadlines = kp_deadlines(onec, date_from - dt.timedelta(days=ds.get("lookback_days", 365)))
     out = []
     for r in rows:
         hist = sorted(([h["Статус"], h["ДатаУстановки"][:19]] for h in r.get("ИсторияСтатусов") or []
@@ -57,6 +68,7 @@ def fetch_transport_requests(onec, ds, date_from, date_to):
                     "dt": r["Date"][:10], "created_at": r["Date"][:19], "doc": (r.get("Number") or "").strip(),
                     "status": r.get("Статус"), "posted": r.get("Posted"), "deleted": r.get("DeletionMark"),
                     "sales_manager": (r.get("Менеджер") or {}).get("Description"), "address": r.get("АдресДоставки"),
+                    "due_at": deadlines.get(r.get("ДокументОснование")) if r.get("ДокументОснование_Type") == KP_TYPE else None,
                     "history": json.dumps(hist, ensure_ascii=False), "route": route, "carrier": carrier, "cost": cost})
     return out
 
@@ -96,7 +108,7 @@ def fetch_forwarder_orders(onec, ds, date_from, date_to):
     rows = onec._odata("Document_ПоручениеЭкспедитору", {
         "$format": "json", "$expand": "ТТК_ОтветственныйЛогист,ТТК_ТранспортнаяКомпания",
         "$filter": f"Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
-        "$select": "Ref_Key,Number,Date,Posted,DeletionMark,ТТК_Статус,ТТК_ДатаОтгрузки,ТТК_ДатаПоставки,ТТК_ЗаказКлиента_Key,"
+        "$select": "Ref_Key,Number,Date,Posted,DeletionMark,ТТК_Статус,ТТК_ДатаОтгрузки,ТТК_ДатаПоставки,ТТК_ДОП,ТТК_ДФО,ТТК_ДПП,ТТК_ДФП,ТТК_ЗаказКлиента_Key,"
                    "ТТК_АдресОтгрузки,ТТК_АдресДоставки,АдресДоставки,ТТК_ОтветственныйЛогист/Description,"
                    "ТТК_ТранспортнаяКомпания/Description"})
     out = []
@@ -106,6 +118,8 @@ def fetch_forwarder_orders(onec, ds, date_from, date_to):
                     "dt": r["Date"][:10], "created_at": r["Date"][:19], "doc": (r.get("Number") or "").strip(),
                     "status": r.get("ТТК_Статус") or None, "posted": r.get("Posted"), "deleted": r.get("DeletionMark"),
                     "ship_date": _date(r.get("ТТК_ДатаОтгрузки")), "delivery_date": _date(r.get("ТТК_ДатаПоставки")),
+                    "dop": _date(r.get("ТТК_ДОП")), "dof": _date(r.get("ТТК_ДФО")),  # ДОП/ДОФ — отгрузка план/факт
+                    "dpp": _date(r.get("ТТК_ДПП")), "dfp": _date(r.get("ТТК_ДФП")),  # ДПП/ДФП — поставка план/факт
                     "plan_sum": delivery.get(r.get("ТТК_ЗаказКлиента_Key")) or None,
                     "fact_sum": facts.get(r.get("ТТК_ЗаказКлиента_Key")) or None,
                     "carrier": _text((r.get("ТТК_ТранспортнаяКомпания") or {}).get("Description")) or None,

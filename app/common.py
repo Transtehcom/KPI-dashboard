@@ -147,12 +147,13 @@ CREATE TABLE IF NOT EXISTS supply_funnel (
 -- заявки на расчёт транспортных расходов (app/onec_logistics.py): все статусы, emp — логист («1c:ФИО» не из дашборда)
 CREATE TABLE IF NOT EXISTS transport_requests (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
-  sales_manager TEXT, address TEXT, history TEXT, route TEXT, carrier TEXT, cost REAL);
+  sales_manager TEXT, address TEXT, history TEXT, route TEXT, carrier TEXT, cost REAL, due_at TEXT);
 
 -- поручения экспедитору (app/onec_logistics.py): статус ТТК_Статус, плановая отгрузка, emp — ответственный логист
 CREATE TABLE IF NOT EXISTS forwarder_orders (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
-  ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL);
+  ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL,
+  dop TEXT, dof TEXT, dpp TEXT, dfp TEXT);
 
 -- панель «Метрики → Отдел продаж» (макет «Метрики ОП.xlsx»): реестр объектов и действия вводятся вручную
 CREATE TABLE IF NOT EXISTS sales_objects (
@@ -274,8 +275,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
                                    ("due_at", "TEXT"), ("order_dt", "TEXT"), ("suppliers", "INTEGER")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
-                 "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL")],
-                 "forwarder_orders": [("fact_sum", "REAL")],
+                 "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL"), ("due_at", "TEXT")],
+                 "forwarder_orders": [("fact_sum", "REAL"), ("dop", "TEXT"), ("dof", "TEXT"), ("dpp", "TEXT"), ("dfp", "TEXT")],
                  "sales_objects": [("source", "TEXT"), ("status_1c", "TEXT"), ("amount", "REAL"), ("stage_auto", "INTEGER")]}
 
 

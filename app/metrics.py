@@ -224,6 +224,20 @@ def calc_spans(r):
     return spans
 
 
+LOGIST = "Логист"  # сотрудников логистики не различаем: одна общая строка
+
+
+def _closed_at(r):
+    """Дата закрытия заявки на расчёт ТР — последняя установка закрывающего статуса в истории (ГГГГ-ММ-ДД) или None."""
+    hist = json.loads(r.get("history") or "[]") or []
+    return max((at[:19] for st, at in hist if st in CLOSED), default=None)
+
+
+def _plan_minus_fact(plan, fact):
+    """Просрочка в днях = план − факт: «−1» — факт позже плана, «+1» — раньше; None, пока нет обеих дат."""
+    return (_day(plan) - _day(fact)).days if plan and fact else None
+
+
 def logistics(con, names, date_from, date_to, since=None, today=None):
     """Логистика по макету: плитки, этапы (сейчас / поступило / вышло / макс. дней / просрочено), очередь по логистам,
     реестр перевозок. Очередь — на сегодня по заявкам с датой не раньше since (окно синхронизации)."""
@@ -231,11 +245,6 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
     a, b = dt.date.fromisoformat(date_from), dt.date.fromisoformat(date_to)
     allrows = [dict(r) for r in con.execute("SELECT * FROM transport_requests ORDER BY created_at DESC")]
     period = [r for r in allrows if date_from <= r["dt"] <= date_to]
-
-    def name(login):
-        if login and login.startswith(UNMAPPED):
-            return login[len(UNMAPPED):] or "Не назначен"
-        return names.get(login) or login or "Не назначен"
 
     live = [r for r in allrows if not r["deleted"] and (not since or r["dt"] >= since)]
     queue = [r for r in live if r["status"] in CALC_STATUSES]
@@ -276,7 +285,7 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
     people = {}
     for key, items in in_stage.items():
         for r in items:
-            p = people.setdefault(r["emp"], {"name": name(r["emp"]), "stages": {}, "total": 0, "overdue": 0})
+            p = people.setdefault(LOGIST, {"name": LOGIST, "stages": {}, "total": 0, "overdue": 0})
             p["stages"][key] = p["stages"].get(key, 0) + 1
             p["total"] += key not in CLOSED_STAGES  # «всего в работе» — без закрытых
             p["overdue"] += r.get("id") in late and key != "calc"
@@ -288,22 +297,26 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
     order = list(TRANSPORT_STATUSES.values())
     statuses = [[st, by_status.get(st, 0)] for st in order + sorted(x for x in by_status if x not in order)]
     registry = [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "status": TRANSPORT_STATUSES.get(r["status"], r["status"]),
-                 "route": r.get("route") or r.get("address"), "carrier": r.get("carrier"), "logist": name(r["emp"]),
-                 "plan": r.get("cost")} for r in period if not r["deleted"]]
+                 "route": r.get("route") or r.get("address"), "carrier": r.get("carrier"),
+                 "customer": r.get("sales_manager"), "plan": r.get("cost"),
+                 "due": r.get("due_at"), "closed": _closed_at(r),
+                 "late_delta": _plan_minus_fact(r.get("due_at"), _closed_at(r))} for r in period if not r["deleted"]]
+    # поручения экспедитору — все статусы, дата поручения в выбранном периоде (кроме помеченных на удаление)
+    fwd_period = sorted((r for r in map(dict, con.execute("SELECT * FROM forwarder_orders WHERE NOT deleted"))
+                         if date_from <= r["dt"] <= date_to), key=lambda r: (r["created_at"] or r["dt"], r["doc"]), reverse=True)
     return {"available": bool(allrows), "date_from": date_from, "date_to": date_to, "today": today.isoformat(),
             "tiles": {"total": len(period), "deleted": sum(1 for r in period if r["deleted"]),
                       "in_work": sum(len(x) for k, x in in_stage.items() if k not in CLOSED_STAGES),
                       "overdue": sum(sourced[k]["overdue"] or 0 for k in FORWARDER_STAGES),
                       "ship_today": sum(1 for r in in_stage["prepare"] if r["ship_date"] == today.isoformat()),
                       "deliver_today": sum(1 for r in in_stage["transit"] if r["delivery_date"] == today.isoformat())},
-            "forwarder_orders": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"], "stage": dict(LOGISTICS_STAGES)[key],
-                                  "status": FORWARDER_STATUSES.get(r["status"], r["status"] or "—"),
-                                  "logist": name(r["emp"]), "ship_date": r["ship_date"], "delivery_date": r["delivery_date"],
+            "forwarder_orders": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"],
+                                  "status": FORWARDER_STATUSES.get(r["status"], r["status"] or "—"), "logist": LOGIST,
+                                  "ship_date": r["ship_date"], "delivery_date": r["delivery_date"],
                                   "route": r["route"], "carrier": r["carrier"], "plan": r["plan_sum"], "fact": r.get("fact_sum"),
-                                  "late_days": late.get(r["id"], 0)}
-                                 for key in FORWARDER_STAGES if key not in CLOSED_STAGES
-                                 for r in sorted(in_stage[key],
-                                                 key=lambda r: r[FORWARDER_STAGES[key][1] or "dt"] or "9999")],
+                                  "dop": r.get("dop"), "dof": r.get("dof"), "dpp": r.get("dpp"), "dfp": r.get("dfp"),
+                                  "ship_delta": _plan_minus_fact(r.get("dop"), r.get("dof")),
+                                  "delivery_delta": _plan_minus_fact(r.get("dpp"), r.get("dfp"))} for r in fwd_period],
             "statuses": statuses, "stages": stages, "sourced": sorted(LOGISTICS_SOURCED),
             "people": sorted(people.values(), key=lambda x: (x["name"] == "Не назначен", -x["total"], x["name"])),
             "registry": registry}

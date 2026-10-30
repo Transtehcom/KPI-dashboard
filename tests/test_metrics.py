@@ -1,5 +1,6 @@
 """Тесты раздела «Метрики». Запуск из папки kpi-dashboard: python -m unittest discover tests"""
 import datetime as dt
+import json
 import os
 import sys
 import tempfile
@@ -158,14 +159,36 @@ class LogisticsMetricsTest(unittest.TestCase):
         self.assertEqual([s["sourced"] for s in r["stages"]], [True] * 5)
         delivered, closed = r["stages"][3], r["stages"][4]
         self.assertEqual((delivered["now"], delivered["overdue"], closed["now"], closed["final"]), (1, None, 1, True))
-        self.assertEqual([(p["name"], p["total"], p["overdue"]) for p in r["people"]],
-                         [("Якимова Алёна", 3, 0), ("Ваганова Наталия", 2, 2), ("СтажерЛогистика", 2, 0), ("Не назначен", 1, 0)])
-        self.assertEqual([(x["doc"], x["stage"], x["late_days"]) for x in r["forwarder_orders"]],
-                         [("ЦБ-00000191", "Подготовка отгрузки", 2), ("ЦБ-00000192", "Подготовка отгрузки", 0),
-                          ("ЦБ-00000195", "В пути", 1), ("ЦБ-00000196", "В пути", 0),
-                          ("ЦБ-00000197", "Доставлено, не закрыто", 0)])
+        self.assertEqual([(p["name"], p["total"], p["overdue"]) for p in r["people"]], [("Логист", 8, 2)])  # логисты — одной строкой
+        # все поручения периода во всех статусах (кроме помеченных на удаление), новые сверху
+        self.assertEqual([(x["doc"], x["status"], x["logist"]) for x in r["forwarder_orders"]],
+                         [("ЦБ-00000197", "Готов к выдаче", "Логист"), ("ЦБ-00000196", "В пути", "Логист"),
+                          ("ЦБ-00000195", "В пути", "Логист"), ("ЦБ-00000193", "Выдан", "Логист"),
+                          ("ЦБ-00000192", "Готов к отгрузке", "Логист"), ("ЦБ-00000191", "Поиск ТС", "Логист")])
         self.assertEqual([(x["doc"], x["route"], x["plan"]) for x in r["registry"]],
                          [("000002338", "Миасс → Когалым", 81200), ("ЦБ-000990", None, None)])
+
+    def test_registry_customer_and_closed_date(self):
+        h = lambda *x: json.dumps([list(i) for i in x], ensure_ascii=False)
+        replace_rows(self.con, "transport_requests", [
+            {"id": "r1", "emp": "ivanov", "dt": "2026-10-05", "created_at": "2026-10-05T10:00:00", "doc": "000002300",
+             "status": "Отработана", "posted": 1, "deleted": 0, "sales_manager": "Петров П.", "due_at": "2026-10-06T00:00:00",
+             "history": h(("Поступила", "2026-10-05T10:00:00"), ("ВРаботе", "2026-10-06T09:00:00"), ("Отработана", "2026-10-07T15:30:00"))},
+            {"id": "r2", "emp": "ivanov", "dt": "2026-10-06", "created_at": "2026-10-06T10:00:00", "doc": "000002301",
+             "status": "ВРаботе", "posted": 1, "deleted": 0, "sales_manager": "Сидоров С.", "history": h(("Поступила", "2026-10-06T10:00:00"))}])
+        r = metrics.logistics(self.con, {}, "2026-10-01", "2026-10-31", since="2026-04-01", today=TODAY)
+        got = {x["doc"]: (x["customer"], x["closed"], x["late_delta"]) for x in r["registry"]}
+        self.assertEqual(got, {"000002300": ("Петров П.", "2026-10-07T15:30:00", -1), "000002301": ("Сидоров С.", None, None)})
+
+    def test_forwarder_order_plan_minus_fact_days(self):
+        row = {"id": "f1", "emp": "1c:Ваганова Наталия", "dt": "2026-10-15", "created_at": "2026-10-15T10:00:00",
+               "doc": "ЦБ-1", "status": "ВПути", "posted": 1, "deleted": 0, "delivery_date": "2026-10-23",
+               "dop": "2026-10-20", "dof": "2026-10-21", "dpp": "2026-10-23", "dfp": "2026-10-22"}
+        empty = {**row, "id": "f2", "doc": "ЦБ-2", "dof": None, "dfp": None}
+        replace_rows(self.con, "forwarder_orders", [row, empty])
+        r = metrics.logistics(self.con, {}, "2026-10-01", "2026-10-31", since="2026-04-01", today=TODAY)
+        got = {x["doc"]: (x["ship_delta"], x["delivery_delta"]) for x in r["forwarder_orders"]}
+        self.assertEqual(got, {"ЦБ-1": (-1, 1), "ЦБ-2": (None, None)})  # ДОП−ДОФ, ДПП−ДФП; без факта — пусто
 
     def test_delivery_fact_from_supplier_order_lines(self):
         import datetime as dt
