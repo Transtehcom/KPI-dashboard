@@ -374,6 +374,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .proc-pop button { text-align: left; padding: 8px 12px; background: none; border: 0; font: 500 13px var(--font); color: var(--fg); cursor: pointer; }
 .proc-pop button:hover { background: var(--surface-2); }
 .proc-pop .sub { padding-left: 26px; }
+.mdl-pop { min-width: 250px; }
+.mdl-pop button { display: flex; align-items: center; gap: 12px; }
+.mdl-pop button .k { margin-left: auto; color: var(--muted); font-size: 12px; }
+.mdl-pop button .ck { width: 14px; color: var(--accent); }
+.mdl-pop hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.mdl-eff { padding: 6px 12px 4px; font-size: 12px; color: var(--muted); max-width: 270px; line-height: 1.4; }
+.mdl-pop .rec { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
+.proc-pop .rng { display: flex; flex-direction: column; gap: 6px; padding: 6px 12px 8px 26px; font-size: 13px; }
+.proc-pop .rng[hidden] { display: none; }
+.proc-pop .rng label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.proc-pop .rng .btn { align-self: flex-start; }
+.calls .pick { width: 16px; height: 16px; cursor: pointer; }
 .an-proc { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .tab-menu { position: relative; }
 .tab-menu summary { list-style: none; cursor: pointer; padding: 5px 12px; border-radius: 7px; font-weight: 500; color: var(--fg-2); white-space: nowrap; }
@@ -1271,15 +1283,34 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const cpg = (state.cPg = state.cPg || {}), pgc = pgInfo(cpg, calls.length);
     const needs = (c) => c.audio === "ready" && (!c.analysis || c.transcript !== "ready");  // звонок ждёт расшифровки или разбора
     const todoAll = d.calls.filter(needs).length;
+    if (!state.cSel) state.cSel = new Set();
+    const ready = calls.filter((c) => c.audio === "ready");
+    for (const id of [...state.cSel]) if (!ready.some((c) => c.id === id)) state.cSel.delete(id);  // выбор только среди звонков списка
+    const picked = state.cSel.size;
+    const MODELS = [["claude-opus-5-5", "Opus 5.5"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"]];
+    const EFFORTS = [["low", "Низкий"], ["medium", "Средний"], ["high", "Высокий"], ["xhigh", "Сверхвысокий"], ["max", "Максимальный"]];
+    const pick = (key, list, def) => { let v; try { v = localStorage.getItem(key); } catch (e) {} return list.some((x) => x[0] === v) ? v : def; };
+    const save = (key, v) => { try { localStorage.setItem(key, v); } catch (e) {} };
+    const modelMenu = () => {
+      const m = pick("callModel", MODELS, "claude-sonnet-5-5"), ef = pick("callEffort", EFFORTS, "medium");
+      return `<details class="proc" id="cModel"><summary class="btn ghost" title="Модель разбора звонков">${MODELS.find((x) => x[0] === m)[1]}</summary><div class="proc-pop mdl-pop">
+        ${MODELS.map(([id, name], i) => `<button type="button" data-model="${id}"><span class="ck">${id === m ? "✓" : ""}</span>${name}<span class="k">${i + 1}</span></button>`).join("")}<hr>
+        <div class="mdl-eff">Чем выше уровень усилий, тем более тщательные ответы — но это занимает больше времени и быстрее расходует лимит подписки.</div>
+        ${EFFORTS.map(([id, name]) => `<button type="button" data-effort="${id}"><span class="ck">${id === ef ? "✓" : ""}</span>${name}${id === "medium" ? ` <span class="rec">Рекомендуется</span>` : ""}</button>`).join("")}</div></details>`;
+    };
     const th = (key, label) => `<th aria-sort="${sort.key === key ? (sort.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-h${sort.key === key ? " on" : ""}" data-sort="${key}" title="Сортировать">${label}<span aria-hidden="true">${sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</span></button></th>`;
     main.innerHTML = `
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
         <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div>
-        ${isMgr && d.calls.length ? `<div style="margin-left:auto;text-align:right"><details class="proc" id="cProc"><summary class="btn">Обработать…</summary><div class="proc-pop">
+        ${isMgr && d.calls.length ? `<div style="margin-left:auto;text-align:right"><div style="display:flex;gap:8px;justify-content:flex-end">${modelMenu()}<details class="proc" id="cProc"><summary class="btn">Обработать…</summary><div class="proc-pop">
+          ${picked ? `<button type="button" data-batch="sel">Выбранные <span class="muted small">· ${nf(picked)}</span></button>` : ""}
           <button type="button" data-batch="all">Всё <span class="muted small">· ${nf(todoAll)} к обработке</span></button>
+          <button type="button" data-batch="yday">За прошлый день</button>
+          <button type="button" id="cRngTog" aria-expanded="false">Выбрать период… ▸</button>
+          <div class="rng" id="cRng" hidden><label for="cRngFrom">с<input type="date" id="cRngFrom" value="${esc(isoDay(new Date()))}"></label><label for="cRngTo">по<input type="date" id="cRngTo" value="${esc(isoDay(new Date()))}"></label><button class="btn" type="button" data-batch="range">Обработать</button></div>
           <button type="button" id="cLastTog" aria-expanded="false">Последние… ▸</button>
           ${[20, 50, 100].map((n) => `<button type="button" class="sub" data-batch="last" data-n="${n}" hidden>${n} звонков</button>`).join("")}
-        </div></details><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
+        </div></details></div><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
       <section class="panel"><div class="panel-h"><div class="filters">
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
@@ -1288,8 +1319,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
           <button class="btn" type="button" id="cReset" ${callsFiltered() ? "" : "disabled"}>Сбросить фильтры</button></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
         ${d.calls.length ? `<div class="panel-b" style="padding-bottom:0">${pgHtml(cpg, calls.length, "звонков")}</div>` : ""}
-        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
-          ${calls.slice(pgc.from, pgc.to).map((c) => `<tr><td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${isMgr ? `<th><input type="checkbox" class="pick" id="cPickAll" aria-label="Выбрать все звонки списка с записью" ${picked && picked === ready.length ? "checked" : ""}></th>` : ""}${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+          ${calls.slice(pgc.from, pgc.to).map((c) => `<tr>${isMgr ? `<td>${c.audio === "ready" ? `<input type="checkbox" class="pick" data-pick="${esc(c.id)}" aria-label="Выбрать звонок" ${state.cSel.has(c.id) ? "checked" : ""}>` : ""}</td>` : ""}<td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
             <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="an-cell">${anCell(c)}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
@@ -1315,6 +1346,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
     const startProc = async (body, ask) => {
       if (ask && !confirm(ask)) return;
+      body = { ...body, model: pick("callModel", MODELS, "claude-sonnet-5-5"), effort: pick("callEffort", EFFORTS, "medium") };
       try {
         const r = await api(`/api/calls-process?${state.cQs}`, body);
         toast(r.message);
@@ -1338,6 +1370,25 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     };
     if (isMgr) watchJob();
     main.querySelectorAll("[data-proc]").forEach((btn) => btn.addEventListener("click", () => startProc({ id: btn.dataset.proc })));
+    main.querySelectorAll("[data-model],[data-effort]").forEach((b) => b.addEventListener("click", () => {
+      save(b.dataset.model ? "callModel" : "callEffort", b.dataset.model || b.dataset.effort);
+      renderCalls(d, log);
+    }));
+    main.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("change", () => {
+      if (b.checked) state.cSel.add(b.dataset.pick); else state.cSel.delete(b.dataset.pick);
+      renderCalls(d, log);
+    }));
+    const pickAll = document.getElementById("cPickAll");
+    if (pickAll) {
+      pickAll.indeterminate = picked > 0 && picked < ready.length;
+      pickAll.addEventListener("change", () => { state.cSel = new Set(pickAll.checked ? ready.map((c) => c.id) : []); renderCalls(d, log); });
+    }
+    const rngTog = document.getElementById("cRngTog");
+    if (rngTog) rngTog.addEventListener("click", () => {
+      const open = rngTog.getAttribute("aria-expanded") !== "true";
+      rngTog.setAttribute("aria-expanded", open); rngTog.textContent = open ? "Выбрать период… ▾" : "Выбрать период… ▸";
+      document.getElementById("cRng").hidden = !open;
+    });
     const tog = document.getElementById("cLastTog");
     if (tog) tog.addEventListener("click", () => {
       const open = tog.getAttribute("aria-expanded") !== "true";
@@ -1345,6 +1396,20 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       main.querySelectorAll(".proc-pop .sub").forEach((b) => { b.hidden = !open; });
     });
     main.querySelectorAll("[data-batch]").forEach((btn) => btn.addEventListener("click", () => {
+      const kind = btn.dataset.batch, risk = "Расшифровка идёт на этом компьютере, разбор — через Claude и расходует лимит подписки.";
+      if (kind === "sel" || kind === "yday" || kind === "range") {
+        let body, what;
+        if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${picked} (уже разобранные будут разобраны заново)`; }
+        else {
+          let a, b;
+          if (kind === "yday") { const t = new Date(); t.setDate(t.getDate() - 1); a = b = isoDay(t); }
+          else { a = document.getElementById("cRngFrom").value; b = document.getElementById("cRngTo").value; if (!a || !b) { toast("Укажите период"); return; } if (a > b) [a, b] = [b, a]; }
+          body = { mode: "range", date_from: a, date_to: b }; what = `звонков за ${periodLabel(a, b)} (необработанных)`;
+        }
+        if (proc) proc.open = false;
+        startProc(body, `Обработать ${what}? ${risk}`).then(() => { if (kind === "sel") { state.cSel = new Set(); } });
+        return;
+      }
       if (proc) proc.open = false;
       const all = btn.dataset.batch === "all", n = +btn.dataset.n || 0;
       const count = all ? todoAll : [...d.calls].filter((c) => c.audio === "ready").sort((a, b) => cmp(b.dt, a.dt)).slice(0, n).filter(needs).length;

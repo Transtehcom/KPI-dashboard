@@ -16,6 +16,12 @@ from app.funnel import deal_funnel  # noqa: E402
 TODAY = dt.date(2026, 10, 20)
 EXAMPLE_RULES_DEP = load_rules()["departments"]["ОП"]  # «Отдел продаж (ОП)»
 EXAMPLE = load_json("config.example.json")
+# секции воронки сделок по названиям стадий (прежний вид настройки) — для проверки самого механизма секций
+BY_NAMES = {**EXAMPLE, "deal_funnel": {"include_closed": False, "sections": [
+    {"key": "work", "title": "В работе", "category_ids": [0, 4], "stage_names": ["Подготовка КП", "В работе"]},
+    {"key": "precontract", "title": "Преддоговорные сделки", "stage_names": ["Преддоговорные сделки", "Подписание договора"]},
+    {"key": "contract", "title": "Договорные сделки", "stage_names": ["Ожидает оплаты"]},
+    {"key": "overdue", "title": "ПДЗ", "stage_names": ["Просроченная оплата", "Дебиторская задолженность"]}]}}
 CONFIG = {
     "holidays": EXAMPLE["holidays"],
     "employees": [
@@ -550,16 +556,16 @@ class EngineTest(unittest.TestCase):
             row(9, "Распределённые", cat="lead", entity="lead"), row(10, "Ожидают звонка", cat="lead", entity="lead"),
             row(11, "Поиск контактов", cat="lead", entity="lead"), row(12, "Новому менеджеру", cat="lead", entity="lead"),
         ])
-        f = deal_funnel(self.con, EXAMPLE)
+        f = deal_funnel(self.con, BY_NAMES)
         self.assertEqual([(s["title"], s["count"]) for s in f["sections"]],
                          [("В работе", 2), ("Преддоговорные сделки", 1), ("Договорные сделки", 1), ("ПДЗ", 1)])
         self.assertEqual(f["total"], 5)  # закрытая сделка и лиды в воронку сделок не входят
         self.assertEqual({o["stage"] for o in f["other_stages"]}, {"Выявление потребности", "Подготовка КП"})
         self.assertEqual(f["sections"][0]["share_of_total"], 0.4)
-        other = deal_funnel(self.con, EXAMPLE, login="id:25")
+        other = deal_funnel(self.con, BY_NAMES, login="id:25")
         self.assertEqual([s["count"] for s in other["sections"]], [1, 0, 0, 0])
         self.assertEqual(len(other["filters"]["responsibles"]), 2)  # фильтр не сужает список вариантов
-        both = deal_funnel(self.con, EXAMPLE, login=["id:25", "pm"])  # несколько ответственных складываются
+        both = deal_funnel(self.con, BY_NAMES, login=["id:25", "pm"])  # несколько ответственных складываются
         self.assertEqual([s["count"] for s in both["sections"]], [s["count"] for s in f["sections"]])
         self.assertEqual(both["applied"]["logins"], ["id:25", "pm"])
         leads = deal_funnel(self.con, EXAMPLE, kind="leads")
@@ -568,6 +574,17 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(leads["sections"][0]["share_of_total"], 1.0)  # «Поступило» — сумма трёх этапов ниже
         self.assertEqual(leads["total_amount"], 300)
         self.assertEqual(leads["other_stages"], [{"category": "Воронка lead", "stage": "Новому менеджеру", "count": 1}])
+
+    def test_deal_funnel_sections_by_stage_ids_of_two_funnels(self):
+        def row(i, stage_id, cat):
+            return {"id": f"deal{i}", "entity": "deal", "emp": "pm", "responsible_id": "14", "responsible": "ПМ", "category_id": cat,
+                    "category": "Воронка", "stage_id": stage_id, "stage": stage_id, "stage_sort": 10, "semantic": "P", "title": f"З{i}",
+                    "amount": 10, "stage_since": "2026-10-01T09:00:00", "snapshot": "2026-10-20T09:00:00"}
+        ids = ["C5:NEW", "C5:UC_39RB33", "C5:UC_JMQI3Q", "C5:UC_E8DPVA", "C6:FINAL_INVOICE", "C6:UC_1FIL5J", "C6:UC_S23MPV", "C5:WON"]
+        replace_rows(self.con, "crm_deals", [row(i, sid, sid[1]) for i, sid in enumerate(ids)])
+        f = deal_funnel(self.con, EXAMPLE)
+        self.assertEqual([(s["title"], s["count"]) for s in f["sections"]],
+                         [("В работе", 2), ("Преддоговорные сделки", 1), ("Договорные сделки", 2), ("ДЗ", 1), ("ПДЗ", 1)])
 
     def test_deal_funnel_fact_counts_movement_in_period(self):
         rec = lambda i, created, stage, sem="P", emp="pm": {
@@ -604,7 +621,7 @@ class EngineTest(unittest.TestCase):
         replace_rows(self.con, "crm_deals", [row(1, "pm", "14"), row(2, "tender", "15"),
                                              row(3, None, "25"),  # в дашборде без KPI — узнаётся по ID в Б24
                                              row(4, None, "99")])  # нет в разделе «Сотрудники»
-        cfg = {**EXAMPLE, "employees": [{"login": "pm", "name": "ПМ", "department": "ОП", "b24_user_id": 14},
+        cfg = {**BY_NAMES, "employees": [{"login": "pm", "name": "ПМ", "department": "ОП", "b24_user_id": 14},
                                         {"login": "tender", "name": "Т", "department": "ОП", "b24_user_id": 15},
                                         {"login": "boss", "name": "Р", "department": "Администрация", "b24_user_id": 25}]}
         total = lambda **kw: deal_funnel(self.con, cfg, **kw)["total"]
@@ -630,13 +647,13 @@ class EngineTest(unittest.TestCase):
         replace_rows(self.con, "crm_deals", [row(1, "2026-09-30T23:59:00", "2026-10-05T10:00:00"),
                                              row(2, "2026-10-01T00:00:00", "2026-10-01T09:00:00"),
                                              row(3, "2026-10-31T18:00:00", "2026-11-02T09:00:00")])
-        count = lambda **kw: deal_funnel(self.con, EXAMPLE, **kw)["sections"][0]["count"]
+        count = lambda **kw: deal_funnel(self.con, BY_NAMES, **kw)["sections"][0]["count"]
         self.assertEqual(count(), 3)
         self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-31"), 2)  # границы включительно
         self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-01"), 1)
         self.assertEqual(count(date_to="2026-09-30"), 1)
         self.assertEqual(count(date_from="2026-10-01", date_to="2026-10-31", date_field="stage"), 2)
-        f = deal_funnel(self.con, EXAMPLE, date_from="2027-01-01")
+        f = deal_funnel(self.con, BY_NAMES, date_from="2027-01-01")
         self.assertEqual((f["total"], f["filters"]["responsibles"][0]["count"]), (0, 0))  # вариант фильтра остаётся в списке
 
     # ---------------------------------------------------------------- демо целиком

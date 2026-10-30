@@ -15,7 +15,10 @@ from .anonymize import Pseudonymizer, restore
 from .common import ROOT, db_lock
 from .transcripts import ENGINE
 
-MODEL = "sonnet"
+MODELS = {"claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"}
+MODEL = "claude-sonnet-5-5"  # по умолчанию; руководитель выбирает модель в разделе «Звонки»
+EFFORTS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "xhigh": "Сверхвысокий", "max": "Максимальный"}
+EFFORT = "medium"
 TIMEOUT = 300
 CALL_TYPES = ["продажа", "тендер", "исполнение", "снабжение", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
 PROMPT_VERSION = 4  # меняется вместе с инструкцией: разбор прежней версии при ручной обработке считается недоделанным
@@ -101,10 +104,10 @@ def claude_path(config):
     return (config.get("call_records") or {}).get("claude_path") or os.path.expanduser(r"~\.local\bin\claude.exe")
 
 
-def _call_cli(prompt, config):
+def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
     work = os.path.join(ROOT, "data", "nlp-work")  # пустая папка: CLI не подхватывает CLAUDE.md и настройки проекта
     os.makedirs(work, exist_ok=True)
-    cmd = [claude_path(config), "-p", "--output-format", "json", "--model", MODEL, "--no-session-persistence",
+    cmd = [claude_path(config), "-p", "--output-format", "json", "--model", model, "--effort", effort, "--no-session-persistence",
            "--system-prompt", SYSTEM_PROMPT, "--tools", "", "--strict-mcp-config", "--setting-sources", "",
            "--disable-slash-commands"]
     p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=work, timeout=TIMEOUT,
@@ -118,13 +121,13 @@ def _call_cli(prompt, config):
     return env
 
 
-def run_claude(prompt, config, attempts=2):
+def run_claude(prompt, config, attempts=2, model=MODEL, effort=EFFORT):
     """Ответ Claude и сведения о вызове ({"result": dict, …}). Изредка модель отдаёт JSON с синтаксической ошибкой —
     тогда запрос повторяется (attempts раз всего); исключение — если CLI так и не ответил разборным JSON."""
     cost = tokens_in = tokens_out = 0
     for n in range(attempts):
         retry_note = "\n\nВажно: ответ должен быть строго корректным JSON."
-        env = _call_cli(prompt if not n else prompt + retry_note, config)
+        env = _call_cli(prompt if not n else prompt + retry_note, config, model, effort)
         usage = env.get("usage") or {}
         cost += env.get("total_cost_usd") or 0
         tokens_in += sum(usage.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
@@ -137,7 +140,7 @@ def run_claude(prompt, config, attempts=2):
             result = None
         if isinstance(result, dict):
             return {"result": result, "cost_usd": cost, "tokens_in": tokens_in, "tokens_out": tokens_out,
-                    "model": next(iter(env.get("modelUsage") or {}), MODEL), "attempts": n + 1}
+                    "model": next(iter(env.get("modelUsage") or {}), model), "attempts": n + 1}
     raise RuntimeError(f"Claude ответил не JSON: {text[:200]}")
 
 
@@ -156,13 +159,13 @@ def roles_of(turns, n):
     return "".join(roles)
 
 
-def analyze_masked(segments, meta, config, crm_names=()):
+def analyze_masked(segments, meta, config, crm_names=(), model=MODEL, effort=EFFORT):
     """Разобрать расшифровку: (результат с метками вместо персональных данных, роли по предложениям, таблица замен,
     сведения о вызове, текст для Claude)."""
     numbered = sentences(segments)
     ps = Pseudonymizer(crm_names)
     prompt = build_prompt(meta, [(t, ps.mask(s)) for t, s in numbered])
-    call = run_claude(prompt, config)
+    call = run_claude(prompt, config, model=model, effort=effort)
     res = call.pop("result")
     roles = roles_of(res.pop("turns", None), len(numbered))
     return res, roles, ps.mapping, call, prompt
@@ -248,7 +251,7 @@ def get(con, rid):
             "secretary_ai": m.get("ai"), "secretary_manual": m.get("manual")}
 
 
-def analyze_row(con, config, r, titles, log=print):
+def analyze_row(con, config, r, titles, log=print, model=MODEL, effort=EFFORT):
     """Разобрать один звонок очереди (строка call_records + расшифровка): "ok", "failed" или "limit" (лимит подписки —
     попытку не считаем, дальше идти бессмысленно)."""
     s = settings(config)
@@ -263,7 +266,7 @@ def analyze_row(con, config, r, titles, log=print):
     try:
         res, roles, mapping, call, _ = analyze_masked(
             segs, {"direction": r["direction"], "duration": r["duration"], "position": titles.get(r["emp"])},
-            config, [r["client"] or ""])
+            config, [r["client"] or ""], model, effort)
     except Exception as e:  # noqa
         if LIMIT_RE.search(str(e)):
             log(f"Разбор звонков: лимит Claude ({str(e)[:120]})")
@@ -296,7 +299,7 @@ def todo(con, ids):
     return {rid: out[rid] for rid in ids if rid in out}
 
 
-def start_job(con, config, ids, force=False):
+def start_job(con, config, ids, force=False, model=MODEL, effort=EFFORT):
     """Запустить обработку ids в фоне. Возвращает (запущено, сообщение). force — разобрать заново, даже если разбор есть."""
     from . import call_records
     if not call_records._running.acquire(blocking=False):  # скачивание записей, расшифровка или другое задание уже идёт
@@ -330,7 +333,7 @@ def start_job(con, config, ids, force=False):
                 if not r:  # расшифровать не удалось
                     JOB["failed"] += 1
                     continue
-                res = analyze_row(con, config, dict(r), titles)
+                res = analyze_row(con, config, dict(r), titles, model=model, effort=effort)
                 if res == "limit":
                     JOB["message"] = "Остановлено: лимит подписки Claude — повторите позже"
                     break

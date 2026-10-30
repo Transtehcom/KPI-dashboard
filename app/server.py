@@ -755,12 +755,22 @@ class Handler(BaseHTTPRequestHandler):
                         if not call_records.get(app.con, str(b["id"])):
                             return self.send_json({"error": "Звонок не найден"}, 404)
                         ids, force = [str(b["id"])], True  # один звонок — всегда заново
+                    elif b.get("ids"):  # выбранные галочками — повторная обработка тоже
+                        ids = [str(i) for i in b["ids"]][:1000]
+                        if not all(call_records.get(app.con, i) for i in ids):
+                            return self.send_json({"error": "Звонок не найден"}, 404)
+                        force = True
                     else:
                         mode = b.get("mode")
-                        if mode not in ("all", "last"):
-                            raise BadRequest("Ожидается mode: all или last")
+                        if mode not in ("all", "last", "range"):
+                            raise BadRequest("Ожидается mode: all, last или range")
                         date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
-                        if not (date_from or date_to) and not q.get("all"):
+                        if mode == "range":  # любой период из меню, независимо от периода и сделки на странице
+                            date_from, date_to = self.date_param(b.get("date_from")), self.date_param(b.get("date_to"))
+                            if not (date_from and date_to):
+                                raise BadRequest("Укажите период")
+                            q = {**q, "deal": None}
+                        elif not (date_from or date_to) and not q.get("all"):
                             first, last = month_bounds(month)
                             date_from, date_to = first.isoformat(), last.isoformat()
                         with app.lock:
@@ -772,7 +782,10 @@ class Handler(BaseHTTPRequestHandler):
                                 raise BadRequest("Ожидается 20, 50 или 100")
                             rows = rows[:n]
                         ids, force = [r["id"] for r in rows], False
-                    started, msg = call_analysis.start_job(app.con, app.config, ids, force)
+                    model, effort = b.get("model") or call_analysis.MODEL, b.get("effort") or call_analysis.EFFORT
+                    if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
+                        raise BadRequest("Неизвестная модель или уровень усилий")
+                    started, msg = call_analysis.start_job(app.con, app.config, ids, force, model, effort)
                     return self.send_json({"ok": started, "message": msg, **call_analysis.JOB})
                 if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
                     b = self.body()

@@ -464,8 +464,9 @@ class Bitrix24:
             out["deal_failures"] = [{
                 "id": "fail" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
                 "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
-                # дата провала — переход на стадию (MOVED_TIME)
-                "dt": (self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_MODIFY")) or "")[:10] or None,
+                # дата провала — дата закрытия сделки (CLOSEDATE): MOVED_TIME сбивается массовыми переносами сделок;
+                # без неё — переход на стадию
+                "dt": (self.iso(d.get("CLOSEDATE")) or self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_MODIFY")) or "")[:10] or None,
                 "stage": names.get(d.get("STAGE_ID"), d.get("STAGE_ID")),
                 "reason": fc.get("reason") or names.get(d.get("STAGE_ID"))}
                 for d in deals if emp(d.get("ASSIGNED_BY_ID"))]
