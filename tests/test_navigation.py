@@ -29,3 +29,6 @@ class NavigationTest(unittest.TestCase):
 
     def test_call_feedback_forms(self):
         self.run_script("test_call_feedback.js")
+
+    def test_call_processing_jobs(self):
+        self.run_script("test_call_jobs.js")

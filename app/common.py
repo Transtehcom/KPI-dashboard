@@ -42,6 +42,14 @@ def load_rules():
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS call_processing_jobs (
+ id TEXT PRIMARY KEY, ids TEXT NOT NULL, force INTEGER NOT NULL DEFAULT 0,
+ model TEXT NOT NULL, effort TEXT NOT NULL, author TEXT, created TEXT NOT NULL,
+ run_at TEXT NOT NULL, started TEXT, finished TEXT, status TEXT NOT NULL,
+ total INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+ skipped INTEGER NOT NULL DEFAULT 0, current TEXT, message TEXT);
+CREATE INDEX IF NOT EXISTS ix_call_jobs_due ON call_processing_jobs(status,run_at);
+
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, kind TEXT, direction TEXT, duration INTEGER,
   is_lpr INTEGER, secretary INTEGER, next_step INTEGER, status TEXT,

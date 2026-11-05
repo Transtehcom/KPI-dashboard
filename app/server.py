@@ -78,6 +78,13 @@ class App:
         self.money_busy = threading.Lock()  # идёт загрузка остатков и планов платежей из 1С («Деньги»)
         self.suppliers_busy = threading.Lock()  # идёт загрузка закупок из 1С («Поставщики»)
 
+    def processing_jobs(self):
+        from .call_jobs import JobQueue
+        with self.lock:
+            if not hasattr(self, "_call_jobs"):
+                self._call_jobs = JobQueue(self.con, self.config)
+            return self._call_jobs
+
     def login_blocked(self, key):
         now = time.monotonic()
         fails = [t for t in self.login_fails.get(key, []) if now - t < LOGIN_WINDOW]
@@ -646,7 +653,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/calls-job":  # ход ручной обработки звонков (кнопка «Обработать…» в разделе «Звонки»)
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только руководителю"}, 403)
-                    return JsonResponse({**call_analysis.JOB, "busy": call_records.status()["running"]})
+                    return JsonResponse({**app.processing_jobs().listing(), "busy": call_records.status()["running"]})
                 if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
                     row = call_records.get(app.con, q.get("id") or "")
                     if not row:
@@ -894,6 +901,14 @@ class Handler(BaseHTTPRequestHandler):
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
                     return JsonResponse({"ok": True})
+                if path == "/api/calls-job-cancel" and method == "POST":
+                    if not is_mgr:
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
+                    try:
+                        row = app.processing_jobs().cancel(str(b.get("id") or ""))
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True, "job": row})
                 if path == "/api/calls-process" and method == "POST":  # обработать звонок / «всё» / последние N из текущего списка
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только руководителю"}, 403)
@@ -931,8 +946,12 @@ class Handler(BaseHTTPRequestHandler):
                     model, effort = b.get("model") or call_analysis.MODEL, b.get("effort") or call_analysis.EFFORT
                     if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
                         raise BadRequest("Неизвестная модель или уровень усилий")
-                    started, msg = call_analysis.start_job(app.con, app.config, ids, force, model, effort)
-                    return JsonResponse({**call_analysis.JOB, "ok": started, "message": msg})  # msg — поверх статуса задания
+                    try:
+                        row = app.processing_jobs().create(ids, force, model, effort,
+                                                           run_at=b.get("run_at"), author=me["login"])
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True, "job": row, "message": "Задача создана: " + str(row["total"]) + " звонков"})
                 if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
                     if not call_records.get(app.con, str(b.get("id") or "")):
                         return JsonResponse({"error": "Звонок не найден"}, 404)
@@ -987,6 +1006,7 @@ def serve():
         print(f"Не удалось занять порт {port}: {e}. Возможно, дашборд уже запущен в другом окне "
               f"или порт занят другой программой — поменяйте server.port в config.json.")
         return
+    app.processing_jobs().start()
     sync.start_scheduler(app.con, cfg)  # только процесс, успешно занявший порт, запускает автообновления
     url = f"http://localhost:{port}"
     print(f"Дашборд KPI работает: {url}  (Ctrl+C или закрытие окна — остановить)")

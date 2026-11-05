@@ -183,6 +183,10 @@ class QueueTest(unittest.TestCase):
 
     def test_manual_job_transcribes_missing_and_analyzes_selected(self):
         import time
+        from app.call_jobs import JobQueue
+        queue = JobQueue(self.con, ANYTIME)
+        self.addCleanup(queue.stop)
+        queue.start()
         self.assertEqual(call_analysis.todo(self.con, ["call1", "call2", "call3"]), {"call1": False, "call2": False, "call3": True})
 
         def fake_transcribe(con, config, rdir, log, ids=None, progress=None):  # «расшифровывает» call3 текущей моделью
@@ -191,24 +195,22 @@ class QueueTest(unittest.TestCase):
             con.commit()
             return 1, 0
         with self.fake_run(), mock.patch.object(self.tr, "run", fake_transcribe):
-            ok, msg = call_analysis.start_job(self.con, ANYTIME, ["call1", "call2", "call3"])
-            self.assertTrue(ok)
+            job = queue.create(["call1", "call2", "call3"])
             for _ in range(100):
-                if not call_analysis.JOB["running"]:
+                if queue.get(job["id"])["status"] in ("completed", "failed"):
                     break
                 time.sleep(0.05)
-        self.assertEqual((call_analysis.JOB["running"], call_analysis.JOB["done"], call_analysis.JOB["failed"]), (False, 3, 0))
+        self.assertEqual(tuple(queue.get(job["id"])[k] for k in ("status", "done", "failed")), ("completed", 3, 0))
         self.assertEqual(len(self.sent), 2)  # call2 — короткий, без Codex
         self.assertEqual(call_analysis.todo(self.con, ["call1", "call2", "call3"]), {})
-        ok, msg = call_analysis.start_job(self.con, ANYTIME, ["call1", "call2", "call3"])
-        self.assertFalse(ok)  # всё уже обработано
+        with self.assertRaises(ValueError):
+            queue.create(["call1", "call2", "call3"])  # всё уже обработано
         with self.fake_run():  # один звонок — заново
-            ok, _ = call_analysis.start_job(self.con, ANYTIME, ["call1"], force=True)
+            job = queue.create(["call1"], force=True)
             for _ in range(100):
-                if not call_analysis.JOB["running"]:
+                if queue.get(job["id"])["status"] in ("completed", "failed"):
                     break
                 time.sleep(0.05)
-        self.assertTrue(ok)
         self.assertEqual(len(self.sent), 3)
 
     def test_usage_limit_stops_without_counting_attempt(self):

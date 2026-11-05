@@ -91,6 +91,29 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_processing_jobs_admin_only_create_schedule_and_cancel(self):
+        def post(login,path,body):
+            req=urllib.request.Request(self.base+path,data=json.dumps(body).encode(),
+                headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
+            try:
+                with urllib.request.urlopen(req) as response:return response.status,json.load(response)
+            except urllib.error.HTTPError as exc:
+                with exc:return exc.code,json.load(exc)
+        future=(__import__('datetime').datetime.now()+__import__('datetime').timedelta(days=1)).isoformat(timespec="minutes")
+        self.assertEqual(self.get("pm","/api/calls-job")[0],403)
+        self.assertEqual(post("pm","/api/calls-process",{"id":"call1"})[0],403)
+        self.assertEqual(post("boss","/api/calls-process",{"id":"call1","run_at":"invalid"})[0],400)
+        code,response=post("boss","/api/calls-process",{"id":"call1","run_at":future})
+        self.assertEqual(code,200)
+        job=response["job"]
+        self.assertEqual((job["status"],job["total"],job["author"]),("queued",1,"boss"))
+        self.assertNotIn("ids",job)
+        self.assertTrue(any(j["id"]==job["id"] for j in json.loads(self.get("boss","/api/calls-job")[2])["jobs"]))
+        self.assertEqual(post("pm","/api/calls-job-cancel",{"id":job["id"]})[0],403)
+        code,response=post("boss","/api/calls-job-cancel",{"id":job["id"]})
+        self.assertEqual((code,response["job"]["status"]),(200,"cancelled"))
+        self.assertEqual(post("boss","/api/calls-job-cancel",{"id":"missing"})[0],400)
+
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
         self.app.config['employees'].append(employee)

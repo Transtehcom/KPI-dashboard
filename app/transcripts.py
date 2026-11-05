@@ -101,7 +101,8 @@ def run(con, config, records_dir, log=print, worker=None, ids=None, progress=Non
     s = settings(config)
     if not s["transcribe"] and ids is None:
         return 0, 0
-    rows = pending(con, s["transcribe_per_run"], ids)
+    with db_lock():
+        rows = pending(con, s["transcribe_per_run"], ids)
     if not rows:
         return 0, 0
     by_path = {os.path.normcase(os.path.join(records_dir, r["file"])): r["id"] for r in rows}

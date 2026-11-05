@@ -11,7 +11,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import threading
 import time
 
 from .anonymize import Pseudonymizer, restore
@@ -358,10 +357,6 @@ def analyze_row(con, config, r, titles, log=print, model=MODEL, effort=EFFORT):
 
 # ---------- ручная обработка звонков из раздела «Звонки»: расшифровка (если нет) и разбор Codex, в любое время суток
 
-JOB = {"running": False, "total": 0, "done": 0, "failed": 0, "message": "", "started": None, "finished": None}
-_job = threading.Lock()  # одно ручное задание за раз
-
-
 def todo(con, ids):
     """Из ids (новые первыми) — звонки с записью, у которых нет расшифровки текущей модели или разбора: {id: нужно_расшифровать}."""
     ids = list(ids)
@@ -377,67 +372,3 @@ def todo(con, ids):
             if rid not in done:
                 out[rid] = have.get(rid) != ENGINE
     return {rid: out[rid] for rid in ids if rid in out}
-
-
-def start_job(con, config, ids, force=False, model=MODEL, effort=EFFORT):
-    """Запустить обработку ids в фоне. Возвращает (запущено, сообщение). force — разобрать заново, даже если разбор есть."""
-    from . import call_records
-    if not _job.acquire(blocking=False):
-        return False, "Обработка уже идёт — дождитесь окончания"
-    ids = list(ids)
-    plan = {rid: True for rid in ids} if force else todo(con, ids)
-    if force:  # заново — только разбор; расшифровка нужна, лишь если её нет
-        have = {r["id"] for r in con.execute(f"SELECT id FROM call_transcripts WHERE segments IS NOT NULL AND engine=? "
-                                             f"AND id IN ({','.join('?' * len(ids)) or 'NULL'})", (ENGINE, *ids))}
-        plan = {rid: rid not in have for rid in ids}
-    if not plan:
-        _job.release()
-        return False, "Все выбранные звонки уже обработаны"
-    # расшифровка — только если не идёт фоновая выгрузка записей; во время неё разбираем уже расшифрованные
-    transcribe = any(plan.values()) and call_records._running.acquire(blocking=False)
-    skipped = 0
-    if not transcribe:
-        skipped = sum(plan.values())
-        plan = {rid: False for rid, t in plan.items() if not t}
-        if not plan:
-            _job.release()
-            return False, "Идёт фоновое скачивание и расшифровка записей — выбранные звонки ещё не расшифрованы, попробуйте позже"
-    JOB.update(running=True, total=len(plan), done=0, failed=0, message="Расшифровка…" if transcribe else "Разбор…",
-               started=dt.datetime.now().isoformat(timespec="seconds"), finished=None)
-
-    def work():
-        try:
-            from . import transcripts
-            need = [rid for rid, t in plan.items() if t]
-            if need:
-                def progress(ok, failed):
-                    JOB["message"] = f"Расшифровка: {ok + failed} из {len(need)}"
-                transcripts.run(con, config, call_records.records_dir(config), print, ids=need, progress=progress)
-            titles = {e["login"]: e.get("title") for e in config.get("employees", [])}
-            order = list(plan)
-            for n, rid in enumerate(order, 1):
-                JOB["message"] = f"Разбор: {n} из {len(order)}"
-                r = con.execute("SELECT c.*, t.segments, t.text FROM call_records c JOIN call_transcripts t ON t.id = c.id "
-                                "WHERE c.id=? AND t.engine=? AND t.segments IS NOT NULL", (rid, ENGINE)).fetchone()
-                if not r:  # расшифровать не удалось
-                    JOB["failed"] += 1
-                    continue
-                res = analyze_row(con, config, dict(r), titles, model=model, effort=effort)
-                if res == "limit":
-                    JOB["message"] = "Остановлено: лимит подписки Codex — повторите позже"
-                    break
-                JOB["done"] += res == "ok"
-                JOB["failed"] += res == "failed"
-            else:
-                JOB["message"] = f"Готово: обработано {JOB['done']}" + (f", ошибок {JOB['failed']}" if JOB["failed"] else "")
-        except Exception as e:  # noqa
-            JOB["message"] = f"Ошибка: {e}"
-        finally:
-            JOB.update(running=False, finished=dt.datetime.now().isoformat(timespec="seconds"))
-            if transcribe:
-                call_records._running.release()
-            _job.release()
-
-    threading.Thread(target=work, daemon=True).start()
-    return True, f"Запущена обработка: {len(plan)}" + (
-        f"; не расшифрованы и пропущены: {skipped} — идёт фоновая расшифровка" if skipped else "")

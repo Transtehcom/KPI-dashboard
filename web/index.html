@@ -1808,7 +1808,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           <div class="rng" id="cRng" hidden><label for="cRngFrom">с<input type="date" id="cRngFrom" value="${esc(isoDay(new Date()))}"></label><label for="cRngTo">по<input type="date" id="cRngTo" value="${esc(isoDay(new Date()))}"></label><button class="btn" type="button" data-batch="range">Обработать</button></div>
           <button type="button" id="cLastTog" aria-expanded="false">Последние… ▸</button>
           ${[20, 50, 100].map((n) => `<button type="button" class="sub" data-batch="last" data-n="${n}" hidden>${n} звонков</button>`).join("")}
-        </div></details></div><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
+        </div></details></div><label class="muted small" style="display:block;margin-top:8px" for="cRunAt">Запустить один раз (пусто — сразу; время сервиса)<input type="datetime-local" id="cRunAt" value="${esc(state.cRunAt || "")}" style="display:block;margin-top:4px;margin-left:auto"></label><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
+      ${isMgr ? `<section class="panel"><div class="panel-h"><h2>Задачи обработки</h2><button type="button" class="btn" id="cJobsRefresh">Обновить звонки</button></div><div class="panel-b"><div class="muted small" id="cJobsHint">Загрузка очереди…</div><div id="cJobsList" style="max-height:360px;overflow:auto"></div><div class="muted small">Отмена завершает текущий звонок и останавливает следующие. Готовые результаты сохраняются. Новая задача использует выбранные звонки и модель на момент создания.</div></div></section>` : ""}
       <section class="panel"><div class="panel-h"><div class="filters">
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
@@ -1845,29 +1846,46 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     // ручная обработка: один звонок, «Всё» или последние N из текущего списка (по периоду и фильтрам)
     const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
     const startProc = async (body, ask) => {
-      if (ask && !confirm(ask)) return;
-      body = { ...body, model: pick("callModelV2", MODELS, "gpt-5.6-terra"), effort: pick("callEffortV2", EFFORTS, "high") };
+      if (ask && !confirm(ask + (state.cRunAt ? ` Разовый запуск: ${dtLabel(state.cRunAt)} (время сервиса).` : ""))) return;
+      body = { ...body, run_at: state.cRunAt || null, model: pick("callModelV2", MODELS, "gpt-5.6-terra"), effort: pick("callEffortV2", EFFORTS, "high") };
       try {
         const r = await api(`/api/calls-process?${state.cQs}`, body);
         toast(r.message);
-        if (r.ok) watchJob(); else if (job) job.textContent = r.message;
+        if (r.ok) { if (job) job.textContent = r.message; watchJob(); } else if (job) job.textContent = r.message;
       } catch (e) { if (e.message !== "auth") toast(e.message); }
     };
     const watchJob = async () => {
       clearTimeout(state.cJobT);
       if (state.view !== "calls") return;
+      const request = state.cJobRequest = (state.cJobRequest || 0) + 1;
       let st;
-      try { st = await api("/api/calls-job"); } catch (e) { return; }
-      const el = document.getElementById("cJob"), pr = document.getElementById("cProc");
-      if (pr) pr.dataset.busy = st.running ? "1" : "";
-      if (st.running) {
-        if (el) el.textContent = `${st.message} · готово ${st.done}${st.failed ? `, ошибок ${st.failed}` : ""} из ${st.total}`;
-        state.cJobT = setTimeout(watchJob, 3000);
-      } else if (state.cJobWas) {
-        state.cJobWas = false; toast(st.message); loadCalls();
-      } else if (el && st.finished && st.message) el.textContent = st.message;
-      if (st.running) state.cJobWas = true;
+      try { st = await api("/api/calls-job"); } catch (e) {
+        if (state.view === "calls" && request === state.cJobRequest && e.message !== "auth") state.cJobT = setTimeout(watchJob, 5000);
+        return;
+      }
+      if (state.view !== "calls" || request !== state.cJobRequest) return;
+      const labels = { queued: "В очереди", running: "Обрабатывается", cancelling: "Отменяется", completed: "Завершено", cancelled: "Отменено", failed: "Ошибка", blocked: "Лимит подписки", interrupted: "Прервано перезапуском" };
+      const hint = document.getElementById("cJobsHint"), list = document.getElementById("cJobsList");
+      if (hint) hint.textContent = `Параллельно задач: до ${st.workers}. Расшифровка аудио — по очереди. Время сервиса: ${st.timezone}.`;
+      if (list) list.innerHTML = st.jobs.length ? `<table class="dt"><thead><tr><th>Задача / модель</th><th>Запуск</th><th>Статус</th><th>Готово / всего</th><th></th></tr></thead><tbody>${st.jobs.map((j) => `<tr><td>${esc(j.id.slice(0, 8))}<div class="muted small">${esc(Object.fromEntries(MODELS)[j.model] || j.model)} · ${esc(Object.fromEntries(EFFORTS)[j.effort] || j.effort)}</div></td><td>${esc(dtLabel(j.run_at))}</td><td>${esc(labels[j.status] || j.status)}<div class="muted small">${esc(j.message || "")}</div></td><td>${nf(j.done)} / ${nf(j.total)}${j.failed ? `<div class="small">Ошибок: ${nf(j.failed)}</div>` : ""}${j.skipped ? `<div class="muted small">Уже обработаны: ${nf(j.skipped)}</div>` : ""}</td><td>${["queued", "running"].includes(j.status) ? `<button type="button" class="btn" data-cancel-job="${esc(j.id)}">Отменить</button>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">Задач пока нет. Выберите звонки и нажмите «Обработать…».</div>`;
+      const previous = state.cJobStates || {}, next = Object.fromEntries(st.jobs.map((j) => [j.id, j.status]));
+      const finished = st.jobs.some((j) => ["running", "cancelling", "queued"].includes(previous[j.id]) && !["running", "cancelling", "queued"].includes(j.status));
+      state.cJobStates = next;
+      if (finished) toast("Задача обработки завершилась. Нажмите «Обновить звонки», чтобы увидеть результаты.");
+      state.cJobT = setTimeout(watchJob, 3000);
     };
+    const runAt = document.getElementById("cRunAt");
+    if (runAt) runAt.addEventListener("input", () => { state.cRunAt = runAt.value; });
+    const jobsList = document.getElementById("cJobsList");
+    if (jobsList) jobsList.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-cancel-job]");
+      if (!button) return;
+      button.disabled = true;
+      try { await api("/api/calls-job-cancel", { id: button.dataset.cancelJob }); await watchJob(); }
+      catch (e) { if (e.message !== "auth") toast(e.message); button.disabled = false; }
+    });
+    const refreshJobs = document.getElementById("cJobsRefresh");
+    if (refreshJobs) refreshJobs.addEventListener("click", loadCalls);
     if (isMgr) watchJob();
     main.querySelectorAll("[data-proc]").forEach((btn) => btn.addEventListener("click", () => startProc({ id: btn.dataset.proc })));
     main.querySelectorAll("[data-model],[data-effort]").forEach((b) => b.addEventListener("click", () => {
