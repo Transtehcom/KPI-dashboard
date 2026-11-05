@@ -26,3 +26,6 @@ state.boot.me.role='manager';state.view='team';location.hash='#calls';hashChange
 location.hash='#workload';hashChange();assert.equal(state.view,'workload');
 assert.ok(renders && loads);
 console.log('Navigation history and Workload access: OK');
+
+location.hash='#gpt';hashChange();assert.equal(state.view,'gpt','manager can open GPT');
+state.boot.me.role='employee';hashChange();assert.equal(state.view,'emp','employee cannot open GPT by URL');

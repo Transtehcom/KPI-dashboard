@@ -42,6 +42,14 @@ def load_rules():
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS gpt_chats (
+ id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, created TEXT, updated TEXT, privacy TEXT);
+CREATE TABLE IF NOT EXISTS gpt_messages (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL,
+ content TEXT, masked_content TEXT, sources TEXT, outbound TEXT, created TEXT, finished TEXT, model TEXT, effort TEXT, month TEXT);
+CREATE INDEX IF NOT EXISTS ix_gpt_chat_messages ON gpt_messages(chat_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_gpt_one_turn ON gpt_messages(chat_id) WHERE role='assistant' AND status='running';
+
 CREATE TABLE IF NOT EXISTS call_processing_jobs (
  id TEXT PRIMARY KEY, ids TEXT NOT NULL, force INTEGER NOT NULL DEFAULT 0,
  model TEXT NOT NULL, effort TEXT NOT NULL, author TEXT, created TEXT NOT NULL,

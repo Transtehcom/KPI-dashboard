@@ -78,6 +78,13 @@ class App:
         self.money_busy = threading.Lock()  # идёт загрузка остатков и планов платежей из 1С («Деньги»)
         self.suppliers_busy = threading.Lock()  # идёт загрузка закупок из 1С («Поставщики»)
 
+    def gpt_service(self):
+        from .gpt_assistant import GPTAssistant
+        with self.lock:
+            if not hasattr(self,"_gpt"):
+                self._gpt=GPTAssistant(self.con,self.config,self.rules)
+            return self._gpt
+
     def processing_jobs(self):
         from .call_jobs import JobQueue
         with self.lock:
@@ -561,6 +568,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_call_audio(me, q.get("id") or "")
 
             with app.lock:
+                if path.startswith("/api/gpt-"):
+                    if not is_mgr:
+                        return JsonResponse({"error":"GPT доступен только администратору"},403)
+                    service=app.gpt_service()
+                    try:
+                        if path == "/api/gpt-chats" and method == "GET":
+                            return JsonResponse(service.chats(me["login"]))
+                        if path == "/api/gpt-chat" and method == "GET":
+                            return JsonResponse(service.chat(me["login"],q.get("id") or ""))
+                        if path == "/api/gpt-preview" and method == "GET":
+                            return JsonResponse(service.preview(me["login"],q.get("id") or "",int(q.get("message") or 0)))
+                        if path == "/api/gpt-new" and method == "POST":
+                            return JsonResponse(service.create_chat(me["login"]))
+                        if path == "/api/gpt-send" and method == "POST":
+                            return JsonResponse(service.submit(me["login"],str(b.get("id") or ""),b.get("text"),
+                                b.get("model") or "gpt-6-luna",b.get("effort") or "medium",b.get("month")))
+                        if path == "/api/gpt-cancel" and method == "POST":
+                            service.cancel(me["login"],str(b.get("id") or ""))
+                            return JsonResponse({"ok":True})
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"error":"Маршрут GPT не найден"},404)
                 if path == "/api/bootstrap":
                     return JsonResponse(app.bootstrap(me))
                 if path == "/api/overview":
@@ -1028,6 +1057,7 @@ def serve():
         print(f"Не удалось занять порт {port}: {e}. Возможно, дашборд уже запущен в другом окне "
               f"или порт занят другой программой — поменяйте server.port в config.json.")
         return
+    app.gpt_service()  # восстановить прерванные чаты только после успешной привязки порта
     app.processing_jobs().start()
     sync.start_scheduler(app.con, cfg)  # только процесс, успешно занявший порт, запускает автообновления
     url = f"http://localhost:{port}"

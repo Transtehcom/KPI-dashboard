@@ -140,6 +140,37 @@ class ListenTest(unittest.TestCase):
         status=self.con.execute("SELECT status FROM call_feedback_rechecks WHERE id=?",(response["job"]["id"],)).fetchone()[0]
         self.assertEqual(status,"cancelled")
 
+    def test_gpt_admin_access_owned_chats_and_async_response(self):
+        from app import gpt_assistant
+        import time
+        def post(login,path,body):
+            req=urllib.request.Request(self.base+path,data=json.dumps(body).encode(),
+                headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
+            try:
+                with urllib.request.urlopen(req) as r:return r.status,json.load(r)
+            except urllib.error.HTTPError as e:
+                with e:return e.code,json.load(e)
+        self.assertEqual(self.get("pm","/api/gpt-chats")[0],403)
+        self.assertEqual(post("pm","/api/gpt-new",{})[0],403)
+        code,chat=post("boss","/api/gpt-new",{})
+        self.assertEqual(code,200)
+        other=self.app.gpt_service().create_chat("other")
+        self.assertEqual(self.get("boss","/api/gpt-chat?id="+other["id"])[0],400)
+        self.assertEqual(self.get("pm","/api/gpt-preview?id="+chat["id"]+"&message=1")[0],403)
+        self.assertEqual(post("boss","/api/gpt-send",{"id":chat["id"],"text":"x","model":"invalid"})[0],400)
+        response={"result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Здравствуйте","sources":[]}}
+        with patch.object(gpt_assistant.call_analysis,"run_codex",return_value=response):
+            code,job=post("boss","/api/gpt-send",{"id":chat["id"],"text":"Привет"})
+            self.assertEqual(code,200)
+            for _ in range(200):
+                data=json.loads(self.get("boss","/api/gpt-chat?id="+chat["id"])[2])
+                if data["messages"][-1]["status"]!="running":break
+                time.sleep(.01)
+        self.assertEqual(data["messages"][-1]["content"],"Здравствуйте")
+        self.assertNotIn("outbound",data["messages"][-1])
+        preview=json.loads(self.get("boss",f"/api/gpt-preview?id={chat['id']}&message={job['id']}")[2])
+        self.assertIn("ДАННЫЕ",preview["outbound"])
+
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
         self.app.config['employees'].append(employee)

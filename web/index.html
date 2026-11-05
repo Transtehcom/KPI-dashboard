@@ -784,6 +784,18 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   .wl-detail > td { background: var(--surface-2); padding: 8px 12px; }
   .wl-flag { color: var(--bad); }
   .wl-key { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--line); vertical-align: -2px; }
+/* GPT */
+.gpt-layout { display:grid;grid-template-columns:230px minmax(0,1fr);gap:16px;align-items:start; }
+.gpt-chats { max-height:65vh;overflow:auto;padding:8px; }
+.gpt-chats .nav-item { display:block;width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere; }
+.gpt-messages { height:54vh;min-height:280px;overflow:auto;margin:12px 0;padding:4px; }
+.gpt-message { padding:12px;margin:8px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface); }
+.gpt-user { background:var(--surface-2);margin-left:5%; }
+.gpt-text { white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;margin:6px 0; }
+.gpt-sources { line-height:1.8;overflow-wrap:anywhere; }
+.gpt-preview { white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:11px; }
+#gptText { width:100%;resize:vertical;font:inherit;padding:10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--fg); }
+@media(max-width:800px) { .gpt-layout { grid-template-columns:1fr; }.gpt-chats { max-height:140px; }.gpt-messages { height:48vh; } }
 </style>
 
 <div id="root"></div>
@@ -905,6 +917,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   // ---------- вход
   function renderLogin() {
     clearTimeout(syncTimer); syncGeneration++;
+    clearTimeout(state.gptTimer); state.gptChat = null; state.gptDrafts = {}; state.gptEpoch = (state.gptEpoch || 0) + 1;
     root.innerHTML = `<div class="login"><form class="panel" id="loginForm">
       <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
       <div><h1 class="login-title">Дашборд</h1><div class="login-slogan">С нами строят будущее</div></div>
@@ -930,6 +943,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const h = (location.hash || "").replace("#", "");
     if (isFunnelHash(h)) state.fMode = h === "funnel-fact" ? "fact" : "date";
     if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
+    else if (h === "gpt" && isMgr && !PREVIEW) { state.view = "gpt"; }
     else if (h === "workload" && isMgr && !PREVIEW) { state.view = "workload"; }
     else if (!isMgr) { state.view = isFunnelHash(h) ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
@@ -1016,14 +1030,14 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     syncRefreshPending = false;
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
-    const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
+    const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers", "gpt"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">GPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -1040,6 +1054,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       ev.preventDefault();
       if (a.dataset.tab === "funnel") { state.view = "funnel"; state.fMode = a.dataset.fmode === "fact" ? "fact" : "date"; location.hash = state.fMode === "fact" ? "funnel-fact" : "funnel"; }
       else if (a.dataset.tab === "staff") { state.view = "staff"; location.hash = "staff"; }
+      else if (a.dataset.tab === "gpt" && isMgr) { state.view = "gpt"; location.hash = "gpt"; }
       else if (a.dataset.tab === "workload") { state.view = "workload"; location.hash = "workload"; }
       else if (a.dataset.tab === "money") { state.view = "money"; location.hash = "money"; }
       else if (a.dataset.tab === "suppliers") {
@@ -1104,6 +1119,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       return;
     }
     if (state.view === "calls") { loadCalls(); return; }
+    if (state.view === "gpt" && isMgr) { loadGPT(); return; }
     if (state.view === "workload") { loadWorkload(); return; }
     if (state.view === "money") { loadMoney(); return; }
     if (state.view === "suppliers") { loadSuppliers(); return; }
@@ -1608,6 +1624,66 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       try { await api("/api/baseline", { emp: d.login, metric: "conversion_last_year", value: +f.querySelector("input").value / 100 }); if (!PREVIEW) { toast("Базовый уровень сохранён"); sideCache = {}; load(); } }
       catch (e) { toast(e.message); }
     }));
+  }
+
+  // ---------- GPT: owned chats, local restoration and masked context preview
+  function gptMessagesHtml(messages) {
+    return messages.length ? messages.map((m) => `<article class="gpt-message ${m.role === "user" ? "gpt-user" : ""}"><div class="muted small">${m.role === "user" ? "Вы" : "GPT"} · ${esc(dtLabel(m.created))}${m.model ? ` · ${esc(m.model)}` : ""}${m.status === "error" ? " · ошибка" : m.status === "cancelled" ? " · остановлено" : ""}</div><div class="gpt-text">${esc(m.content || "")}</div>
+      ${(m.sources || []).length ? `<div class="small gpt-sources">Источники: ${(m.sources || []).map((r) => r.url ? `<a href="${esc(r.url)}" ${r.month ? `data-gpt-month="${esc(r.month)}"` : ""} ${r.url.startsWith("#") ? "" : 'target="_blank" rel="noopener noreferrer"'}>${esc(r.title)} (${esc(r.system)})</a>` : `<span>${esc(r.title)} (${esc(r.system)})</span>`).join(" · ")}</div>` : ""}
+      ${m.has_preview ? `<details class="more" data-gpt-preview="${m.id}"><summary>Что отправлено в Codex (обезличенный контекст)</summary><pre class="gpt-preview">Загрузка…</pre></details>` : ""}</article>`).join("") : `<div class="empty">Спросите о KPI, клиентах, заказах, звонках или деньгах. Например: «Почему у сотрудника такой KPI за ноябрь?»</div>`;
+  }
+  async function loadGPT() {
+    clearTimeout(state.gptTimer);
+    const main = document.getElementById("main"), epoch = state.gptEpoch = (state.gptEpoch || 0) + 1;
+    const current = () => state.view === "gpt" && state.gptEpoch === epoch && document.getElementById("main") === main;
+    try {
+      const list = await api("/api/gpt-chats");
+      if (!current()) return;
+      if (!list.chats.length) { const created = await api("/api/gpt-new", {}); if (!current()) return; list.chats.push(created); }
+      if (!list.chats.some((c) => c.id === state.gptChat)) state.gptChat = list.chats[0].id;
+      const chatId = state.gptChat;
+      state.gptDrafts ||= {};
+      main.innerHTML = `<div class="head"><div><div class="eyebrow">Помощник по данным компании</div><h1>GPT</h1><div class="sub">Битрикс24 · Дашборд · 1С · чтение сохранённых данных</div></div></div><div class="gpt-layout"><aside class="panel"><div class="panel-b"><button class="btn" id="gptNew">Новый чат</button></div><div class="gpt-chats">${list.chats.map((c) => `<button class="nav-item ${c.id === chatId ? "active" : ""}" data-gpt-chat="${esc(c.id)}">${esc(c.title)}</button>`).join("")}</div></aside><section class="panel"><div class="panel-b"><p class="muted small">Перед отправкой применяется автоматическое обезличивание имён, компаний и реквизитов. Точные суммы и даты передаются модели. Исходные значения и ссылки восстанавливаются на сервере. Актуальность данных определяется последней синхронизацией: ${esc(list.last_sync?.finished ? dtLabel(list.last_sync.finished) : "данных пока нет")} ${esc(list.last_sync?.status || "")}.</p><div class="inline-form"><label>Месяц<input type="month" id="gptMonth" value="${esc(state.gptMonth || state.month)}"></label><label>Модель<select id="gptModel">${Object.entries(list.models).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptModel || list.default_model) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label><label>Усилие<select id="gptEffort">${Object.entries(list.efforts).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptEffort || list.default_effort) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div><div id="gptMessages" class="gpt-messages"><div class="empty">Загрузка чата…</div></div><form id="gptForm"><textarea id="gptText" rows="3" maxlength="6000" placeholder="Ваш вопрос…" required>${esc(state.gptDrafts[chatId] || "")}</textarea><div class="inline-form"><button class="btn primary" id="gptSend">Отправить</button><button class="btn" type="button" id="gptStop" hidden>Остановить</button><span class="muted small">Ctrl+Enter — отправить. Изменения в исходных системах недоступны.</span></div><div class="err" id="gptError"></div></form></div></section></div>`;
+      const messages = document.getElementById("gptMessages"), text = document.getElementById("gptText");
+      let lastMarkup = "", polling = false;
+      const poll = async () => {
+        clearTimeout(state.gptTimer);
+        if (!current() || polling) return;
+        polling = true;
+        try {
+          const chat = await api(`/api/gpt-chat?id=${encodeURIComponent(chatId)}`);
+          if (!current()) return;
+          const markup = gptMessagesHtml(chat.messages), nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+          if (markup !== lastMarkup) { messages.innerHTML = markup; lastMarkup = markup; if (nearBottom || state.gptJustSent) messages.scrollTop = messages.scrollHeight; state.gptJustSent = false; }
+          const busy = chat.messages.some((m) => m.status === "running");
+          document.getElementById("gptSend").disabled = busy;
+          document.getElementById("gptStop").hidden = !busy;
+          if (busy) state.gptTimer = setTimeout(poll, 2000);
+        } catch (e) { if (current() && e.message !== "auth") { document.getElementById("gptError").textContent = e.message; state.gptTimer = setTimeout(poll, 5000); } }
+        finally { polling = false; }
+      };
+      messages.addEventListener("toggle", async (event) => {
+        const details = event.target.closest("[data-gpt-preview]");
+        if (!details || !details.open || details.dataset.loaded) return;
+        details.dataset.loaded = "1";
+        try { const r = await api(`/api/gpt-preview?id=${encodeURIComponent(chatId)}&message=${details.dataset.gptPreview}`); if (current() && details.isConnected) details.querySelector("pre").textContent = r.outbound; }
+        catch (e) { details.dataset.loaded = ""; details.querySelector("pre").textContent = e.message; }
+      }, true);
+      messages.addEventListener("click", (event) => { const a = event.target.closest("[data-gpt-month]"); if (a) state.month = a.dataset.gptMonth; });
+      text.addEventListener("input", () => { state.gptDrafts[chatId] = text.value; });
+      text.addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); document.getElementById("gptForm").requestSubmit(); } });
+      document.getElementById("gptForm").addEventListener("submit", async (event) => {
+        event.preventDefault(); const button = document.getElementById("gptSend"); if (button.disabled || !text.value.trim()) return;
+        button.disabled = true; document.getElementById("gptError").textContent = "";
+        try { await api("/api/gpt-send", { id:chatId, text:text.value, model:document.getElementById("gptModel").value, effort:document.getElementById("gptEffort").value, month:document.getElementById("gptMonth").value }); if (!current()) return; text.value = ""; state.gptDrafts[chatId] = ""; state.gptJustSent = true; await poll(); }
+        catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; button.disabled = false; }
+      });
+      document.getElementById("gptStop").addEventListener("click", async () => { try { await api("/api/gpt-cancel", { id:chatId }); await poll(); } catch (e) { if (e.message !== "auth") toast(e.message); } });
+      for (const [id,key] of [["gptModel","gptModel"],["gptEffort","gptEffort"],["gptMonth","gptMonth"]]) document.getElementById(id).addEventListener("change",(event) => { state[key] = event.target.value; });
+      main.querySelectorAll("[data-gpt-chat]").forEach((button) => button.addEventListener("click", () => { state.gptChat = button.dataset.gptChat; loadGPT(); }));
+      document.getElementById("gptNew").addEventListener("click", async () => { try { const chat = await api("/api/gpt-new",{}); if (current()) { state.gptChat = chat.id; loadGPT(); } } catch (e) { if (e.message !== "auth") toast(e.message); } });
+      await poll();
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
 
   // ---------- оценки разбора звонков
@@ -3289,6 +3365,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     else if (isFunnelHash(h) && (state.view !== "funnel" || state.fMode !== (h === "funnel-fact" ? "fact" : "date"))) { state.view = "funnel"; state.fMode = h === "funnel-fact" ? "fact" : "date"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
     else if (h === "calls" && !PREVIEW && state.view !== "calls") { state.view = "calls"; renderShell(); load(); }
+    else if (h === "gpt" && !PREVIEW && state.view !== "gpt") { state.view = "gpt"; renderShell(); load(); }
     else if (h === "workload" && state.view !== "workload") { state.view = "workload"; renderShell(); load(); }
     else if (h === "money" && state.view !== "money") { state.view = "money"; renderShell(); load(); }
     else if (h.split("?")[0] === "suppliers" && (state.view !== "suppliers" || (state.sup && state.sup.hq !== h))) { state.view = "suppliers"; supFromHash(h); renderShell(); load(); }

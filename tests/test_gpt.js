@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const html=fs.readFileSync('web/index.html','utf8');
+const start=html.indexOf('  function gptMessagesHtml('),end=html.indexOf('  async function loadGPT()',start);
+const ctx={esc:v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),dtLabel:String};
+vm.runInNewContext(html.slice(start,end),ctx);
+const output=ctx.gptMessagesHtml([{id:1,role:'assistant',status:'completed',content:'<script>bad</script>',created:'2026-11-05',has_preview:true,sources:[{id:'source_1',title:'Анна <bad>',url:'#emp-anna',system:'Дашборд',month:'2026-10'}]}]);
+assert.ok(!output.includes('<script>'));
+assert.match(output,/data-gpt-preview="1"/);
+assert.match(output,/data-gpt-month="2026-10"/);
+assert.match(output,/Имена|обезличенный/);
+assert.match(ctx.gptMessagesHtml([]),/Спросите/);
+assert.ok(html.includes('state.gptEpoch === epoch'),'late chat requests must be ignored');
+assert.ok(html.includes('state.gptDrafts[chatId]'),'polling keeps typed drafts');
+console.log('GPT messages, safe rendering, sources, preview and navigation guards: OK');
