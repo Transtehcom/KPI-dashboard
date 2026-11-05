@@ -57,7 +57,7 @@ class ProportionalPayoutTest(unittest.TestCase):
         self.assertEqual((item["payout"], item["status"]), (0, "penalty_zero"))
 
     def test_operational_three_equal_capped_shares(self):
-        for values, expected in (((.02,.04,.2), .26/3), ((2,0,0),1/3), ((1,1,1),1), ((0,0,0),0)):
+        for values, expected in (((.02,.04,.2), .09), ((2,0,0),.33), ((1,1,1),1), ((0,0,0),0)):
             with self.subTest(values=values):
                 with mock.patch.object(self.engine, "calc_operational_activity", return_value={
                     "components":[comp(str(i),v,1) for i,v in enumerate(values)],
@@ -69,3 +69,12 @@ class ProportionalPayoutTest(unittest.TestCase):
     def test_operational_calculator_declares_equal_shares(self):
         item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
         self.assertEqual(item.get("aggregation"),"equal_mean")
+
+    def test_operational_percentage_rounds_tenths_then_units_half_up(self):
+        for value,expected in ((.0867,.09),(.0745,.08),(.0741,.07),(.074499,.07),(.9945,1.0)):
+            with self.subTest(value=value):
+                with mock.patch.object(self.engine,"calc_operational_activity",return_value={
+                    "components":[comp(str(i),value,1) for i in range(3)],"aggregation":"equal_mean"}):
+                    item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
+                self.assertEqual(item["pct"],expected)
+                self.assertEqual(item["payout"],round(item["amount"]*expected))
