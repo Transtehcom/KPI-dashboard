@@ -746,6 +746,7 @@ class Engine:
         det += [[m["dt"][:10], m["client"], "Встреча", f"закрыта {m['closed_dt'][:10]}, не в день проведения"]
                 for m in late_close]
         return {
+            "aggregation": "equal_mean", "payout_precision": 2,
             "components": [
                 comp(calls_name, len(result_calls), calls_target, "шт", source=SRC_B24, pace=self._pace(ctx, calls_target), audit="calls"),
                 kp_comp,
@@ -1122,7 +1123,9 @@ class Engine:
             scored = [c for c in comps if not c["informative"]]
             pcts = [c["pct"] for c in scored if c["pct"] is not None]
             missing = [c for c in scored if c["pct"] is None]
-            pct = min(pcts) if pcts else None
+            equal_mean = r.get("aggregation") == "equal_mean"
+            pct = (sum(min(1, max(0, v)) for v in pcts) / len(scored)
+                   if equal_mean and pcts and not missing else min(pcts) if pcts else None)
             amount = round(bonus * it["weight"])
             awaiting_manual = any(c["source"] in (SRC_MAN, SRC_INPUT, SRC_HAND) for c in missing)
             proportional = payout_cfg.get("mode") == "proportional"
@@ -1133,7 +1136,7 @@ class Engine:
             else:
                 met = pct >= 1 - EPS
                 if proportional:
-                    payout = amount * payout_fraction(pct) if not missing else 0
+                    payout = amount * (min(1, max(0, pct)) if equal_mean else payout_fraction(pct)) if not missing else 0
                 else:
                     payout = amount if met else 0
                 status = "met" if met else ("close" if pct >= close_pct - EPS else "fail")
@@ -1157,7 +1160,7 @@ class Engine:
                 zero_all.append(r["zero_all"])
             warnings += r.get("warnings", [])
             items.append({**{k: it[k] for k in ("code", "n", "title", "weight", "period", "target_text", "description")},
-                          "amount": amount, "pct": pct, "status": status, "payout": round(payout),
+                          "amount": amount, "pct": pct, "status": status, "payout": round(payout, r.get("payout_precision", 0)),
                           **{k: v for k, v in r.items() if k not in ("zero_all", "warnings")}})
         total = sum(i["payout"] for i in items)
         if zero_all:

@@ -55,3 +55,17 @@ class ProportionalPayoutTest(unittest.TestCase):
         manual.add_penalty(self.con, "lead", "2026-11-03", 0, "Штраф", "boss")
         item = next(i for i in self.engine.compute("lead", "2026-11")["items"] if i["code"] == "receivables_overdue")
         self.assertEqual((item["payout"], item["status"]), (0, "penalty_zero"))
+
+    def test_operational_three_equal_capped_shares(self):
+        for values, expected in (((.02,.04,.2), .26/3), ((2,0,0),1/3), ((1,1,1),1), ((0,0,0),0)):
+            with self.subTest(values=values):
+                with mock.patch.object(self.engine, "calc_operational_activity", return_value={
+                    "components":[comp(str(i),v,1) for i,v in enumerate(values)],
+                    "aggregation":"equal_mean", "payout_precision":2}):
+                    item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
+                self.assertAlmostEqual(item["pct"],expected)
+                self.assertEqual(item["payout"],round(item["amount"]*expected,2))
+
+    def test_operational_calculator_declares_equal_shares(self):
+        item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
+        self.assertEqual(item.get("aggregation"),"equal_mean")
