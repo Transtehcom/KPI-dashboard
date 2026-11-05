@@ -1,5 +1,7 @@
 """Веб-сервер дашборда: авторизация, API, статика."""
 import datetime as dt
+import copy
+import gzip
 import hashlib
 import hmac
 import json
@@ -11,9 +13,12 @@ import secrets
 import threading
 import time
 import traceback
+from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from .crm_links import employee_url, portal_origin
+from . import call_feedback
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -27,7 +32,8 @@ PAGE_HEAD = (b'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
              b'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
              b'<link rel="icon" type="image/png" href="/assets/favicon.png"><link rel="icon" href="/assets/favicon.ico" sizes="any">'
              b'<link rel="apple-touch-icon" href="/assets/icon-180.png"></head><body>')
-ASSET_TYPES = {".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml"}
+ASSET_TYPES = {".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml",
+               ".js": "text/javascript; charset=utf-8"}
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 PLAN_METRICS = {"gross_profit", "revenue"}
 # защита от подбора пароля: не больше LOGIN_MAX_FAILS неудачных попыток за LOGIN_WINDOW секунд
@@ -37,6 +43,13 @@ LOGIN_WINDOW = 15 * 60
 
 class BadRequest(Exception):
     pass
+
+
+@dataclass
+class JsonResponse:
+    data: object
+    code: int = 200
+    cookie: str | None = None
 
 
 def hash_password(password, salt=None):
@@ -159,13 +172,14 @@ class App:
         cm = current_month()
         last = sync.last_sync(self.con)
         return {
-            "me": {"login": me["login"], "name": me["name"], "role": me.get("role", "employee")},
+            "me": {"login": me["login"], "name": me["name"], "url": employee_url(self.config,me["login"]), "role": me.get("role", "employee")},
             "employees": [{"login": e["login"], "name": e["name"], "position": e.get("position"),
                            "position_title": e.get("title") or self.rules["positions"].get(e.get("position"), {}).get("title"),
-                           "department_title": self.department_title(e)}
+                           "department_title": self.department_title(e), "url": employee_url(self.config,e["login"])}
                           for e in emps],
             "positions": {k: {"title": v["title"], "department": v["department"], "salary": v["salary"],
                               "kpi_bonus": v["kpi_bonus"], "doc": v.get("doc"),
+                              "draft": bool(v.get("draft")), "setup_issues": v.get("setup_issues", []),
                               "items": [{x: i.get(x) for x in ("n", "title", "weight", "period", "target_text", "description")}
                                         for i in Engine.items_for(v, cm)]}  # регламент текущего месяца
                           for k, v in self.rules["positions"].items()},
@@ -224,20 +238,45 @@ class App:
         if deal is not None:  # по сделке — все звонки, без периода
             date_from = date_to = None
         rows = call_records.listing(self.con, self.config, emps=emps, deal=deal, date_from=date_from, date_to=date_to,
-                                    with_listens=is_mgr)
+                                    with_listens=is_mgr, feedback_pending=is_mgr and q.get("feedback") == "pending")
         names = {e["login"]: e["name"] for e in self.config["employees"]}
+        feedback = call_feedback.listing(self.con, [r["id"] for r in rows], author=None if is_mgr else me["login"])
         for r in rows:
             r["emp_name"] = names.get(r["emp"], r["emp"])
             r["can_listen"] = call_records.can_listen(self.config, me, r)
+            r["can_rate"] = not is_mgr and r["emp"] == me["login"] and r["can_listen"] and bool(r["analysis"])
+            r["feedback"] = feedback.get(r["id"], [])
+            for item in r["feedback"]:
+                item["author_name"] = names.get(item["author"], item["author"])
         # кого можно выбрать в фильтре: администратору — сотрудников с ID в Б24 (их звонки выгружаются), руководителю отдела — свой отдел
         choices = [e for e in self.config["employees"] if (e.get("b24_user_id") if allowed is None else e["login"] in allowed)]
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_from": call_records.keep_from(self.config),
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
+                "feedback_criteria": [{"key": key, "label": label} for key, label in call_feedback.CRITERIA.items()],
                 "download": call_records.status() if is_mgr else None}
 
     def employee(self, login, month):
+        return self.cached_report(("employee", login, month), lambda: self.build_employee(login, month))
+
+    def overview(self, month):
+        return self.cached_report(("overview", month), lambda: self.engine.overview(month))
+
+    def cached_report(self, key, calculate):
+        with db_lock():
+            version = (int(time.monotonic() // 30), dt.date.today(), self.con.total_changes,
+                       self.con.execute("PRAGMA data_version").fetchone()[0])
+            if version != getattr(self, "_report_version", None):
+                self._report_cache = {}
+                self._report_version = version
+            if key not in self._report_cache:
+                if len(self._report_cache) >= 64:
+                    self._report_cache.clear()
+                self._report_cache[key] = calculate()
+            return copy.deepcopy(self._report_cache[key])
+
+    def build_employee(self, login, month):
         r = self.engine.compute(login, month)
         first, last = month_bounds(month)
         for it in r["items"]:
@@ -245,8 +284,9 @@ class App:
                 pass  # сроки и оплаты пришли из 1С — ручной ввод не нужен
             elif it["code"] in manual.ENTRY:
                 it["entry"] = manual.entry(self.con, it["code"], login, first, last)
-            if it["code"] == "tender_receivables":
+            if it["code"] == "tender_receivables" or it.get("uses_penalties"):
                 it["penalties"] = manual.penalties_block(self.con, login, month)
+                it["penalties"]["source_known"] = bool(it.get("penalties_source_known"))
         r["trend"] = self.engine.trend(login, month)
         r["weeks"] = weeks_of_month(month)
         return r
@@ -260,6 +300,29 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- ответы
+    def encode_body(self, body):
+        self.send_header("Vary", "Accept-Encoding")
+        if len(body) < 1024:
+            return body
+        accepted = {}
+        for entry in self.headers.get("Accept-Encoding", "").lower().split(","):
+            parts = entry.strip().split(";")
+            quality = 1.0
+            for parameter in parts[1:]:
+                if parameter.strip().startswith("q="):
+                    try:
+                        quality = float(parameter.strip()[2:])
+                    except ValueError:
+                        quality = 0.0
+            accepted[parts[0]] = quality
+        if accepted.get("gzip", accepted.get("*", 0)) <= 0:
+            return body
+        compressed = gzip.compress(body, compresslevel=5, mtime=0)
+        if len(compressed) >= len(body):
+            return body
+        self.send_header("Content-Encoding", "gzip")
+        return compressed
+
     def send_json(self, obj, code=200, cookie=None):
         body = json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(code)
@@ -267,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if cookie is not None:
             self.send_header("Set-Cookie", cookie)
+        body = self.encode_body(body)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -276,8 +340,20 @@ class Handler(BaseHTTPRequestHandler):
             body = f.read()
         if path.endswith(".html"):
             body = PAGE_HEAD + body + b"</body></html>"
+        etag = 'W/"' + hashlib.sha256(body).hexdigest() + '"'
+        conditional = [tag.strip() for tag in self.headers.get("If-None-Match", "").split(",")]
+        if etag in conditional or "*" in conditional:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
+            self.send_header("Cache-Control", "no-cache" if path.endswith(".html") else "public, max-age=86400")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        self.send_header("ETag", etag)
+        body = self.encode_body(body)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         if path.endswith(".html"):  # после обновления дашборда браузер не должен показывать старую страницу
@@ -294,13 +370,13 @@ class Handler(BaseHTTPRequestHandler):
         with app.lock:
             row = call_records.get(app.con, record_id)
             if not row:
-                return self.send_json({"error": "Запись не найдена"}, 404)
+                return JsonResponse({"error": "Запись не найдена"}, 404)
             if not call_records.can_listen(app.config, me, row):
                 call_records.log_listen(app.con, me["login"], row, self.client_ip(), "denied")
-                return self.send_json({"error": "Нет прав на прослушивание этой записи"}, 403)
+                return JsonResponse({"error": "Нет прав на прослушивание этой записи"}, 403)
             path = call_records.file_path(app.config, row)
             if not path or not os.path.isfile(path):
-                return self.send_json({"error": "Запись ещё не скачана или удалена по сроку хранения"}, 404)
+                return JsonResponse({"error": "Запись ещё не скачана или удалена по сроку хранения"}, 404)
             rng = self.headers.get("Range") or ""
             if not rng or rng.replace(" ", "").startswith("bytes=0-"):  # начало воспроизведения, а не перемотка
                 call_records.log_listen(app.con, me["login"], row, self.client_ip())
@@ -433,49 +509,55 @@ class Handler(BaseHTTPRequestHandler):
         self.api("POST", u.path, {})
 
     def api(self, method, path, q):
+        response = self.api_response(method, path, q)
+        if response is not None:
+            # Socket writes can wait on a slow client. Release database locks first.
+            self.send_json(response.data, response.code, response.cookie)
+
+    def api_response(self, method, path, q):
         app = self.app
         try:
+            b = self.body() if method == "POST" else {}
             if path == "/api/login" and method == "POST":
-                b = self.body()
                 login = str(b.get("login") or "").strip().lower()
                 key = (self.client_ip(), login)
                 with app.lock:
                     if app.login_blocked(key):
-                        return self.send_json({"error": "Слишком много неудачных попыток входа. Попробуйте через 15 минут"}, 429)
+                        return JsonResponse({"error": "Слишком много неудачных попыток входа. Попробуйте через 15 минут"}, 429)
                     ok = app.check_password(login, str(b.get("password") or ""))
                     if not ok:
                         app.login_failed(key)
-                        return self.send_json({"error": "Неверный логин или пароль"}, 401)
+                        return JsonResponse({"error": "Неверный логин или пароль"}, 401)
                     app.login_fails.pop(key, None)
                     tok = app.new_session(login)
                 secure = "; Secure" if app.config.get("server", {}).get("secure_cookie") else ""
-                return self.send_json({"ok": True}, cookie=f"kpi_session={tok}; HttpOnly; SameSite=Lax; Path=/{secure}")
+                return JsonResponse({"ok": True}, cookie=f"kpi_session={tok}; HttpOnly; SameSite=Lax; Path=/{secure}")
             if path == "/api/logout" and method == "POST":
                 with db_lock():
                     app.con.execute("DELETE FROM sessions WHERE token=?", (self.token(),))
                     app.con.commit()
-                return self.send_json({"ok": True}, cookie="kpi_session=; Max-Age=0; Path=/")
+                return JsonResponse({"ok": True}, cookie="kpi_session=; Max-Age=0; Path=/")
 
             # соединение с базой одно на все потоки: без блокировки параллельные запросы мешают друг другу
             with app.lock:
                 me = app.session_user(self.token())
             if not me:
-                return self.send_json({"error": "Требуется вход"}, 401)
+                return JsonResponse({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
             month = self.month_param(q["month"]) if q.get("month") else current_month()
 
             if path == "/api/calendar":  # расписание из Битрикс24 на день — запрос в Б24 без общей блокировки базы
-                return self.send_json(app.calendar(me, is_mgr, q))
+                return JsonResponse(app.calendar(me, is_mgr, q))
             if path == "/api/call-audio":  # аудио отдаётся долго — без общей блокировки базы
                 return self.send_call_audio(me, q.get("id") or "")
 
             with app.lock:
                 if path == "/api/bootstrap":
-                    return self.send_json(app.bootstrap(me))
+                    return JsonResponse(app.bootstrap(me))
                 if path == "/api/overview":
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    return self.send_json(app.engine.overview(month))
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
+                    return JsonResponse(app.overview(month))
                 if path == "/api/funnel":  # воронки сделок и лидов открыты всем, кто вошёл в дашборд
                     kind = q.get("kind") or "deals"
                     if kind not in FUNNEL_KINDS:
@@ -492,7 +574,7 @@ class Handler(BaseHTTPRequestHandler):
                     mode = q.get("mode") or "date"
                     if mode not in ("date", "fact"):
                         raise BadRequest("Неизвестный вид воронок")
-                    return self.send_json(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
+                    return JsonResponse(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
                                                       date_from, date_to, date_field, deps, mode))
                 if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
@@ -512,11 +594,11 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                         people.append(app.engine.call_funnel(key, dt.date.fromisoformat(date_from),
                                                              dt.date.fromisoformat(date_to)))
-                    return self.send_json({"date_from": date_from, "date_to": date_to, "min_call": app.engine.min_call,
+                    return JsonResponse({"date_from": date_from, "date_to": date_to, "min_call": app.engine.min_call,
                                            "people": people})
                 if path == "/api/metrics":  # «Метрики»: где сейчас находится работа отдела — только руководителю
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     if q.get("kind") not in ("supply", "logistics", "sales"):
                         raise BadRequest("Неизвестный раздел метрик")
                     today_ = dt.date.today()
@@ -526,22 +608,32 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest("Начало периода позже его конца")
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
                     if q.get("kind") == "sales":
-                        return self.send_json(sales_panel.build(app.con, app.sales_team(), channel=q.get("channel") or "Все",
+                        return JsonResponse(sales_panel.build(app.con, app.sales_team(), channel=q.get("channel") or "Все",
                                                                 emp=q.get("emp") or "Все",
-                                                                portal=urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc))
+                                                                portal=portal_origin(app.config)))
                     if q.get("kind") == "logistics":
                         # очередь — по заявкам окна синхронизации: более старые строки в базе не обновляются
                         since = month_bounds(month_add(current_month(), -app.config.get("sync", {}).get("months_back", 6)))[0]
-                        return self.send_json(metrics.logistics(app.con, names, date_from, date_to, since.isoformat(), today_))
-                    return self.send_json(metrics.supply(app.con, names, date_from, date_to, today=today_,
+                        return JsonResponse(metrics.logistics(app.con, names, date_from, date_to, since.isoformat(), today_))
+                    return JsonResponse(metrics.supply(app.con, names, date_from, date_to, today=today_,
                                                          params=app.config.get("metrics", {}).get("supply")))
+                if path == "/api/kpi-records" and method == "GET":
+                    login = q.get("login") or me["login"]
+                    if not is_mgr and login != me["login"]:
+                        return JsonResponse({"error": "Нет доступа к дашборду другого сотрудника"}, 403)
+                    if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
+                        return JsonResponse({"error": "Сотрудник не найден"}, 404)
+                    try:
+                        return JsonResponse(app.engine.activity_audit(login, month, q.get("code"), q.get("kind")))
+                    except ValueError as e:
+                        raise BadRequest(str(e))
                 if path == "/api/employee":
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:
-                        return self.send_json({"error": "Нет доступа к дашборду другого сотрудника"}, 403)
+                        return JsonResponse({"error": "Нет доступа к дашборду другого сотрудника"}, 403)
                     if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
-                        return self.send_json({"error": "Сотрудник не найден"}, 404)
-                    return self.send_json(app.employee(login, month))
+                        return JsonResponse({"error": "Сотрудник не найден"}, 404)
+                    return JsonResponse(app.employee(login, month))
                 if path == "/api/calls":  # звонки с записью: сотрудник — свои, администратор — любого или по сделке
                     # период «с … по …» (ГГГГ-ММ-ДД, любая граница может быть пустой); all=1 — всё время; без них — месяц
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
@@ -550,47 +642,46 @@ class Handler(BaseHTTPRequestHandler):
                         date_from, date_to = first.isoformat(), last.isoformat()
                     if date_from and date_to and date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
-                    return self.send_json(app.calls(me, is_mgr, q, date_from, date_to))
+                    return JsonResponse(app.calls(me, is_mgr, q, date_from, date_to))
                 if path == "/api/calls-job":  # ход ручной обработки звонков (кнопка «Обработать…» в разделе «Звонки»)
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    return self.send_json({**call_analysis.JOB, "busy": call_records.status()["running"]})
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
+                    return JsonResponse({**call_analysis.JOB, "busy": call_records.status()["running"]})
                 if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
                     row = call_records.get(app.con, q.get("id") or "")
                     if not row:
-                        return self.send_json({"error": "Запись не найдена"}, 404)
+                        return JsonResponse({"error": "Запись не найдена"}, 404)
                     if not call_records.can_listen(app.config, me, row):
                         call_records.log_listen(app.con, me["login"], row, self.client_ip(), "denied")
-                        return self.send_json({"error": "Нет прав на эту расшифровку"}, 403)
+                        return JsonResponse({"error": "Нет прав на эту расшифровку"}, 403)
                     tr = transcripts.get(app.con, row["id"])
                     if not tr or not tr.get("engine"):  # нет строки или только неудачные попытки
-                        return self.send_json({"error": "Расшифровки ещё нет"}, 404)
+                        return JsonResponse({"error": "Расшифровки ещё нет"}, 404)
                     call_records.log_listen(app.con, me["login"], row, self.client_ip(), "read")
                     an = call_analysis.get(app.con, row["id"])
                     sents = call_analysis.sentences(tr["segments"])
                     roles = an.pop("roles", "") if an else ""
                     if len(roles) != len(sents):  # разбор сделан по другой расшифровке — роли не подходят
                         roles = ""
-                    return self.send_json({"id": row["id"], "segments": tr["segments"], "duration": tr["duration"],
+                    return JsonResponse({"id": row["id"], "segments": tr["segments"], "duration": tr["duration"],
                                            "sentences": [[t, roles[i].replace("-", "") if roles else "", s]
                                                          for i, (t, s) in enumerate(sents)],
                                            "analysis": an})
                 if path == "/api/listen-log":
                     if not is_mgr:
-                        return self.send_json({"error": "Журнал прослушиваний доступен только администратору"}, 403)
+                        return JsonResponse({"error": "Журнал прослушиваний доступен только администратору"}, 403)
                     today_ = dt.date.today()
                     date_from = self.date_param(q.get("date_from")) or (today_ - dt.timedelta(days=30)).isoformat()
                     date_to = self.date_param(q.get("date_to")) or today_.isoformat()
                     names = {e["login"]: e["name"] for e in app.config["employees"]}
-                    rows = call_records.listen_journal(app.con, date_from, date_to, q.get("login") or None)
+                    rows = call_records.listen_journal(app.con, date_from, date_to, q.get("login") or None, config=app.config)
                     for r in rows:
                         r["name"], r["emp_name"] = names.get(r["login"], r["login"]), names.get(r["emp"], r["emp"])
-                    return self.send_json({"date_from": date_from, "date_to": date_to, "rows": rows})
+                    return JsonResponse({"date_from": date_from, "date_to": date_to, "rows": rows})
                 if path == "/api/staff":  # раздел «Сотрудники»: только администраторы
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только администратору"}, 403)
+                        return JsonResponse({"error": "Доступно только администратору"}, 403)
                     if method == "POST":
-                        b = self.body()
                         try:
                             if b.get("action") == "delete":
                                 employees.delete(app.con, str(b.get("login") or ""), me["login"])
@@ -601,11 +692,65 @@ class Handler(BaseHTTPRequestHandler):
                         except employees.EmployeeError as e:
                             raise BadRequest(str(e))
                         employees.apply(app.con, app.config, app.rules)
-                    return self.send_json(employees.listing(app.con, app.rules))
+                    return JsonResponse(employees.listing(app.con, app.rules))
+                if path == "/api/call-feedback" and method == "POST":
+                    row = call_records.get(app.con, str(b.get("id") or ""))
+                    if not row:
+                        return JsonResponse({"error": "Запись не найдена"}, 404)
+                    if is_mgr or row["emp"] != me["login"] or not call_records.can_listen(app.config, me, row):
+                        return JsonResponse({"error": "Оценивать можно только разбор своих звонков с доступом к прослушиванию"}, 403)
+                    if not app.con.execute("SELECT 1 FROM call_analysis WHERE id=? AND result IS NOT NULL", (row["id"],)).fetchone():
+                        raise BadRequest("Дождитесь разбора звонка перед оценкой")
+                    try:
+                        return JsonResponse({"feedback": call_feedback.save(app.con, row["id"], me["login"], b)})
+                    except ValueError as e:
+                        raise BadRequest(str(e))
                 if method == "POST" and not is_mgr:
-                    return self.send_json({"error": "Изменять данные может только руководитель"}, 403)
+                    return JsonResponse({"error": "Изменять данные может только руководитель"}, 403)
+                if path == "/api/client-approval" and method == "POST":
+                    emp = self.employee_param(b.get("emp"))
+                    month = self.month_param(b.get("month"))
+                    if app.engine.employee(emp).get("position") != "tender_lead":
+                        raise BadRequest("Согласование активных клиентов доступно для ведущего тендерного специалиста")
+                    try:
+                        manual.set_client_approval(app.con,emp,month,str(b.get("ref") or ""),b.get("value"),me["login"])
+                        app.con.commit()
+                    except ValueError as e:
+                        raise BadRequest(str(e))
+                    return JsonResponse({"ok":True})
+                if path == "/api/lead-approval" and method == "POST":
+                    emp = self.employee_param(b.get("emp"))
+                    month = self.month_param(b.get("month"))
+                    position = app.rules["positions"].get(app.engine.employee(emp).get("position"), {})
+                    if not position or not any(i["code"] == "qualified_leads" for i in app.engine.items_for(position,month)):
+                        raise BadRequest("Согласование доступно для KPI качества квалифицированных лидов")
+                    try:
+                        manual.set_lead_approval(app.con,emp,month,str(b.get("ref") or ""),b.get("value"),me["login"])
+                        app.con.commit()
+                    except ValueError as e:
+                        raise BadRequest(str(e))
+                    return JsonResponse({"ok":True})
+                if path == "/api/call-feedback-review" and method == "POST":
+                    try:
+                        result = call_feedback.resolve(app.con, str(b.get("id") or ""), str(b.get("author") or ""),
+                                                       b.get("revision"), b.get("note", ""), me["login"])
+                        return JsonResponse({"feedback": result})
+                    except call_feedback.FeedbackConflict as e:
+                        return JsonResponse({"error": str(e)}, 409)
+                    except ValueError as e:
+                        raise BadRequest(str(e))
+                if path == "/api/month-score" and method == "POST":
+                    emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
+                    if app.engine.employee(emp).get("position") != "supply":
+                        raise BadRequest("Оценка за месяц доступна для отдела снабжения")
+                    try:
+                        with db_lock():
+                            manual.set_month_score(app.con,emp,month,b.get("criterion"),b.get("score"),b.get("comment"),me["login"])
+                            app.con.commit()
+                    except (ValueError,TypeError) as exc:
+                        raise BadRequest(str(exc)) from None
+                    return JsonResponse({"ok":True})
                 if path == "/api/score" and method == "POST":
-                    b = self.body()
                     score = b.get("score")
                     if score is not None:
                         score = self.number_param(score, 0, 100)
@@ -622,9 +767,8 @@ class Handler(BaseHTTPRequestHandler):
                                             (b["emp"], b["week"], b["criterion"], score, str(b.get("comment") or "")[:500],
                                              me["login"]))
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/manual" and method == "POST":
-                    b = self.body()
                     with db_lock():
                         try:
                             emp = manual.set_value(app.con, b.get("table"), str(b.get("ref") or ""), b.get("field"),
@@ -634,9 +778,8 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.rollback()
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/penalty" and method == "POST":
-                    b = self.body()
                     emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
                     with db_lock():
                         try:
@@ -652,9 +795,8 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.rollback()
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/plan" and method == "POST":
-                    b = self.body()
                     metric = b.get("metric", "gross_profit")
                     if metric not in PLAN_METRICS:
                         raise BadRequest("Неизвестный показатель плана")
@@ -663,10 +805,10 @@ class Handler(BaseHTTPRequestHandler):
                     with db_lock():
                         app.con.execute("INSERT OR REPLACE INTO plans VALUES (?,?,?,?)", row)
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/suppliers" and method == "GET":  # вкладка «Поставщики»: закупки и цены из 1С — только руководителю
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     today_ = dt.date.today()
                     date_from = self.date_param(q.get("date_from")) or today_.replace(month=1, day=1).isoformat()
                     date_to = self.date_param(q.get("date_to")) or today_.isoformat()
@@ -682,7 +824,7 @@ class Handler(BaseHTTPRequestHandler):
                             res.update(onec_suppliers.build_quotes(app.con, key, date_from, date_to, q.get("item") or None))
                         else:
                             res["list"] = onec_suppliers.quote_suppliers(app.con, date_from, date_to, q.get("not_bought") == "1", q.get("search"))
-                        return self.send_json(res)
+                        return JsonResponse(res)
                     key = onec_suppliers.find_partner(app.con, q.get("partner"), q.get("inn"))
                     if (q.get("partner") or q.get("inn")) and not key:
                         res["not_found"] = True  # поставщика нет в закупках 1С: страница покажет список, а не пустую карточку
@@ -690,24 +832,29 @@ class Handler(BaseHTTPRequestHandler):
                         res.update(onec_suppliers.build(app.con, key, date_from, date_to, q.get("item") or None))
                     else:
                         res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to, q.get("search"))
-                    return self.send_json(res)
-                if path == "/api/workload" and method == "GET":  # вкладка «Загрузка»: руководитель — все, сотрудник — только он сам
-                    portal = urlparse(app.config.get("bitrix24", {}).get("webhook", "")).netloc
-                    own = (app.user(me["login"]) or {}).get("b24_user_id") if not is_mgr else None
-                    return self.send_json(workload.build(app.con, app.config, uids=None if is_mgr else {int(own)} if own else set(),
+                    return JsonResponse(res)
+                if path == "/api/workload" and method == "GET":  # Temporarily admin-only.
+                    if not is_mgr:
+                        return JsonResponse({"error": "Доступно только администратору"},403)
+                    portal = urlparse(portal_origin(app.config) or "").netloc
+                    return JsonResponse(workload.build(app.con, app.config, uids=None,
                                                          portal=portal or None, dept_titles=app.rules.get("departments")))
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     st = money.settings(app.con)
                     stale = not st["synced_at"] or dt.datetime.fromisoformat(st["synced_at"]) < dt.datetime.now() - dt.timedelta(minutes=15)
                     if stale:  # открытие вкладки обновляет данные из 1С в фоне, если им больше 15 минут
                         app.refresh_money()
-                    return self.send_json({**money.build(app.con), "refreshing": app.money_busy.locked()})
+                    try:
+                        data = money.build(app.con, date_from=self.date_param(q.get("date_from")),
+                                           date_to=self.date_param(q.get("date_to")))
+                    except ValueError as e:
+                        raise BadRequest(str(e))
+                    return JsonResponse({**data, "refreshing": app.money_busy.locked()})
                 if path == "/api/money" and method == "POST":
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    b = self.body()
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     with db_lock():
                         try:
                             act = b.get("action")
@@ -729,11 +876,10 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.rollback()
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path in ("/api/sales-object", "/api/sales-action") and method == "POST":  # реестр и действия панели ОП
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    b = self.body()
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     obj = path == "/api/sales-object"
                     with db_lock():
                         try:
@@ -747,19 +893,18 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.rollback()
                             raise BadRequest(f"Не сохранено: {e}")
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/calls-process" and method == "POST":  # обработать звонок / «всё» / последние N из текущего списка
                     if not is_mgr:
-                        return self.send_json({"error": "Доступно только руководителю"}, 403)
-                    b = self.body()
+                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     if b.get("id"):
                         if not call_records.get(app.con, str(b["id"])):
-                            return self.send_json({"error": "Звонок не найден"}, 404)
+                            return JsonResponse({"error": "Звонок не найден"}, 404)
                         ids, force = [str(b["id"])], True  # один звонок — всегда заново
                     elif b.get("ids"):  # выбранные галочками — повторная обработка тоже
                         ids = [str(i) for i in b["ids"]][:1000]
                         if not all(call_records.get(app.con, i) for i in ids):
-                            return self.send_json({"error": "Звонок не найден"}, 404)
+                            return JsonResponse({"error": "Звонок не найден"}, 404)
                         force = True
                     else:
                         mode = b.get("mode")
@@ -787,37 +932,35 @@ class Handler(BaseHTTPRequestHandler):
                     if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
                         raise BadRequest("Неизвестная модель или уровень усилий")
                     started, msg = call_analysis.start_job(app.con, app.config, ids, force, model, effort)
-                    return self.send_json({"ok": started, "message": msg, **call_analysis.JOB})
+                    return JsonResponse({**call_analysis.JOB, "ok": started, "message": msg})  # msg — поверх статуса задания
                 if path == "/api/call-secretary" and method == "POST":  # отметка руководителя «секретарь» к звонку
-                    b = self.body()
                     if not call_records.get(app.con, str(b.get("id") or "")):
-                        return self.send_json({"error": "Звонок не найден"}, 404)
+                        return JsonResponse({"error": "Звонок не найден"}, 404)
                     v = b.get("value")
                     if v not in (None, 0, 1, True, False):
                         raise BadRequest("Ожидается 1, 0 или null")
                     call_analysis.set_secretary(app.con, b["id"], None if v is None else int(v), me["login"])
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
                 if path == "/api/baseline" and method == "POST":
-                    b = self.body()
                     if b.get("metric", "conversion_last_year") != "conversion_last_year":
                         raise BadRequest("Неизвестный показатель")
                     row = (self.employee_param(b.get("emp")), "conversion_last_year", self.number_param(b.get("value"), 0, 1))
                     with db_lock():
                         app.con.execute("INSERT OR REPLACE INTO baselines VALUES (?,?,?)", row)
                         app.con.commit()
-                    return self.send_json({"ok": True})
+                    return JsonResponse({"ok": True})
             if path == "/api/sync" and method == "POST":
-                return self.send_json(sync.start_background(app.con, app.config))
+                return JsonResponse(sync.start_background(app.con, app.config))
             if path == "/api/sync":  # ход синхронизации; когда закончилась — итог последней
                 with app.lock:
                     last = sync.last_sync(app.con)
-                return self.send_json({**sync.progress(), "last_sync": last})
-            return self.send_json({"error": "Не найдено"}, 404)
+                return JsonResponse({**sync.progress(), "last_sync": last})
+            return JsonResponse({"error": "Не найдено"}, 404)
         except BadRequest as e:
-            return self.send_json({"error": str(e)}, 400)
+            return JsonResponse({"error": str(e)}, 400)
         except Exception as e:  # noqa
             traceback.print_exc()
-            return self.send_json({"error": f"Ошибка сервера: {e}"}, 500)
+            return JsonResponse({"error": f"Ошибка сервера: {e}"}, 500)
 
 
 def serve():
@@ -836,7 +979,6 @@ def serve():
             if e["login"] not in have:
                 set_password(app.con, e["login"], "demo")
         print("Демо-режим: у всех пользователей без пароля установлен пароль demo")
-    sync.start_scheduler(app.con, cfg)
     host = cfg.get("server", {}).get("host", "0.0.0.0")
     port = int(cfg.get("server", {}).get("port", 8080))
     try:
@@ -845,6 +987,7 @@ def serve():
         print(f"Не удалось занять порт {port}: {e}. Возможно, дашборд уже запущен в другом окне "
               f"или порт занят другой программой — поменяйте server.port в config.json.")
         return
+    sync.start_scheduler(app.con, cfg)  # только процесс, успешно занявший порт, запускает автообновления
     url = f"http://localhost:{port}"
     print(f"Дашборд KPI работает: {url}  (Ctrl+C или закрытие окна — остановить)")
     if cfg.get("server", {}).get("open_browser", True):

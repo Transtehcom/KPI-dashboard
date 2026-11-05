@@ -1,7 +1,53 @@
 <title>TTK | Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-cyrillic-400.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-latin-400.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-cyrillic-500.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-latin-500.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-cyrillic-600.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/assets/ibm-plex-mono-latin-600.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 /* Макет: «ведомость» — слева состав команды, справа лист месяца: итог → матрица пунктов KPI → карточки пунктов. */
 :root {
   --bg: #f3f4f9;
@@ -190,6 +236,7 @@ table { border-collapse: collapse; width: 100%; }
 .weights .seg { position: relative; border-radius: 4px; display: flex; align-items: center; justify-content: center; font: 600 11px var(--mono);
   min-width: 0; overflow: hidden; border: 1.5px solid var(--line-strong); color: var(--fg-3); background: var(--surface); cursor: default; }
 .weights .seg.met { background: var(--good); border-color: var(--good); color: var(--surface); }
+.weights .seg.partial { background: linear-gradient(90deg, rgba(245,158,11,.38) var(--completion), transparent var(--completion)); border-color: rgba(245,158,11,.7); color: var(--fg); }
 .weights .seg.zeroed { background: repeating-linear-gradient(135deg, var(--bad-soft) 0 5px, var(--surface) 5px 10px); border-color: var(--bad); color: var(--bad); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--fg-3); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -222,9 +269,50 @@ table { border-collapse: collapse; width: 100%; }
 .comp.mid .fill { background: var(--warn); }
 .comp.info .fill { background: var(--fg-3); }
 .comp.na .n { color: var(--fg-3); }
+.kpi-audit { min-width: 0; }
+.kpi-audit > summary { cursor: pointer; list-style: none; border-radius: 6px; }
+.kpi-audit > summary::-webkit-details-marker { display: none; }
+.kpi-audit > summary:hover .n { color: var(--teal); }
+.kpi-audit > summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+.audit-caret { display: inline-block; margin-right: 5px; transition: transform .15s; }
+.kpi-audit[open] > summary .audit-caret { transform: rotate(90deg); }
+.audit-panel { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); font-size: 12px; }
+.audit-rules { margin: 10px 0; }
+.audit-rules summary, .audit-why summary { cursor: pointer; color: var(--fg-2); }
+.audit-rules li, .audit-why li { margin: 6px 0; line-height: 1.55; }
+.audit-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 6px; }
+.audit-tools .btn { font-size: 11px; padding: 5px 8px; }
+.audit-tools .btn[aria-pressed="true"] { border-color: var(--teal); background: var(--surface); }
+.audit-search { width: 100%; min-width: 0; margin: 4px 0 8px; }
+.audit-record { padding: 12px 0; border-top: 1px solid var(--line); }
+.audit-record-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: start; }
+.audit-record-title { overflow-wrap: anywhere; line-height: 1.5; }
+.audit-checks { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; max-width: 360px; }
+.audit-check { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 10px; }
+.audit-check.pass { color: var(--good); background: var(--good-soft); }
+.audit-check.fail { color: var(--bad); background: var(--bad-soft); }
+.audit-check.unknown { color: var(--warn); background: var(--warn-soft); }
+.audit-check.na { color: var(--fg-3); }
+.audit-result { margin: 7px 0; font-weight: 600; }
+.audit-result.pass { color: var(--good); }
+.audit-result.fail { color: var(--bad); }
+.audit-result.unknown { color: var(--fg-2); }
+.audit-why { margin-top: 6px; }
+.audit-why ul { padding-left: 18px; }
+@media (max-width: 700px) {
+  .audit-record-head { grid-template-columns: minmax(0, 1fr); }
+  .audit-checks { justify-content: flex-start; max-width: none; }
+}
 .extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 12px; }
 .extra div { color: var(--fg-2); min-width: 0; }
 .extra b { font: 500 12px var(--mono); color: var(--fg); }
+.crm-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.crm-link:hover { color: var(--teal-ink); }
+.payment-confirm { width: min(520px, calc(100vw - 32px)); box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--r); padding: 22px; color: var(--fg); background: var(--surface); box-shadow: var(--shadow); }
+.payment-confirm::backdrop { background: rgba(15, 20, 38, .48); }
+.payment-confirm h2 { margin: 0 0 14px; font-size: 19px; }
+.payment-confirm p { line-height: 1.6; }
+.payment-confirm .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .zero-note { padding: 8px 10px; border-radius: 3px; background: var(--bad-soft); color: var(--bad); font-size: 12px; font-weight: 500; }
 details.more { border-top: 1px solid var(--line); }
 details.more > summary { list-style: none; padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; display: flex; gap: 8px; }
@@ -277,6 +365,18 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .an-type { font-size: 12px; }
 .an-flag { font-size: 11px; border-radius: 999px; padding: 0 7px; background: var(--good-soft, #e3f4ea); color: var(--good); }
 .an-flag.warn { background: var(--warn-soft); color: var(--warn); }
+.delivery-delta { display: inline-block; padding: 4px 7px; border-radius: 3px; min-width: 58px; text-align: center; font-family: var(--mono); }
+.delivery-delta.late { background: var(--bad-soft); color: var(--bad); }
+.delivery-delta.on-time { background: var(--good-soft); color: var(--good); }
+.call-feedback { display: grid; gap: 12px; max-width: 800px; white-space: normal; }
+.call-feedback p { margin: 4px 0; white-space: pre-wrap; }
+.call-feedback label { display: grid; gap: 4px; }
+.call-feedback textarea { width: 100%; min-height: 76px; padding: 8px; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 3px; resize: vertical; }
+.call-feedback fieldset { margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; }
+.call-feedback .feedback-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.call-feedback .feedback-options label { display: flex; align-items: center; gap: 6px; }
+.call-feedback [hidden] { display: none; }
+.staff-list.calls tr.feedback-row td { background: var(--surface-2); white-space: normal; }
 .staff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
 .staff-form label, .staff-form fieldset { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; min-width: 0; }
 .staff-form fieldset { border: 0; margin: 0; padding: 0; }
@@ -303,6 +403,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .cal-t { font: 500 12px var(--mono); color: var(--fg-2); white-space: nowrap; }
 .cal-m { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); align-self: center; }
 .cal-item.task .cal-m { background: var(--bad); }
+.cal-item.activity .cal-m { background: var(--teal); }
 .cal-item.done .cal-n { text-decoration: line-through; color: var(--fg-3); }
 .cal-b { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .cal-n { overflow-wrap: anywhere; }
@@ -437,8 +538,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .mt tr.tot th, .mt tr.tot td { font-weight: 700; border-top: 2px solid var(--line-strong); }
 .mt td.late, .dt td.late, .stat .v.late { color: var(--bad); font-weight: 600; }
 .stats.stats5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.stats.stats3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (max-width: 700px) { .stats.stats3 { grid-template-columns: minmax(0, 1fr); } }
+.stats.stats4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 900px) { .stats.stats4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .stats.stats4 { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1100px) { .stats.stats5 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .mt thead th { vertical-align: top; }
 .mt th .th-note { display: block; margin: 3px 0 0 auto; min-width: 130px; max-width: 190px; font-size: 11px; font-weight: 400; line-height: 1.3;
@@ -562,11 +664,18 @@ h2 { font-family: var(--head); font-weight: 600; text-transform: uppercase; lett
 .login-title::after { content: none !important; }
 .login .brand-sep, .login .brand-app { display: none; }
 .login-slogan { font: 600 15px var(--head); text-transform: uppercase; letter-spacing: .06em; color: var(--teal-ink); margin-top: 6px; }
-body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 600px; height: 400px; z-index: -1; pointer-events: none; opacity: .07;
+body::after { content: none; position: fixed; right: -90px; bottom: -60px; width: 600px; height: 400px; z-index: -1; pointer-events: none; opacity: .07;
   background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1306 875'><path fill='%233A4185' d='M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z'/><path fill='%234BBBB8' d='M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z'/></svg>") no-repeat center / contain; }
 :root[data-theme="dark"] body::after { opacity: .1; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) body::after { opacity: .1; } }
 @media (max-width: 760px) { body::after { width: 340px; height: 226px; } .stat .v { font-size: 28px; } }
+
+/* The outline logo field sits behind the app, with a much quieter layer over card surfaces. */
+#root { position: relative; z-index: 1; }
+.brand-field { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
+.brand-field--back { z-index: 0; }
+.brand-field--front { z-index: 2; }
+@media print { .brand-field { display: none !important; } }
 
 /* --- печать: документ собирается из блока .print-only, всё остальное скрыто */
 @page { size: A4; margin: 8mm 10mm; }
@@ -691,7 +800,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   const STATUS = {
     met: ["Выполнен", "s-met"], close: ["Почти: 80–99%", "s-close"], fail: ["Не выполнен", "s-fail"],
     partial: ["Выплата частично", "s-close"],
-    nodata: ["Нет данных", "s-nodata"], awaiting: ["Ждёт оценки", "s-awaiting"], absent: ["Не работал(а)", "s-nodata"],
+    nodata: ["Нет данных", "s-nodata"], awaiting: ["Ждёт оценки", "s-awaiting"], absent: ["Не работал(а)", "s-nodata"], draft: ["Черновик", "s-nodata"], penalty_zero: ["Обнулён: штраф", "s-fail"],
     progress_fail: ["Месяц идёт", "s-progress"], progress_close: ["Месяц идёт", "s-progress"], progress_nodata: ["Месяц идёт", "s-progress"],
   };
   const state = { boot: null, month: null, view: "team", login: null, data: null, loading: false, previewRole: "manager" };
@@ -704,7 +813,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   const mLabel = (m) => { const [y, mm] = m.split("-"); return MONTHS[+mm - 1] + " " + y; };
   const mShort = (m) => { const [y, mm] = m.split("-"); return MSHORT[+mm - 1] + (mm === "01" ? " " + y.slice(2) : ""); };
   const dLabel = (iso) => { const d = new Date(iso + "T00:00:00"); return d.getDate() + " " + MONTHS_GEN[d.getMonth()]; };
-  const statusKey = (s) => (s || "nodata").startsWith("progress") ? "progress" : s === "absent" ? "nodata" : s;
+  const statusKey = (s) => (s || "nodata").startsWith("progress") ? "progress" : (s === "absent" || s === "draft") ? "nodata" : s === "penalty_zero" ? "fail" : s;
   function fmtVal(v, unit) {
     if (v == null) return "—";
     if (unit === "%") return nf(v * 100, 1) + "%";
@@ -719,7 +828,22 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (c.unit === "балл") return "из 100";
     return "норма " + op + fmtVal(c.target, c.unit);
   }
+  function crmLink(label, url) {
+    return url && /^https?:\/\//i.test(url)
+      ? `<a class="crm-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label);
+  }
+  function approvalControl(ref, label, value, kind, isMgr) {
+    if (!isMgr) return `<span class="small muted">${value === 0 ? "Не согласовано" : value === 1 ? "Согласовано" : "Засчитывается при выполнении условий"}</span>`;
+    return `<select data-${kind}-approval data-ref="${esc(ref)}" aria-label="Согласовано — ${esc(label)}"><option value="" ${value == null ? "selected" : ""}>—</option><option value="1" ${value === 1 ? "selected" : ""}>Да</option><option value="0" ${value === 0 ? "selected" : ""}>Нет</option></select>`;
+  }
   function fmtExtra(x) {
+    if (x.client_approvals?.length) return x.client_approvals.map((client) => {
+      const control = state.boot.me.role === "manager"
+        ? `<label class="small">Согласовано ${approvalControl(client.ref,client.label,client.value,"client",true)}</label>`
+        : approvalControl(client.ref,client.label,client.value,"client",false);
+      return `<span style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">${crmLink(client.label,client.url)} ${control}</span>`;
+    }).join("<br>");
+    if (x.links?.length) return x.links.map((link) => crmLink(link.label, link.url)).join(", ");
     if (x.fmt === "pct") return pct(x.value, 1);
     if (x.fmt === "rub") return rub(x.value);
     if (typeof x.value === "number") return nf(x.value, Number.isInteger(x.value) ? 0 : 1);
@@ -732,7 +856,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       if (/₽/.test(col)) return nf(Math.round(v));
       return nf(v, Number.isInteger(v) ? 0 : 1);
     }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v.split("-").reverse().join(".");
+    if (/^\d{4}-\d{2}-\d{2}(?:$|[T ])/.test(v)) return esc(v.replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3-$2-$1").replace("T", " "));
     return esc(v);
   }
 
@@ -780,6 +904,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
 
   // ---------- вход
   function renderLogin() {
+    clearTimeout(syncTimer); syncGeneration++;
     root.innerHTML = `<div class="login"><form class="panel" id="loginForm">
       <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
       <div><h1 class="login-title">Дашборд</h1><div class="login-slogan">С нами строят будущее</div></div>
@@ -805,7 +930,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const h = (location.hash || "").replace("#", "");
     if (isFunnelHash(h)) state.fMode = h === "funnel-fact" ? "fact" : "date";
     if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
-    else if (h === "workload" && !PREVIEW) { state.view = "workload"; if (!isMgr) state.login = b.me.login; }
+    else if (h === "workload" && isMgr && !PREVIEW) { state.view = "workload"; }
     else if (!isMgr) { state.view = isFunnelHash(h) ? "funnel" : "emp"; state.login = b.me.login; }
     else if (h === "staff") { state.view = "staff"; }
     else if (h === "money" && !PREVIEW) { state.view = "money"; }
@@ -822,32 +947,73 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const b = state.boot, s = b.last_sync;
     if (b.mode === "demo") return `<span class="sync"><span class="dot demo"></span>Демо-данные</span>`;
     if (!s) return `<span class="sync"><span class="dot"></span>Данные ещё не загружены</span>`;
-    const t = (s.finished || "").replace("T", " ").slice(0, 16);
+    const t = fmtCell((s.finished || "").slice(0, 16), "", false);
     return `<span class="sync" title="${esc(s.message)}"><span class="dot ${s.status === "ok" ? "ok" : "err"}"></span>Б24 и 1С: ${esc(t)}</span>`;
   }
 
   // синхронизация идёт в фоне несколько минут: кнопка показывает текущий шаг, по окончании данные перечитываются
   let syncTimer = null;
-  function watchSync() {
+  let syncGeneration = 0;
+  let syncRefreshPending = false;
+  function syncFormBusy() {
+    const focused = document.activeElement;
+    if (document.querySelector("#empForm, dialog[open]") || focused?.matches("input:not([type=hidden]), textarea, select") && !focused.disabled && !focused.readOnly) return true;
+    return [...document.querySelectorAll("form input, form textarea, form select")].some((el) => {
+      if (["hidden", "submit", "reset", "button"].includes(el.type)) return false;
+      if (el.type === "checkbox" || el.type === "radio") return el.checked !== el.defaultChecked;
+      if (el.tagName === "SELECT") {
+        const opts = [...el.options], hasDefault = opts.some((o) => o.defaultSelected);
+        return opts.some((o, i) => o.selected !== (hasDefault ? o.defaultSelected : !el.multiple && i === 0));
+      }
+      return el.value !== el.defaultValue;
+    });
+  }
+  function watchSync(started = false) {
+    if (PREVIEW) return;
+    if (started) state.boot.sync_running = true;
+    const generation = ++syncGeneration;
     const show = (step) => {
       const sb = document.getElementById("syncBtn");
       if (sb) { sb.disabled = true; sb.textContent = "Обновляю…"; sb.title = step || ""; }
     };
-    show("");
+    if (state.boot.sync_running) show("");
     clearTimeout(syncTimer);
     const tick = async () => {
-      let st;
-      try { st = await api("/api/sync"); } catch (e) { if (e.message !== "auth") syncTimer = setTimeout(tick, 5000); return; }
-      if (st.running) { show(st.step); syncTimer = setTimeout(tick, 3000); return; }
-      const last = st.last_sync || {};
-      const errs = (last.message || "").split("\n").filter((x) => x.startsWith("Ошибка"));
-      toast(last.status === "ok" ? "Данные обновлены" : "Обновлено с ошибками: " + (errs.join("; ") || last.message || "подробности в журнале"));
-      state.boot = await api("/api/bootstrap"); renderShell(); load();
+      try {
+        const st = await api("/api/sync");
+        if (generation !== syncGeneration) return;
+        if (st.running) {
+          state.boot.sync_running = true; show(st.step);
+          syncTimer = setTimeout(tick, 3000); return;
+        }
+        const last = st.last_sync || {}, previous = state.boot.last_sync || {};
+        const changed = (last.id ?? last.finished ?? null) !== (previous.id ?? previous.finished ?? null);
+        if (changed || state.boot.sync_running) {
+          const boot = await api("/api/bootstrap");
+          if (generation !== syncGeneration) return;
+          state.boot = boot; sideCache = {};
+          syncRefreshPending = true;
+          const badge = document.querySelector(".sync"); if (badge) badge.outerHTML = syncInfo();
+          const sb = document.getElementById("syncBtn");
+          if (sb) { sb.disabled = false; sb.textContent = "Обновить данные"; sb.title = ""; }
+          if (changed && last.status) {
+            const errs = (last.message || "").split("\n").filter((x) => x.startsWith("Ошибка"));
+            toast(last.status === "ok" ? "Данные обновлены" : "Обновлено с ошибками: " + (errs.join("; ") || "подробности в журнале"));
+          }
+        }
+        if (syncRefreshPending && !syncFormBusy()) {
+          syncRefreshPending = false; renderShell(); load(); return;
+        }
+        syncTimer = setTimeout(tick, 30000);
+      } catch (e) {
+        if (generation === syncGeneration && e.message !== "auth") syncTimer = setTimeout(tick, 5000);
+      }
     };
-    syncTimer = setTimeout(tick, 2000);
+    syncTimer = setTimeout(tick, state.boot.sync_running ? 2000 : 30000);
   }
 
   function renderShell() {
+    syncRefreshPending = false;
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = PREVIEW ? PREVIEW.months : b.months;
     const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
@@ -857,7 +1023,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${PREVIEW ? "" : `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>`}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -891,10 +1057,10 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       try {
         const r = await api("/api/sync", {});
         toast(r.status === "busy" ? "Обновление уже идёт — дождитесь его окончания" : "Обновление запущено. Оно занимает несколько минут, страницей можно пользоваться");
-        watchSync();
+        watchSync(true);
       } catch (e) { if (e.message !== "auth") toast(e.message); }
     });
-    if (state.boot.sync_running) watchSync();
+    if (!PREVIEW) watchSync();
     const lo = document.getElementById("logoutBtn");
     if (lo) lo.addEventListener("click", async () => { await api("/api/logout", {}); renderLogin(); });
     const pr = document.getElementById("pvRole");
@@ -914,7 +1080,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       Object.entries(groups).map(([dep, list]) => `<div class="nav-group"><div class="eyebrow">${esc(dep)}</div>${list.map((e) => {
         const s = byLogin[e.login];
         return `<a href="#emp-${e.login}" class="nav-item ${state.view === "emp" && state.login === e.login ? "active" : ""}" data-login="${e.login}">
-          <span class="nm">${esc(e.name)}</span><span class="pct">${s ? pct(s.share) : e.position ? "" : "—"}</span>
+          <span class="nm">${esc(e.name)}</span><span class="pct">${b.positions[e.position]?.draft ? "черновик" : s ? pct(s.share) : e.position ? "" : "—"}</span>
           <span class="role">${esc(e.position_title || "")}${e.position ? "" : `${e.position_title ? " · " : ""}KPI не назначен`}</span>
           <span class="mini"><i style="width:${s ? Math.min(100, s.share * 100) : 0}%"></i></span></a>`;
       }).join("")}</div>`).join("");
@@ -925,12 +1091,15 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
 
   const isFunnelHash = (h) => h === "funnel" || h === "funnel-fact";
   let sideCache = {};
+  let loadGeneration = 0;
   async function load() {
     const main = document.getElementById("main");
+    const generation = ++loadGeneration, view = state.view, month = state.month, login = state.login;
+    const current = () => generation === loadGeneration && state.view === view && document.getElementById("main") === main;
     main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "staff") {
-      try { renderStaff(await api("/api/staff")); }
+      try { const data = await api("/api/staff"); if (current()) renderStaff(data); }
       catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
       return;
     }
@@ -948,22 +1117,33 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         const logins = (state.fLogins || []).join(",");
         const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
           logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
+        if (!current()) return;
         renderFunnel({ leads, deals, calls });
       }
       catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
       return;
     }
     try {
-      if (isMgr && (state.view === "team" || !sideCache[state.month])) {
-        sideCache[state.month] = await api("/api/overview?month=" + state.month);
+      if (isMgr && view === "team") {
+        const overview = await api("/api/overview?month=" + month);
+        if (!current()) return;
+        sideCache[month] = overview;
       }
-      if (isMgr) renderSide(sideCache[state.month]);
-      const who = state.boot.employees.find((e) => e.login === state.login);
-      if (state.view === "team") renderTeam(sideCache[state.month]);
+      if (!current()) return;
+      if (isMgr) renderSide(sideCache[month]);
+      const who = state.boot.employees.find((e) => e.login === login);
+      if (view === "team") renderTeam(sideCache[month]);
       else if (who && !who.position) renderNoKpi(who, isMgr);
-      else renderEmp(await api(`/api/employee?login=${encodeURIComponent(state.login)}&month=${state.month}`));
+      else { const data = await api(`/api/employee?login=${encodeURIComponent(login)}&month=${month}`); if (current()) renderEmp(data); }
+      if (isMgr && view !== "team" && !sideCache[month] && current()) {
+        api("/api/overview?month=" + month).then((overview) => {
+          if (!current()) return;
+          sideCache[month] = overview;
+          renderSide(overview);
+        }).catch((e) => { if (current() && e.message !== "auth") toast("Не удалось загрузить сводку команды: " + e.message); });
+      }
     } catch (e) {
-      if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     }
   }
 
@@ -1034,7 +1214,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         ${alerts.length > 8 ? `<div class="muted small">и ещё ${alerts.length - 8}</div>` : ""}</div></section>` : ""}
       ${ov.groups.map((g) => `<section class="panel">
         <div class="panel-h"><div><div class="eyebrow">${esc(g.department)}</div><h2>${esc(g.title)}</h2></div>
-          <span class="muted small">оклад ${rub(state.boot.positions[g.position].salary)} + KPI ${rub(state.boot.positions[g.position].kpi_bonus)}</span></div>
+          <span class="muted small">${state.boot.positions[g.position].draft ? "Черновик · начисление отключено" : `оклад ${rub(state.boot.positions[g.position].salary)} + KPI ${rub(state.boot.positions[g.position].kpi_bonus)}`}</span></div>
         <div class="scroll"><table class="matrix"><thead><tr><th>Сотрудник</th>
           ${g.columns.map((c) => `<th>KPI ${c.n} · ${Math.round(c.weight * 100)}%<span class="kt">${esc(c.title)}</span></th>`).join("")}
           <th>К выплате</th><th>6 мес.</th></tr></thead><tbody>
@@ -1042,11 +1222,11 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
             ${e.items.map((i) => { const k = statusKey(i.status); return `<td><div class="cell c-${k}" title="${esc(i.title)}: ${esc((STATUS[i.status] || [""])[0])}">
               <span class="p">${i.pct == null ? (i.status === "awaiting" ? "оценка" : "—") : pct(i.pct)}</span>
               <span class="bar"><i style="width:${i.pct == null ? 0 : Math.min(100, i.pct * 100)}%"></i></span>
-              <span class="r">${i.payout ? rub(i.payout) : "0 ₽"} / ${nf(i.amount)}</span></div></td>`; }).join("")}
-            <td><span class="total ${e.zero_all.length ? "zero" : ""}">${rub(e.payout)}</span><div class="muted small">${e.absent ? "не работал(а)" : e.zero_all.length ? "обнулено" : pct(e.share) + " фонда"}</div></td>
-            <td>${sparkline(e.trend)}</td></tr>`).join("")}
+              <span class="r">${e.draft ? "Не рассчитывается" : `${i.payout ? rub(i.payout) : "0 ₽"} / ${nf(i.amount)}`}</span></div></td>`; }).join("")}
+            <td><span class="total ${e.zero_all.length ? "zero" : ""}">${e.draft ? "—" : rub(e.payout)}</span><div class="muted small">${e.draft ? "черновик" : e.absent ? "не работал(а)" : e.zero_all.length ? "обнулено" : pct(e.share) + " фонда"}</div></td>
+            <td>${e.draft ? "—" : sparkline(e.trend)}</td></tr>`).join("")}
         </tbody></table></div></section>`).join("")}
-      <p class="muted small">Ячейка: процент выполнения норматива пункта (100% — норма выполнена), под ним начислено / максимум по пункту. Выплата: ${state.boot.payout_mode === "binary" ? "пункт оплачивается полностью при выполнении нормы" : "пропорционально выполнению"}. Нажмите на строку, чтобы открыть дашборд сотрудника.</p>`;
+      <p class="muted small">Ячейка: процент выполнения норматива пункта (100% — норма выполнена), под ним начислено / максимум по пункту. Выплата: ${state.boot.payout_mode === "binary" ? "пункт оплачивается полностью при выполнении нормы" : "стоимость пункта × показанный процент выполнения, максимум 100% стоимости; нижнего порога нет"}. Нажмите на строку, чтобы открыть дашборд сотрудника.</p>`;
     main.querySelectorAll("tr[data-login]").forEach((tr) => {
       tr.addEventListener("click", () => openEmp(tr.dataset.login));
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openEmp(tr.dataset.login); });
@@ -1055,7 +1235,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   }
 
   // ---------- сотрудник
-  function compRow(c, inProg) {
+  function compRow(c, inProg, code) {
     let cls = "na";
     if (c.pct != null) cls = c.informative ? "info" : c.pct >= 0.9999 ? "ok" : inProg ? "info" : c.pct >= 0.8 ? "mid" : "bad";
     // шкала: норма в точке 100%/scale; для «меньше — лучше» показываем долю нормы
@@ -1070,18 +1250,87 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         if (c.pace != null) paceX = (c.pace / max) * 100;
       }
     }
-    return `<div class="comp ${cls}"><div class="n">${esc(c.name)}<span class="src">· ${esc(c.source || "")}</span></div>
-      <div class="v">${fmtVal(c.fact, c.unit)} <span class="t">${fmtTarget(c)}</span></div>
-      <div class="track" role="img" aria-label="${esc(c.name)}: ${fmtVal(c.fact, c.unit)}, ${fmtTarget(c)}">
-        <div class="fill" style="width:${Math.min(100, fillW).toFixed(1)}%"></div>
-        ${goalX != null ? `<div class="goal" style="left:calc(${goalX.toFixed(1)}% - 1px)" title="Норма"></div>` : ""}
-        ${paceX != null ? `<div class="pace" style="left:calc(${paceX.toFixed(1)}% - 1px)" title="Темп на сегодня: ${fmtVal(c.pace, c.unit)}"></div>` : ""}
-      </div>${c.pace != null ? `<div class="small muted" style="grid-column:1/-1">Темп на сегодня: ${fmtVal(c.pace, c.unit)}</div>` : ""}</div>`;
+    const auditable = c.audit && !PREVIEW;
+    const row = `<span class="comp ${cls}"><span class="n">${auditable ? `<span class="audit-caret" aria-hidden="true">›</span>` : ""}${esc(c.name)}<span class="src">· ${esc(c.source || "")}</span></span>
+      <span class="v">${fmtVal(c.fact, c.unit)} <span class="t">${fmtTarget(c)}</span></span>
+      <span class="track" role="img" aria-label="${esc(c.name)}: ${fmtVal(c.fact, c.unit)}, ${fmtTarget(c)}">
+        <span class="fill" style="width:${Math.min(100, fillW).toFixed(1)}%"></span>
+        ${goalX != null ? `<span class="goal" style="left:calc(${goalX.toFixed(1)}% - 1px)" title="Норма"></span>` : ""}
+        ${paceX != null ? `<span class="pace" style="left:calc(${paceX.toFixed(1)}% - 1px)" title="Темп на сегодня: ${fmtVal(c.pace, c.unit)}"></span>` : ""}
+      </span>${c.pace != null ? `<span class="small muted" style="grid-column:1/-1">Темп на сегодня: ${fmtVal(c.pace, c.unit)}</span>` : ""}</span>`;
+    return auditable ? `<details class="kpi-audit" data-code="${esc(code)}" data-kind="${esc(c.audit)}"><summary aria-label="${esc(c.name)} — показать записи и условия">${row}</summary><div class="audit-panel" aria-live="polite"></div></details>` : row;
+  }
+
+  function auditRecord(r) {
+    const words = { pass: "Выполнено", fail: "Не выполнено", unknown: "Нет подтверждения", na: "Не требуется" };
+    const icons = { pass: "✓", fail: "✕", unknown: "?", na: "—" };
+    const result = r.duplicate ? "Уже учтено с другой записью · повторно не добавляется" : r.counted === true ? "Засчитано в KPI" : r.counted === false ? "Не засчитано в KPI" : "Участие конкретной записи не определено";
+    const tone = r.duplicate || r.counted == null ? "unknown" : r.counted ? "pass" : "fail";
+    const when = r.when ? ruDay(r.when.slice(0, 10)) + (r.when.length > 10 ? " " + r.when.slice(11, 16) : "") : "Дата не указана";
+    const title = crmLink(r.title, r.url);
+    return `<article class="audit-record"><div class="audit-record-head"><div class="audit-record-title"><b>${crmLink(r.client, r.client_url)}</b><div>${title}</div><div class="muted small">${esc(when)} · ${esc(r.source)}</div></div>
+      <div class="audit-checks" aria-label="Условия учёта">${r.checks.map((c) => {
+        const state = Object.hasOwn(words, c.state) ? c.state : "unknown";
+        return `<span class="audit-check ${state}" role="img" aria-label="${esc(c.label)}: ${words[state]}" title="${esc(c.detail)}"><b aria-hidden="true">${icons[state]}</b>${esc(c.label)}</span>`;
+      }).join("")}</div></div><div class="audit-result ${tone}">${esc(result)}</div>
+      ${r.note ? `<div class="muted small">${esc(r.note)}</div>` : ""}
+      <details class="audit-why"><summary>${r.counted === true ? "Проверки и источники" : "Почему и что необходимо сделать"}</summary>
+        <ul>${r.checks.map((c) => `<li><b>${esc(c.label)}: ${words[c.state] || words.unknown}.</b> ${esc(c.detail)}${c.action ? `<div>${esc(c.action)}</div>` : ""}</li>`).join("")}</ul></details></article>`;
+  }
+
+  function paintAudit(panel, data) {
+    panel._auditData = data;
+    panel._auditFilter = "all";
+    panel.innerHTML = `<b>Засчитано в KPI: ${nf(data.fact)} · норма ${nf(data.target)}</b><div class="muted small">Всего загруженных записей: ${nf(data.summary.total)} · повторов: ${nf(data.summary.duplicates)}</div>
+      ${data.summary.unallocated ? `<p>По суммарному правилу учтено ${nf(data.summary.unallocated)} КП, но в источнике нет данных, чтобы определить конкретные записи.</p>` : ""}
+      <details class="audit-rules"><summary>Как добиться выполнения этого показателя</summary><ol>${data.rules.map((s) => `<li>${esc(s)}</li>`).join("")}</ol></details>
+      <div class="audit-tools" role="group" aria-label="Фильтр записей"><button type="button" class="btn" data-audit-filter="all" aria-pressed="true">Все</button><button type="button" class="btn" data-audit-filter="counted" aria-pressed="false">Засчитаны</button><button type="button" class="btn" data-audit-filter="excluded" aria-pressed="false">Не засчитаны</button>${data.records.some((r) => r.counted == null) ? `<button type="button" class="btn" data-audit-filter="unknown" aria-pressed="false">Не определено</button>` : ""}</div>
+      <input class="audit-search" type="search" placeholder="Поиск: клиент, дата, тема, условие" aria-label="Поиск по записям KPI"><div class="muted small" data-audit-count></div><div data-audit-list></div>`;
+    const redraw = () => {
+      const query = panel.querySelector(".audit-search").value.trim().toLocaleLowerCase("ru");
+      const mode = panel._auditFilter;
+      const records = data.records.filter((r) => (mode === "all" || (mode === "counted" ? r.counted === true : mode === "excluded" ? r.counted === false : r.counted == null)) &&
+        (!query || [r.client, r.title, r.when, r.source, r.note, ...r.checks.map((c) => c.label + " " + c.detail)].join(" ").toLocaleLowerCase("ru").includes(query)));
+      panel.querySelector("[data-audit-count]").textContent = `Показано ${nf(records.length)} из ${nf(data.records.length)}`;
+      panel.querySelector("[data-audit-list]").innerHTML = records.length ? records.map(auditRecord).join("") : `<p class="muted">${data.records.length ? "Нет записей, подходящих под фильтр." : "За этот месяц записи не загружены. Проверьте дату и ответственного в источнике; обновите данные."}</p>`;
+      panel.querySelectorAll("[data-audit-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.auditFilter === mode)));
+    };
+    panel.oninput = (ev) => { if (ev.target.matches(".audit-search")) redraw(); };
+    panel.onclick = (ev) => { const button = ev.target.closest("[data-audit-filter]"); if (button && panel.contains(button)) { panel._auditFilter = button.dataset.auditFilter; redraw(); } };
+    redraw();
+  }
+
+  function bindAudits(main, employee) {
+    main.querySelectorAll("details.kpi-audit").forEach((details) => {
+      const panel = details.querySelector(".audit-panel");
+      const loadAudit = async () => {
+        if (!details.open || panel._auditData || details._auditLoading) return;
+        details._auditLoading = true;
+        panel.textContent = "Загружаю записи и условия…";
+        try {
+          const query = new URLSearchParams({ login: employee.login, month: employee.month, code: details.dataset.code, kind: details.dataset.kind });
+          const data = await api(`/api/kpi-records?${query}`);
+          if (main.contains(details)) paintAudit(panel, data);
+        } catch (e) {
+          if (main.contains(details)) {
+            panel.innerHTML = `<p>${esc(e.message)}</p><button class="btn" type="button" data-audit-retry>Повторить загрузку</button>`;
+            panel.querySelector("[data-audit-retry]").onclick = loadAudit;
+          }
+        } finally { details._auditLoading = false; }
+      };
+      details.addEventListener("toggle", loadAudit);
+    });
   }
 
   function manualBlock(d, it) {
     const isMgr = state.boot.me.role === "manager";
     const crit = it.manual.criteria, titles = state.boot.criteria_titles;
+    if (it.manual.period === "month") {
+      const score = it.manual.scores.docs;
+      return `<div class="manual"><div class="eyebrow">Оценка руководителя за месяц · ${esc(d.month)}</div>${isMgr ?
+        `<form data-month-assessment class="inline-form"><label>Документооборот, %<input type="number" min="0" max="100" step="1" data-month-score value="${esc(score.score ?? "")}" aria-label="Документооборот за ${esc(d.month)}"></label><label>Комментарий<input type="text" maxlength="500" data-month-comment value="${esc(score.comment || "")}" aria-label="Комментарий за ${esc(d.month)}"></label><button type="submit" class="btn">Сохранить оценку за месяц</button></form><div class="small muted">От 0 до 100. Очистите оценку и сохраните, чтобы снять её. Эффективность задач загружается отдельно из Б24 за этот же месяц.</div>` :
+        `<div>Документооборот: <b>${score.score == null ? "—" : esc(nf(score.score)) + "%"}</b>${score.comment ? `<div class="small">${esc(score.comment)}</div>` : ""}</div>`}</div>`;
+    }
     const opts = (v) => ["", 100, 75, 50, 25, 0].map((o) => `<option value="${o}" ${String(v ?? "") === String(o) ? "selected" : ""}>${o === "" ? "—" : o}</option>`).join("");
     return `<div class="manual"><div class="eyebrow">Еженедельная оценка руководителя</div>
       <div class="scroll"><table><thead><tr><th>Неделя с</th>${crit.map((c) => `<th>${esc(titles[c])}</th>`).join("")}<th>Комментарий</th></tr></thead><tbody>
@@ -1097,30 +1346,42 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   function entryBlock(d, it) {
     const en = it.entry, isMgr = state.boot.me.role === "manager";
     if (!en.rows.length) return `<div class="manual"><div class="eyebrow">Данные для ввода</div><div class="small muted">За ${MONTHS[+d.month.slice(5) - 1].toLowerCase()} записей из 1С нет.</div></div>`;
-    const show = (f, v) => v == null ? "—" : f.type === "bool" ? (v ? "да" : "нет") : f.type === "pct" ? nf(v * 100, 0) + "%" : f.type === "date" ? v : nf(v);
+    const show = (f, v) => v == null ? "—" : f.type === "delivery_delta"
+      ? `<span class="delivery-delta ${v < 0 ? "late" : "on-time"}">${v > 0 ? "+" : ""}${nf(v)} дн.</span>`
+      : f.type === "bool" ? (v ? "да" : "нет") : f.type === "pct" ? nf(v * 100, 0) + "%" : f.type === "date" ? fmtCell(v, "", false) : nf(v);
     const input = (r, f) => {
       const v = r.values[f.key], lbl = `${esc(f.title)}, ${esc(r.cells[0])}`;
-      const data = `data-entry data-table="${en.table}" data-ref="${esc(r.ref)}" data-field="${f.key}" aria-label="${lbl}"`;
+      const data = `data-entry data-table="${en.table}" data-ref="${esc(r.edit_ref || r.ref)}" data-field="${f.key}" aria-label="${lbl}"`;
+      if (f.key === "defect" && f.type === "bool") return `<input type="checkbox" ${data} value="1" ${v ? "checked" : ""}>`;
       if (f.type === "bool") return `<select ${data}><option value="" ${v == null ? "selected" : ""}>—</option><option value="1" ${v === 1 ? "selected" : ""}>да</option><option value="0" ${v === 0 ? "selected" : ""}>нет</option></select>`;
-      if (f.type === "date") return `<input type="date" ${data} value="${esc(v || "")}">`;
+      if (f.type === "date") return `<input type="date" min="1900-01-01" ${data}${f.parent_edit ? " data-date-override" : ""} value="${esc(v || "")}">${f.parent_edit ? `<div class="small muted">Из 1С: ${fmtCell(r.source_values?.[f.key] || "не задана", "", false)}</div>${r.manual?.includes(f.key) ? `<button class="btn ghost small" type="button" data-date-reset aria-label="Вернуть фактическую дату из 1С для ${esc(r.cells[0])}">Из 1С</button>` : ""}` : ""}`;
       if (f.type === "text") return `<input type="text" ${data} value="${esc(v ?? "")}" style="min-width:90px">`;
       const shown = v == null ? "" : f.type === "pct" ? Math.round(v * 1000) / 10 : v;
       return `<input type="number" min="0" ${f.type === "pct" ? 'max="100" step="1"' : 'step="1"'} ${data} value="${shown}" style="width:80px">`;
     };
-    return `<div class="manual"><div class="eyebrow">${isMgr ? "Ввод руководителя к данным 1С" : "Данные, введённые руководителем"}</div>
+    const cells = (r, parent = false) => r.cells.map((c, ci) => `<td class="${typeof c === "number" ? "num nw" : ci < 2 ? "nw" : ""}">${parent && ci === 0 ? (() => {
+      const key = `${d.login}:${d.month}:${r.ref}`, open = state.deliveryOpen?.has(key);
+      return `<button type="button" class="btn" data-delivery-toggle="${esc(key)}" aria-expanded="${!!open}" aria-label="Заказы поставщикам для ${esc(c)}"><span data-delivery-arrow aria-hidden="true">${open ? "▾" : "▸"}</span> ${esc(c ?? "—")}</button>`;
+    })() : typeof c === "number" ? nf(Math.round(c)) : fmtCell(c, en.columns[ci] || "", false)}</td>`).join("") + en.fields.map((f) =>
+      `<td${r.manual?.includes(f.key) ? ' class="manual-set" title="Введено вручную"' : ""}>${f.visible_if && !r.values[f.visible_if] ? "—" : isMgr && !f.readonly && (f.parent_edit ? parent : !parent) ? input(r, f) : show(f, r.values[f.key])}</td>`).join("");
+    const header = (columns) => `<thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}${en.fields.map((f) => `<th>${esc(f.title)}</th>`).join("")}</tr></thead>`;
+    const body = en.groups ? en.groups.map((g) => {
+      const open = state.deliveryOpen?.has(`${d.login}:${d.month}:${g.ref}`);
+      return `<tr>${cells(g, true)}</tr><tr data-delivery-children${open ? "" : " hidden"}><td colspan="${en.columns.length + en.fields.length}"><div class="scroll"><table>${header(["Заказ поставщику", "Поставщик", "Сумма без НДС, ₽"])}<tbody>${g.rows.map((r) => `<tr>${cells(r)}</tr>`).join("")}</tbody></table></div></td></tr>`;
+    }).join("") : en.rows.map((r) => `<tr>${cells(r)}</tr>`).join("");
+    return `<div class="manual"><div class="eyebrow">${en.title ? esc(en.title) : en.groups ? "Поставки по заказам клиента" : isMgr ? "Ввод руководителя к данным 1С" : "Данные, введённые руководителем"}</div>
       <div class="scroll"><table><thead><tr>${en.columns.map((c) => `<th>${esc(c)}</th>`).join("")}${en.fields.map((f) => `<th>${esc(f.title)}</th>`).join("")}</tr></thead><tbody>
-      ${en.rows.map((r) => `<tr>${r.cells.map((c, ci) => `<td class="${typeof c === "number" ? "num nw" : ci < 2 ? "nw" : ""}">${typeof c === "number" ? nf(Math.round(c)) : esc(c ?? "—")}</td>`).join("")}${en.fields.map((f) =>
-        `<td${r.manual.includes(f.key) ? ' class="manual-set" title="Введено вручную"' : ""}>${isMgr ? input(r, f) : show(f, r.values[f.key])}</td>`).join("")}</tr>`).join("")}
-      </tbody></table></div>${isMgr ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
+      ${body}</tbody></table></div>${en.groups ? `<div class="small muted">Месяц определяется конечной датой поставки заказа клиента в 1С — она показана как плановая. Нажмите на заказ клиента, чтобы увидеть заказы поставщикам. Отклонение — план минус факт: минус означает просрочку, плюс — поставку раньше срока, ноль — в срок. При пустой фактической дате просрочка начинается со следующего дня после плановой даты и считается до сегодняшнего дня. Фактическая дата поставки обновляется из заказа клиента в 1С; ручная дата имеет приоритет в KPI. Очистите её или нажмите «Из 1С», чтобы вернуть дату из источника. Один заказ клиента считается одной поставкой. Отметьте брак во вложенной строке поставщика и укажите дату исправления: не позже плановой даты поставки — нарушения нет; позже или ещё не исправлен — нарушение.</div>` : ""}${en.note ? `<div class="small muted">${esc(en.note)}</div>` : ""}${isMgr && !en.readonly ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
   }
 
   // штрафы за нарушение финансовой дисциплины: вносит руководитель; «штрафов нет» — явная отметка за месяц
   function penaltyBlock(d, it) {
     const pb = it.penalties, isMgr = state.boot.me.role === "manager";
     const mon = MONTHS[+d.month.slice(5) - 1].toLowerCase();
-    const list = pb.rows.length ? `<div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма, ₽</th><th>Основание</th>${isMgr ? "<th></th>" : ""}</tr></thead><tbody>
-      ${pb.rows.map((r) => `<tr><td class="nw">${esc(r.dt)}</td><td class="num nw">${nf(r.amount)}</td><td>${esc(r.reason || "—")}</td>${isMgr ? `<td><button class="btn" type="button" data-pen-del="${r.id}">Удалить</button></td>` : ""}</tr>`).join("")}
-      </tbody></table></div>` : `<div class="small">${pb.checked ? `За ${mon} штрафов нет (отмечено руководителем).` : `За ${mon} штрафы не внесены.`}</div>`;
+    const rows = [...(pb.onec_rows || []).map((r) => ({ ...r, source: "1С", readonly: true })), ...pb.rows.map((r) => ({ ...r, source: "руководитель" }))];
+    const list = rows.length ? `<div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма, ₽</th><th>Основание</th>${isMgr ? "<th></th>" : ""}</tr></thead><tbody>
+      ${rows.map((r) => `<tr><td class="nw">${esc(r.dt)}</td><td class="num nw">${nf(r.amount)}</td><td>${esc(r.reason || "—")} <span class="muted small">(${esc(r.source)})</span></td>${isMgr ? `<td>${r.readonly ? "" : `<button class="btn" type="button" data-pen-del="${r.id}">Удалить</button>`}</td>` : ""}</tr>`).join("")}
+      </tbody></table></div>` : `<div class="small">${pb.source_known ? `За ${mon} штрафов нет по данным 1С.` : pb.checked ? `За ${mon} штрафов нет (отмечено руководителем).` : `За ${mon} штрафы не внесены.`}</div>`;
     if (!isMgr) return `<div class="manual"><div class="eyebrow">Штрафы за нарушение финансовой дисциплины</div>${list}</div>`;
     const day = d.month === state.boot.current_month ? new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : d.month + "-01";
     return `<div class="manual"><div class="eyebrow">Штрафы за нарушение финансовой дисциплины</div>${list}
@@ -1128,23 +1389,77 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <label for="pen-sum">Сумма, ₽</label><input id="pen-sum" type="number" min="0" step="1" style="width:110px">
         <label for="pen-why">Основание</label><input id="pen-why" type="text" maxlength="300" placeholder="за что">
         <button class="btn" type="submit">Добавить штраф</button></form>
-      ${pb.rows.length ? "" : `<label class="small"><input type="checkbox" data-pen-check ${pb.checked ? "checked" : ""}> За ${mon} штрафов нет</label>`}
-      <div class="small muted">Пока за месяц не внесён штраф или не отмечено «штрафов нет», пункт ждёт ввода.</div></div>`;
+      ${rows.length || pb.source_known ? "" : `<label class="small"><input type="checkbox" data-pen-check ${pb.checked ? "checked" : ""}> За ${mon} штрафов нет</label>`}
+      <div class="small muted">${it.uses_penalties ? "Любой штраф за месяц обнуляет только KPI 5. " : ""}Пока нет штрафа или подтверждения «штрафов нет», пункт ждёт ввода.</div></div>`;
+  }
+
+  function confirmPaymentDate(value, order) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "payment-confirm";
+      dialog.setAttribute("aria-labelledby", "payment-confirm-title");
+      dialog.setAttribute("aria-describedby", "payment-confirm-warning");
+      dialog.innerHTML = `<form method="dialog"><h2 id="payment-confirm-title">Подтверждение полной оплаты</h2>
+        <p id="payment-confirm-warning">Введённая дата указана верно? После ввода даты заказ безвозвратно пропадёт как оплаченный полностью</p>
+        <p class="small muted">${order ? `Заказ: <b>${esc(order)}</b><br>` : ""}Дата полной оплаты: <b>${esc(value.split("-").reverse().join("."))}</b></p>
+        <div class="actions"><button class="btn primary" value="yes">Да</button><button class="btn" value="no" autofocus>Нет</button></div></form>`;
+      dialog.addEventListener("cancel", () => { dialog.returnValue = "no"; });
+      dialog.addEventListener("close", () => { const confirmed = dialog.returnValue === "yes"; dialog.remove(); resolve(confirmed); }, { once: true });
+      document.body.append(dialog); dialog.showModal();
+    });
+  }
+
+  function detailCell(details, rowIndex, column, value, isMgr) {
+    if (details.lead_approval?.column === column) {
+      const approval = details.lead_approval.rows[rowIndex];
+      return approvalControl(approval.ref,details.rows[rowIndex][0],approval.value,"lead",isMgr);
+    }
+    const url = details.links?.[rowIndex]?.[column];
+    if (url) return crmLink(value, url);
+    const payment = details.paid_edit, paid = payment?.column === column ? payment.rows[rowIndex] : null;
+    if (paid) {
+      if (!isMgr) return fmtCell(value, details.columns[column], false) + (paid.manual ? `<div class="muted small">введено вручную</div>` : "");
+      const date = paid.effective_value || "", order = esc(details.rows[rowIndex][0]);
+      return `<select data-payment-mode data-ref="${esc(paid.ref)}" aria-label="Состояние оплаты ${order}"><option value="unpaid" ${date ? "" : "selected"}>Не оплачено</option><option value="date" ${date ? "selected" : ""}>Указать дату</option></select>
+        <input type="date" min="1900-01-01" data-entry data-date-override data-payment-date data-table="receivables" data-ref="${esc(paid.ref)}" data-field="paid_date" value="${esc(date)}" ${date ? "" : "hidden"} class="${paid.manual ? "manual-set" : ""}" aria-label="Дата полной оплаты ${order}">
+        ${paid.manual ? `<button class="btn ghost small" type="button" data-payment-reset aria-label="Вернуть оплату из 1С для ${order}">Из 1С</button>` : ""}`;
+    }
+    const edit = details.date_edit, meta = edit && edit.column === column ? edit.rows[rowIndex] : null;
+    if (!meta) return fmtCell(value, details.columns[column], (details.pct_cols || []).includes(column));
+    if (!isMgr) return fmtCell(value, details.columns[column], false) + (meta.manual ? `<div class="muted small">введено вручную</div>` : "");
+    return `<input type="date" min="1900-01-01" data-entry data-date-override data-table="${esc(edit.table)}" data-ref="${esc(meta.ref)}" data-field="${esc(edit.field)}" value="${esc(value || "")}" class="${meta.manual ? "manual-set" : ""}" aria-label="Срок оплаты ${esc(details.rows[rowIndex][0])}" title="Из 1С: ${esc(meta.source_value || "не задан")}. Очистите поле, чтобы вернуть дату из 1С.">
+      ${meta.manual ? `<button class="btn ghost small" type="button" data-date-reset aria-label="Вернуть срок из 1С для ${esc(details.rows[rowIndex][0])}">Из 1С</button>` : ""}`;
   }
 
   function renderEmp(d) {
     const main = document.getElementById("main");
     const b = state.boot, isMgr = b.me.role === "manager", inProg = d.in_progress;
+    if (d.draft) {
+      main.innerHTML = `<div class="head"><div><div class="eyebrow">${esc(d.department)} · ${esc(d.position_title)}</div><h1>${crmLink(d.name, d.url)}</h1>
+        <div class="sub">${mLabel(d.month)} · Черновик KPI</div></div>${isMgr ? `<button class="btn" id="backBtn">К команде</button>` : ""}</div>
+        <section class="panel"><div class="panel-h"><h2>Черновик · начисление премии отключено</h2></div><div class="panel-b">
+          <p>Правила сохранены из регламента. До уточнения настроек показатели не оцениваются и не входят в итоги команды. Оклад и размер премии не заданы.</p>
+          <ul>${d.setup_issues.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></div></section>
+        <section class="cards">${d.items.map((i) => `<article class="panel"><div class="panel-h"><div><div class="eyebrow">KPI ${i.n} · ${Math.round(i.weight * 100)}% · Черновик</div><h2>${esc(i.title)}</h2></div></div>
+          <div class="panel-b"><div class="muted small">${esc(i.period)} · ${esc(i.target_text)}</div><p>${esc(i.description)}</p></div></article>`).join("")}</section>`;
+      const back = document.getElementById("backBtn");
+      if (back) back.addEventListener("click", () => { state.view = "team"; location.hash = "team"; load(); });
+      return;
+    }
     const zeroed = d.zero_all.length > 0;
     main.innerHTML = `
-      <div class="head"><div><div class="eyebrow">${esc(d.department)} · ${esc(d.position_title)}</div><h1>${esc(d.name)}</h1>
+      <div class="head"><div><div class="eyebrow">${esc(d.department)} · ${esc(d.position_title)}</div><h1>${crmLink(d.name, d.url)}</h1>
         <div class="sub">${mLabel(d.month)} · ${inProg ? `идёт ${d.working_days_elapsed}-й рабочий день из ${d.working_days}` : `${d.working_days} рабочих дней`}</div></div>
         ${isMgr ? `<button class="btn" type="button" id="backBtn">← Вся команда</button>` : ""}</div>
       <section class="panel hero">
         <div><div class="eyebrow">${inProg ? "Начислено на сегодня" : "KPI к выплате"}</div>
           <div class="big" style="margin-top:8px;${zeroed ? "color:var(--bad)" : ""}">${nf(d.payout)} <small>₽ из ${nf(d.kpi_bonus)}</small></div>
-          <div class="weights" role="img" aria-label="Структура KPI по пунктам">${d.items.map((i) => `<div class="seg ${zeroed && i.payout ? "zeroed" : i.payout ? "met" : ""}" style="flex:${i.weight}" title="KPI ${i.n}. ${esc(i.title)} — ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</div>`).join("")}</div>
-          <div class="legend"><span><i style="background:var(--good)"></i>начислено</span><span><i style="border:1.5px solid var(--line-strong)"></i>не начислено</span>${zeroed ? `<span><i style="background:repeating-linear-gradient(135deg,var(--bad-soft) 0 3px,var(--surface) 3px 6px);border:1.5px solid var(--bad)"></i>обнулено</span>` : ""}<span>ширина — вес пункта</span></div>
+          <div class="weights" role="img" aria-label="Структура KPI по пунктам">${d.items.map((i) => {
+            const completion = Number.isFinite(i.pct) ? Math.round(Math.max(0, Math.min(1, i.pct)) * 100) : 0;
+            const stateClass = zeroed && i.payout ? "zeroed" : i.status === "met" ? "met" : completion > 0 ? "partial" : "";
+            return `<div class="seg ${stateClass}" style="flex:${i.weight};--completion:${completion}%" title="KPI ${i.n}. ${esc(i.title)} — выполнено ${completion}% · ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</div>`;
+          }).join("")}</div>
+          <div class="legend"><span><i style="background:var(--good)"></i>выполнен</span><span><i style="background:rgba(245,158,11,.38);border:1px solid rgba(245,158,11,.7)"></i>частично выполнен</span><span><i style="border:1.5px solid var(--line-strong)"></i>нет выполнения</span>${zeroed ? `<span><i style="background:repeating-linear-gradient(135deg,var(--bad-soft) 0 3px,var(--surface) 3px 6px);border:1.5px solid var(--bad)"></i>обнулено</span>` : ""}<span>ширина — вес пункта</span></div>
           ${zeroed ? d.zero_all.map((z) => `<div class="zero-note" style="margin-top:10px">${esc(z)}</div>`).join("") : ""}
           ${d.absence && d.absence.days ? `<div class="muted small" style="margin-top:10px">${d.absent ? "Весь месяц не работал(а), KPI не считается" : `Не работал(а) ${d.absence.days} из ${d.working_days} рабочих дней`}: ${esc(d.absence.periods.join(", "))}</div>` : ""}
           ${d.absence && d.absence.truancy_days ? `<div class="small" style="margin-top:6px;color:var(--bad)">Прогулы: ${d.absence.truancy_days} раб. дн. — от норм не освобождают (${esc(d.absence.truancy.join(", "))})</div>` : ""}
@@ -1155,28 +1470,51 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       <section class="cards">${d.items.map((i) => {
         const st = STATUS[i.status] || STATUS.nodata;
         const ex = i.extra || [];
-        return `<article class="panel card">
+        const hasAudits = !PREVIEW && i.components.some((c) => c.audit);
+        return `<article class="panel card" data-kpi-code="${esc(i.code)}">
           <div class="card-h"><div class="meta">KPI ${i.n} · вес ${Math.round(i.weight * 100)}% · ${nf(i.amount)} ₽ · ${esc(i.period)}</div>
             <div class="card-score"><div class="p">${i.pct == null ? "—" : pct(i.pct)}</div><div class="r">${rub(i.payout)}</div></div>
             <h3>${esc(i.title)}</h3><div class="tgt"><span class="chip ${st[1]}">${st[0]}</span> &nbsp;${esc(i.target_text)}</div></div>
-          <div class="card-b">${i.components.map((c) => compRow(c, inProg)).join("")}
+          <div class="card-b">${i.components.map((c) => compRow(c, inProg, i.code)).join("")}
             ${i.plan && isMgr ? `<form class="inline-form" data-plan="${i.plan.metric}"><label for="plan-${i.n}">План на ${MONTHS[+d.month.slice(5) - 1].toLowerCase()}, ₽</label><input id="plan-${i.n}" type="number" min="0" step="10000" value="${i.plan.value ?? ""}"><button class="btn" type="submit">Сохранить план</button>${i.plan.is_default ? `<span class="muted">сейчас — план по умолчанию</span>` : ""}</form>` : ""}
             ${i.code === "conversion_sales" && i.baseline && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}
             ${i.manual ? manualBlock(d, i) : ""}
-            ${i.entry ? entryBlock(d, i) : ""}
+            ${i.entry ? i.entry.table === "supply_contracts"
+              ? `<details class="more"><summary>${esc(i.entry.title)} · ${nf(i.entry.rows.length)}</summary><div class="more-b">${entryBlock(d, i)}</div></details>`
+              : entryBlock(d, i) : ""}
             ${i.penalties ? penaltyBlock(d, i) : ""}
             ${ex.length ? `<div class="extra">${ex.map((x) => `<div>${esc(x.label)}: <b>${fmtExtra(x)}</b>${x.hint ? ` <span class="muted">(${esc(x.hint)})</span>` : ""}</div>`).join("")}</div>` : ""}
           </div>
-          <details class="more"><summary>Как считается и из чего${i.details && i.details.rows.length ? ` · ${i.details.rows.length} записей` : ""}</summary><div class="more-b">
+          <details class="more"><summary>${hasAudits ? "Общие правила KPI" : `Как считается и из чего${i.details && i.details.rows.length ? ` · ${i.details.rows.length} записей` : ""}`}</summary><div class="more-b">
             <div class="desc">${esc(i.description)}</div>
             ${i.funnel ? `<div><div class="eyebrow" style="margin-bottom:6px">${esc(i.funnel.title)}</div><div class="funnel">${(() => { const mx = Math.max(1, ...i.funnel.steps.map((s) => s[1])); return i.funnel.steps.map((s) => `<div class="row"><span>${esc(s[0])}</span><div class="fb" style="width:${Math.max(1, (s[1] / mx) * 100)}%"></div><b>${nf(s[1])}</b></div>`).join(""); })()}</div></div>` : ""}
-            ${i.details && i.details.rows.length ? `<div class="dt-wrap"><table class="dt"><thead><tr>${i.details.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>
-              ${i.details.rows.map((r) => `<tr>${r.map((v, ci) => `<td class="${typeof v === "number" ? "n" : ""}">${fmtCell(v, i.details.columns[ci], (i.details.pct_cols || []).includes(ci))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="muted small">Записей за период нет.</div>`}
+            ${hasAudits ? `<div class="muted small">Нажмите на название звонков, встреч или КП выше: там все загруженные записи, условия и объяснения.</div>` : i.details && i.details.rows.length ? `<div class="dt-wrap"><table class="dt"><thead><tr>${i.details.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>
+              ${i.details.rows.map((r, ri) => `<tr>${r.map((v, ci) => `<td class="${typeof v === "number" ? "n" : ""}">${detailCell(i.details, ri, ci, v, isMgr)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="muted small">Записей за период нет.</div>`}
           </div></details></article>`;
       }).join("")}</section>`;
     bindChart(document.getElementById("payChart"), d.trend, b.current_month);
+    bindAudits(main, d);
+    main.querySelectorAll("[data-client-approval], [data-lead-approval]").forEach((select) => select.addEventListener("change", async () => {
+      const previous = [...select.options].find((option) => option.defaultSelected)?.value || "";
+      select.disabled = true;
+      try {
+        const kind = select.hasAttribute("data-lead-approval") ? "lead" : "client";
+        await api(`/api/${kind}-approval`, {emp:d.login,month:d.month,ref:select.dataset.ref,
+          value:select.value === "" ? null : Number(select.value)});
+        sideCache = {}; toast("Согласование сохранено, KPI пересчитан"); load();
+      } catch (e) { select.value = previous; if (e.message !== "auth") toast(e.message); }
+      finally { select.disabled = false; }
+    }));
     const back = document.getElementById("backBtn");
     if (back) back.addEventListener("click", () => { state.view = "team"; location.hash = "team"; load(); });
+    main.querySelectorAll("form[data-month-assessment]").forEach((form) => form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const value = form.querySelector("[data-month-score]").value;
+      try {
+        await api("/api/month-score", {emp:d.login,month:d.month,criterion:"docs",score:value === "" ? null : Number(value),comment:form.querySelector("[data-month-comment]").value});
+        if (!PREVIEW) {toast("Оценка за месяц сохранена");sideCache={};load();}
+      } catch (e) {toast(e.message);}
+    }));
     main.querySelectorAll("select[data-score]").forEach((s) => s.addEventListener("change", async () => {
       const row = s.closest("tr"), cm = row.querySelector("[data-comment]");
       try {
@@ -1206,11 +1544,58 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     }));
     main.querySelectorAll("[data-pen-check]").forEach((c) => c.addEventListener("change", () =>
       penalty({ action: "check", checked: c.checked }, c.checked ? "Отмечено: штрафов нет" : "Отметка снята")));
+    main.querySelectorAll("[data-delivery-toggle]").forEach((button) => button.addEventListener("click", () => {
+      const open = button.getAttribute("aria-expanded") !== "true";
+      button.setAttribute("aria-expanded", String(open));
+      button.querySelector("[data-delivery-arrow]").textContent = open ? "▾" : "▸";
+      button.closest("tr").nextElementSibling.hidden = !open;
+      state.deliveryOpen ||= new Set();
+      if (open) state.deliveryOpen.add(button.dataset.deliveryToggle);
+      else state.deliveryOpen.delete(button.dataset.deliveryToggle);
+    }));
     main.querySelectorAll("[data-entry]").forEach((el) => el.addEventListener("change", async () => {
       try {
-        await api("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value: el.value });
-        if (!PREVIEW) { toast("Сохранено, KPI пересчитан"); sideCache = {}; load(); }
+        // Native date editors emit change while the year is still being typed.
+        if (el.type === "date" && el.value && Number(el.value.slice(0, 4)) < 1900) return;
+        const code = el.closest("[data-kpi-code]")?.dataset.kpiCode;
+        const keepOpen = el.hasAttribute("data-date-override") && el.closest("details.more")?.open;
+        const value = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.hasAttribute("data-payment-date") && !el.value && !el.dataset.restoreSource ? "unpaid" : el.value;
+        if (el.dataset.confirming) return;
+        if (el.dataset.field === "paid_date" && value && value !== "unpaid" && value !== el.defaultValue) {
+          el.dataset.confirming = "1";
+          let confirmed;
+          try { confirmed = await confirmPaymentDate(value, el.closest("tr")?.cells[0]?.textContent.trim()); }
+          finally { delete el.dataset.confirming; }
+          if (!confirmed) {
+            el.value = el.defaultValue;
+            const mode = el.closest("td")?.querySelector("[data-payment-mode]");
+            if (mode) { mode.value = el.value ? "date" : "unpaid"; el.hidden = !el.value; mode.focus(); }
+            return;
+          }
+        }
+        await api("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value });
+        if (!PREVIEW) {
+          toast("Сохранено, KPI пересчитан"); sideCache = {}; await load();
+          if (keepOpen) {
+            const card = [...main.querySelectorAll("[data-kpi-code]")].find((c) => c.dataset.kpiCode === code);
+            const disclosure = card?.querySelector("details.more"); if (disclosure) disclosure.open = true;
+          }
+        }
       } catch (e) { toast(e.message); }
+    }));
+    main.querySelectorAll("[data-date-reset]").forEach((button) => button.addEventListener("click", () => {
+      const input = button.closest("td").querySelector("[data-date-override]");
+      input.value = ""; input.dispatchEvent(new Event("change", { bubbles: true }));
+    }));
+    main.querySelectorAll("[data-payment-mode]").forEach((select) => select.addEventListener("change", () => {
+      const input = select.closest("td").querySelector("[data-payment-date]");
+      input.hidden = select.value === "unpaid";
+      if (input.hidden) { input.value = ""; input.dispatchEvent(new Event("change", { bubbles: true })); }
+      else input.focus();
+    }));
+    main.querySelectorAll("[data-payment-reset]").forEach((button) => button.addEventListener("click", () => {
+      const input = button.closest("td").querySelector("[data-payment-date]");
+      input.dataset.restoreSource = "1"; input.value = ""; input.dispatchEvent(new Event("change", { bubbles: true }));
     }));
     main.querySelectorAll("form[data-plan]").forEach((f) => f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -1224,6 +1609,54 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     }));
   }
 
+  // ---------- оценки разбора звонков
+  function callFeedbackStatus(feedback) {
+    return feedback.rating === 5 ? "Без замечаний" : feedback.status === "resolved" ? "Проверено" : "На проверке";
+  }
+  function callFeedbackCell(call, isMgr) {
+    const feedback = call.feedback || [];
+    const pending = feedback.some((f) => f.status === "pending");
+    const scores = feedback.map((f) => `${f.rating}/5 · ${callFeedbackStatus(f)}`).join(" · ");
+    const label = call.can_rate ? feedback.length ? "Изменить оценку" : "Оценить разбор" : "Посмотреть оценку";
+    return `${scores ? `<div class="small ${pending ? "err" : "muted"}">${esc(scores)}</div>` : ""}
+      ${call.can_rate || feedback.length ? `<button class="btn ghost" type="button" data-feedback="${esc(call.id)}" aria-expanded="false">${isMgr && pending ? "Посмотреть замечания" : label}</button>` : `<span class="muted">—</span>`}`;
+  }
+  function callFeedbackHtml(call, criteria, isMgr) {
+    const feedback = call.feedback || [], saved = feedback[0];
+    const labels = Object.fromEntries(criteria.map((c) => [c.key, c.label]));
+    const reports = feedback.map((f) => `<section>
+      <b>${f.rating}/5 · ${esc(callFeedbackStatus(f))}</b>${isMgr ? ` · ${esc(f.author_name || f.author)}` : ""}
+      <span class="muted small">${esc(dtLabel(f.updated))}</span>
+      ${f.comment ? `<p>${esc(f.comment)}</p>` : ""}
+      ${f.criteria.length ? `<p class="small">Ошибки в критериях — ${f.criteria.map((key) => esc(labels[key] || key)).join(", ")}</p>` : ""}
+      ${f.resolved_at ? `<p class="small muted">Проверено администратором ${esc(dtLabel(f.resolved_at))}${f.resolution ? ` · ${esc(f.resolution)}` : ""}</p>` : ""}
+      ${isMgr && f.status === "pending" ? `<form data-feedback-review data-author="${esc(f.author)}" data-revision="${f.revision}">
+        <label>Результат ручной проверки<textarea name="note" maxlength="2000" placeholder="Что проверили и исправили"></textarea></label>
+        <div class="err" role="alert" data-feedback-error></div>
+        <button class="btn" type="submit">Отметить решённым</button>
+      </form>` : ""}</section>`).join("");
+    const needsComment = saved && saved.rating < 5;
+    return `<div class="call-feedback"><h3>Оценка разбора звонка</h3>${reports}
+      ${call.can_rate && !isMgr ? `<form data-feedback-form>
+        <label>Насколько верно разобран звонок<select name="rating" required><option value="">Выберите оценку</option>
+          ${[5, 4, 3, 2, 1].map((rating) => `<option value="${rating}" ${saved?.rating === rating ? "selected" : ""}>${rating}</option>`).join("")}</select></label>
+        <div data-feedback-details ${needsComment ? "" : "hidden"}>
+          <label>Что определено неправильно и как должно быть<textarea name="comment" maxlength="2000" ${needsComment ? "required" : ""}>${esc(saved?.comment || "")}</textarea></label>
+          <fieldset><legend>Какие критерии определены неправильно</legend><div class="feedback-options">
+            ${criteria.map((c) => `<label><input type="checkbox" name="criteria" value="${esc(c.key)}" ${(saved?.criteria || []).includes(c.key) ? "checked" : ""}>${esc(c.label)}</label>`).join("")}
+          </div></fieldset>
+          <p class="muted small">Можно выбрать несколько критериев. Опишите ошибку в комментарии, чтобы администратор мог её проверить.</p>
+        </div>
+        <div class="err" role="alert" data-feedback-error></div>
+        <button class="btn primary" type="submit">Сохранить оценку</button>
+      </form>` : ""}</div>`;
+  }
+  function updateCallRating(form) {
+    const rating = Number(form.elements.rating.value), required = rating >= 1 && rating <= 4;
+    form.querySelector("[data-feedback-details]").hidden = !required;
+    form.elements.comment.required = required;
+  }
+
   // ---------- звонки: записи разговоров и журнал прослушиваний
   const DIR = { out: "Исходящий", in: "Входящий" };
   // раздел «Метрики» (только руководителю): вид → адрес и страница
@@ -1233,7 +1666,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   const metricsView = (h) => Object.keys(METRICS).find((v) => METRICS[v].hash === h);
   const dur = (s) => `${Math.floor((s || 0) / 60)}:${String((s || 0) % 60).padStart(2, "0")}`;
   const dtLabel = (v) => (v || "").slice(0, 16).replace("T", " ").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3.$2.$1");
-  // разбор звонка Claude: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
+  // разбор звонка Codex: тип, отметки «предложение» и «договорённость»; суть — во всплывающей подсказке
   let anWhen = "не обработан";
   const anCell = (c) => {
     const a = c.analysis;
@@ -1241,7 +1674,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const proc = (label, title) => mgr ? `<button class="btn ghost an-proc" type="button" data-proc="${esc(c.id)}" title="${title}">${label}</button>` : "";
     if (!a) return c.transcript === "ready" ? `<span class="muted small">${anWhen}</span>${proc("Обработать", "Расшифровать (если нужно) и разобрать звонок сейчас")}`
       : c.audio === "ready" ? proc("Обработать", "Расшифровать и разобрать звонок сейчас") || `<span class="muted">—</span>` : `<span class="muted">—</span>`;
-    return `${proc("↻", "Обработать заново").replace("an-proc", "an-proc re")}<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}${a.secretary ? `<span class="an-flag warn" title="${a.secretary_manual ? "Отметил руководитель" : "Определил Claude"}: разговор только с секретарём — в KPI не результативный">секретарь</span>` : ""}</span>`;
+    return `${proc("↻", "Обработать заново").replace("an-proc", "an-proc re")}<span class="an" title="${esc(a.summary || "")}"><span class="an-type">${esc(a.call_type || "—")}</span>${a.offer ? `<span class="an-flag ok">предложение</span>` : ""}${a.agreement ? `<span class="an-flag ok">договорённость</span>` : ""}${a.secretary ? `<span class="an-flag warn" title="${a.secretary_manual ? "Отметил руководитель" : "Определил Codex"}: разговор только с секретарём — в KPI не результативный">секретарь</span>` : ""}</span>`;
   };
   function analysisHtml(a, id) {  // полный разбор над расшифровкой; id — звонок (для отметки «секретарь»)
     if (!a) return `<div class="muted small">Разбора пока нет: он появится после расшифровки, в фоне.</div>`;
@@ -1249,8 +1682,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const secr = man ?? ai;
     const secrText = secr == null ? `<span class="muted">не определено — разбор старой версии</span>`
       : (secr ? '<b class="secr">секретарь</b> — до нужного человека не дошли' : "нужный человек") +
-        ` <span class="muted small">(${man != null ? "отметил руководитель" : "определил Claude"})</span>`;
-    const secrCtl = isMgr && id ? ` <select data-secr="${esc(id)}" aria-label="Отметка «секретарь»"><option value="" ${man == null ? "selected" : ""}>как определил Claude</option><option value="1" ${man === 1 ? "selected" : ""}>секретарь</option><option value="0" ${man === 0 ? "selected" : ""}>не секретарь</option></select>` : "";
+        ` <span class="muted small">(${man != null ? "отметил руководитель" : "определил Codex"})</span>`;
+    const secrCtl = isMgr && id ? ` <select data-secr="${esc(id)}" aria-label="Отметка «секретарь»"><option value="" ${man == null ? "selected" : ""}>как определил Codex</option><option value="1" ${man === 1 ? "selected" : ""}>секретарь</option><option value="0" ${man === 0 ? "selected" : ""}>не секретарь</option></select>` : "";
     const yn = (v) => v ? `<b class="yes">да</b>` : `<b class="no">нет</b>`;
     const list = (xs, f) => (xs || []).length ? xs.map((x) => esc(f(x))).join("<br>") : "—";
     const o = a.offer || {}, g = a.agreement || {}, tone = a.tone || {};
@@ -1272,11 +1705,14 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   // фильтры «Звонков» отличаются от исходных: текущий месяц, все сотрудники, без сделки, по дате от новых
   function callsFiltered() {
     const p = state.cPer, s = state.cSort;
-    return !!(state.cLogin || (state.cDeal || "").trim() || (p && !(p.mode === "month" && p.month === state.boot.current_month))
+    return !!(state.cLogin || state.cFeedback || (state.cDeal || "").trim() || (p && !(p.mode === "month" && p.month === state.boot.current_month))
               || (s && !(s.key === "dt" && s.dir === -1)));
   }
+  let callsGeneration = 0;
   async function loadCalls() {
     const main = document.getElementById("main"), isMgr = state.boot.me.role === "manager";
+    const generation = ++callsGeneration;
+    const current = () => generation === callsGeneration && state.view === "calls" && document.getElementById("main") === main;
     try {
       const login = state.cLogin ?? "";
       const deal = (state.cDeal || "").trim();
@@ -1284,11 +1720,12 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       if (state.cPg) state.cPg.page = 0;  // новые фильтры или данные — снова с первой страницы
       const [a, b] = periodRange(state.cPer);
       const per = a || b ? `&date_from=${a}&date_to=${b}` : "&all=1";
-      state.cQs = `login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}`;
+      state.cQs = `login=${encodeURIComponent(login)}${per}${deal ? "&deal=" + encodeURIComponent(deal) : ""}${isMgr && state.cFeedback ? "&feedback=pending" : ""}`;
       const d = await api(`/api/calls?${state.cQs}`);
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
+      if (!current()) return;
       renderCalls(d, log);
-    } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
   function renderCalls(d, log) {
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
@@ -1299,9 +1736,9 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       if (c.audio === "error") return `<span style="color:var(--bad)">не удалось скачать</span>`;
       return `<span class="muted">скачивается…</span>`;
     };
-    const deals = (c) => !c.deals.length ? "—" : c.deals.slice(0, 3).map((id) => d.portal
-      ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener">${id}</a>` : String(id)).join(", ") +
-      (c.deals.length > 3 ? ` <span class="muted" title="${c.deals.slice(3).join(", ")}">+${c.deals.length - 3}</span>` : "");
+    const deals = (c) => !c.deals.length ? "—" : c.deals.map((id) => d.portal
+      ? `<a href="${esc(d.portal)}/crm/deal/details/${id}/" target="_blank" rel="noopener noreferrer">${id}</a>` : String(id)).join(", ") +
+      "";
     const emps = d.employees, multi = emps.length > 1;
     const title = d.deal != null ? `по сделке ${d.deal}` : periodLabel(d.date_from, d.date_to);
     // сортировка щелчком по заголовку; при равенстве — новые звонки выше
@@ -1316,24 +1753,24 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const ready = calls.filter((c) => c.audio === "ready");
     for (const id of [...state.cSel]) if (!ready.some((c) => c.id === id)) state.cSel.delete(id);  // выбор только среди звонков списка
     const picked = state.cSel.size;
-    const MODELS = [["claude-opus-5-5", "Opus 5.5"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"]];
+    const MODELS = [["gpt-5.6-terra", "GPT-5.6 Terra"], ["gpt-6-luna", "GPT-6 Luna · быстро"], ["gpt-5.6-luna", "GPT-5.6 Luna · быстро"]];
     const EFFORTS = [["low", "Низкий"], ["medium", "Средний"], ["high", "Высокий"], ["xhigh", "Сверхвысокий"], ["max", "Максимальный"]];
     const pick = (key, list, def) => { let v; try { v = localStorage.getItem(key); } catch (e) {} return list.some((x) => x[0] === v) ? v : def; };
     const save = (key, v) => { try { localStorage.setItem(key, v); } catch (e) {} };
     const modelMenu = () => {
-      const m = pick("callModel", MODELS, "claude-sonnet-5-5"), ef = pick("callEffort", EFFORTS, "medium");
+      const m = pick("callModelV2", MODELS, "gpt-5.6-terra"), ef = pick("callEffortV2", EFFORTS, "high");
       return `<details class="proc" id="cModel"><summary class="btn ghost" title="Модель разбора звонков">${MODELS.find((x) => x[0] === m)[1]}</summary><div class="proc-pop mdl-pop">
         ${MODELS.map(([id, name], i) => `<button type="button" data-model="${id}"><span class="ck">${id === m ? "✓" : ""}</span>${name}<span class="k">${i + 1}</span></button>`).join("")}<hr>
         <div class="mdl-eff">Чем выше уровень усилий, тем более тщательные ответы — но это занимает больше времени и быстрее расходует лимит подписки.</div>
-        ${EFFORTS.map(([id, name]) => `<button type="button" data-effort="${id}"><span class="ck">${id === ef ? "✓" : ""}</span>${name}${id === "medium" ? ` <span class="rec">Рекомендуется</span>` : ""}</button>`).join("")}</div></details>`;
+        ${EFFORTS.map(([id, name]) => `<button type="button" data-effort="${id}"><span class="ck">${id === ef ? "✓" : ""}</span>${name}${id === "high" ? ` <span class="rec">Рекомендуется</span>` : ""}</button>`).join("")}</div></details>`;
     };
-    const claudeResults = () => {  // итоги разбора Claude по звонкам списка: типы, предложения, договорённости, секретарь
+    const codexResults = () => {  // итоги разбора Codex по звонкам списка: типы, предложения, договорённости, секретарь
       const an = calls.filter((c) => c.analysis), n = an.length;
-      if (!n) return `<div class="ares"><h3>Результаты обработки Claude</h3><div class="muted small">За период обработанных звонков нет${state.boot.me.role === "manager" ? " — запустите «Обработать…»" : ""}.</div></div>`;
+      if (!n) return `<div class="ares"><h3>Результаты обработки Codex</h3><div class="muted small">За период обработанных звонков нет${state.boot.me.role === "manager" ? " — запустите «Обработать…»" : ""}.</div></div>`;
       const cnt = (f) => an.filter(f).length, pct = (v) => `${nf(v)} (${nf(v / n * 100)}%)`;
       const types = {}; an.forEach((c) => { const t = c.analysis.call_type || "не определён"; types[t] = (types[t] || 0) + 1; });
       const rows = Object.entries(types).sort((a, b) => b[1] - a[1]), top = rows[0][1];
-      return `<div class="ares"><h3>Результаты обработки Claude</h3>
+      return `<div class="ares"><h3>Результаты обработки Codex</h3>
         <div class="ares-kpi"><div><b>${nf(n)}</b><span>обработано из ${nf(calls.length)}</span></div><div><b>${nf(cnt((c) => c.analysis.offer))}</b><span>с предложением</span></div>
           <div><b>${nf(cnt((c) => c.analysis.agreement))}</b><span>с договорённостью</span></div><div><b>${nf(cnt((c) => c.analysis.secretary))}</b><span>только секретарь</span></div></div>
         ${rows.map(([t, v]) => `<div class="ares-row"><span>${esc(t)}</span><span class="ares-bar"><i style="width:${v / top * 100}%"></i></span><span class="n">${pct(v)}</span></div>`).join("")}</div>`;
@@ -1355,7 +1792,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
           return `<div class="col" title="${esc(lab(k))}: исходящих ${a.out}, входящих ${a.in}">${a.in ? `<div class="seg-in" style="height:${a.in / max * 100}%"></div>` : ""}${a.out ? `<div class="seg-out" style="height:${a.out / max * 100}%"></div>` : ""}</div>`; }).join("")}</div>
         <div class="cchart-x">${keys.map((k, i) => `<span>${i % step === 0 ? esc(lab(k)) : ""}</span>`).join("")}</div>
         <div class="cchart-leg"><span><i class="seg-out"></i>Исходящие · ${nf(tot("out"))}</span><span><i class="seg-in"></i>Входящие · ${nf(tot("in"))}</span><span class="muted">Всего · ${nf(calls.length)} · максимум за ${byMonth ? "месяц" : "день"} · ${nf(max)}</span></div>
-        ${claudeResults()}
+        ${codexResults()}
       </div></section>`;
     };
     const th = (key, label) => `<th aria-sort="${sort.key === key ? (sort.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-h${sort.key === key ? " on" : ""}" data-sort="${key}" title="Сортировать">${label}<span aria-hidden="true">${sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</span></button></th>`;
@@ -1374,14 +1811,15 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       <section class="panel"><div class="panel-h"><div class="filters">
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
+          ${isMgr ? `<label><input type="checkbox" id="cFeedback" ${state.cFeedback ? "checked" : ""}>Замечания на проверке</label>` : ""}
           <form class="inline-form" id="cDealForm"><label for="cDeal">Сделка №</label><input id="cDeal" inputmode="numeric" placeholder="ID в Битрикс24" value="${esc(d.deal ?? "")}">
             <button class="btn" type="submit">Найти</button>${d.deal != null ? `<button class="btn ghost" type="button" id="cDealClear">× вернуться к периоду</button>` : ""}</form>
           <button class="btn" type="button" id="cReset" ${callsFiltered() ? "" : "disabled"}>Сбросить фильтры</button></div>
           ${isMgr && d.download && (d.download.running || d.download.message) ? `<span class="muted small">${esc(d.download.running ? "Скачивание записей идёт…" : d.download.message)}</span>` : ""}</div>
         ${d.calls.length ? `<div class="panel-b" style="padding-bottom:0">${pgHtml(cpg, calls.length, "звонков")}</div>` : ""}
-        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${isMgr ? `<th><input type="checkbox" class="pick" id="cPickAll" aria-label="Выбрать все звонки списка с записью" ${picked && picked === ready.length ? "checked" : ""}></th>` : ""}${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
-          ${calls.slice(pgc.from, pgc.to).map((c) => `<tr>${isMgr ? `<td>${c.audio === "ready" ? `<input type="checkbox" class="pick" data-pick="${esc(c.id)}" aria-label="Выбрать звонок" ${state.cSel.has(c.id) ? "checked" : ""}>` : ""}</td>` : ""}<td class="nw">${esc(dtLabel(c.dt))}</td>${multi ? `<td>${esc(c.emp_name)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
-            <td class="nw n">${dur(c.duration)}</td><td>${esc(c.client || "—")}</td><td class="an-cell">${anCell(c)}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
+        ${d.calls.length ? `<div class="scroll"><table class="staff-list calls"><thead><tr>${isMgr ? `<th><input type="checkbox" class="pick" id="cPickAll" aria-label="Выбрать все звонки списка с записью" ${picked && picked === ready.length ? "checked" : ""}></th>` : ""}${th("dt", "Дата")}${multi ? th("emp", "Сотрудник") : ""}${th("direction", "Звонок")}${th("duration", "Длит.")}<th>Клиент</th><th>Разбор</th><th>Оценка разбора</th><th>Телефон</th><th>Сделки</th>${isMgr ? "<th>Прослушано</th>" : ""}<th>Запись</th></tr></thead><tbody>
+          ${calls.slice(pgc.from, pgc.to).map((c) => `<tr>${isMgr ? `<td>${c.audio === "ready" ? `<input type="checkbox" class="pick" data-pick="${esc(c.id)}" aria-label="Выбрать звонок" ${state.cSel.has(c.id) ? "checked" : ""}>` : ""}</td>` : ""}<td class="nw">${crmLink(dtLabel(c.dt), c.url)}</td>${multi ? `<td>${crmLink(c.emp_name, c.emp_url)}</td>` : ""}<td class="nw">${DIR[c.direction] || "—"}</td>
+            <td class="nw n">${dur(c.duration)}</td><td>${crmLink(c.client || "—", c.client_url)}</td><td class="an-cell">${anCell(c)}</td><td data-feedback-cell="${esc(c.id)}">${callFeedbackCell(c, isMgr)}</td><td class="nw">${esc(c.phone || "—")}</td><td class="nw">${deals(c)}</td>
             ${isMgr ? `<td class="nw">${c.listens ? `${c.listens} раз` : "—"}</td>` : ""}<td class="nw" data-rec="${esc(c.id)}">${audio(c)}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty">Звонков с записью ${d.deal != null ? "по этой сделке" : "за этот период"} нет</div>`}
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
@@ -1392,7 +1830,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
           <label for="cLogTo">по</label><input id="cLogTo" type="date" value="${esc(log ? log.date_to : state.cLogTo || "")}"><button class="btn" type="submit">Показать</button></form>
         ${log && log.rows.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Когда</th><th>Кто</th><th>Чей звонок</th><th>Звонок</th><th>Клиент</th><th>IP</th><th>Результат</th></tr></thead><tbody>
           ${log.rows.map((r) => `<tr><td>${esc(dtLabel(r.ts))}</td><td>${esc(r.name)}</td><td>${esc(r.emp_name || "—")}</td>
-            <td>${r.call_dt ? `${esc(dtLabel(r.call_dt))} · ${DIR[r.direction] || ""} · ${dur(r.duration)}` : esc(r.record)}</td><td>${esc(r.client || "—")}</td>
+            <td>${crmLink(r.call_dt ? `${dtLabel(r.call_dt)} · ${DIR[r.direction] || ""} · ${dur(r.duration)}` : r.record,r.url)}</td><td>${crmLink(r.client || "—",r.client_url)}</td>
             <td>${esc(r.ip || "")}</td><td>${r.result === "ok" ? "прослушал(а)" : r.result === "read" ? "открыл(а) расшифровку" : `<span style="color:var(--bad)">отказано: нет прав</span>`}</td></tr>`).join("")}
         </tbody></table></div>` : log ? `<div class="muted small">За период прослушиваний нет.</div>` : ""}
       </div></details></section>` : ""}`;
@@ -1407,7 +1845,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
     const startProc = async (body, ask) => {
       if (ask && !confirm(ask)) return;
-      body = { ...body, model: pick("callModel", MODELS, "claude-sonnet-5-5"), effort: pick("callEffort", EFFORTS, "medium") };
+      body = { ...body, model: pick("callModelV2", MODELS, "gpt-5.6-terra"), effort: pick("callEffortV2", EFFORTS, "high") };
       try {
         const r = await api(`/api/calls-process?${state.cQs}`, body);
         toast(r.message);
@@ -1432,7 +1870,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (isMgr) watchJob();
     main.querySelectorAll("[data-proc]").forEach((btn) => btn.addEventListener("click", () => startProc({ id: btn.dataset.proc })));
     main.querySelectorAll("[data-model],[data-effort]").forEach((b) => b.addEventListener("click", () => {
-      save(b.dataset.model ? "callModel" : "callEffort", b.dataset.model || b.dataset.effort);
+      save(b.dataset.model ? "callModelV2" : "callEffortV2", b.dataset.model || b.dataset.effort);
       renderCalls(d, log);
     }));
     main.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("change", () => {
@@ -1457,7 +1895,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       main.querySelectorAll(".proc-pop .sub").forEach((b) => { b.hidden = !open; });
     });
     main.querySelectorAll("[data-batch]").forEach((btn) => btn.addEventListener("click", () => {
-      const kind = btn.dataset.batch, risk = "Расшифровка идёт на этом компьютере, разбор — через Claude и расходует лимит подписки.";
+      const kind = btn.dataset.batch, risk = "Расшифровка идёт на этом компьютере, разбор — через Codex и расходует лимит подписки.";
       if (kind === "sel" || kind === "yday" || kind === "range") {
         let body, what;
         if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${picked} (уже разобранные будут разобраны заново)`; }
@@ -1476,14 +1914,16 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       const count = all ? todoAll : [...d.calls].filter((c) => c.audio === "ready").sort((a, b) => cmp(b.dt, a.dt)).slice(0, n).filter(needs).length;
       if (!count) { toast("Выбранные звонки уже обработаны"); return; }
       startProc(all ? { mode: "all" } : { mode: "last", n },
-        `Обработать звонков: ${count}? Расшифровка идёт на этом компьютере, разбор — через Claude и расходует лимит подписки.`);
+        `Обработать звонков: ${count}? Расшифровка идёт на этом компьютере, разбор — через Codex и расходует лимит подписки.`);
     }));
     bindPeriod("c", () => state.cPer, (v) => { state.cPer = v; }, loadCalls);
     const sel = document.getElementById("cLogin");
     if (sel) sel.addEventListener("change", () => { state.cLogin = sel.value; loadCalls(); });
+    const feedbackFilter = document.getElementById("cFeedback");
+    if (feedbackFilter) feedbackFilter.addEventListener("change", () => { state.cFeedback = feedbackFilter.checked; loadCalls(); });
     document.getElementById("cDealForm").addEventListener("submit", (ev) => { ev.preventDefault(); state.cDeal = document.getElementById("cDeal").value; loadCalls(); });
     document.getElementById("cReset").addEventListener("click", () => {
-      state.cPer = state.cLogin = state.cDeal = state.cSort = undefined;
+      state.cPer = state.cLogin = state.cDeal = state.cSort = state.cFeedback = undefined;
       loadCalls();
     });
     const clr = document.getElementById("cDealClear");
@@ -1504,12 +1944,61 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       au.play().catch(() => {});
     };
     main.querySelectorAll("[data-play]").forEach((btn) => btn.addEventListener("click", () => player(btn.dataset.play)));
+    const bindFeedback = (button) => button.addEventListener("click", () => {
+      const call = d.calls.find((c) => c.id === button.dataset.feedback);
+      const tr = button.closest("tr"), selector = `[data-feedback-row="${CSS.escape(call.id)}"]`;
+      const existing = main.querySelector(selector);
+      if (existing) { existing.remove(); button.setAttribute("aria-expanded", "false"); return; }
+      const row = document.createElement("tr");
+      row.className = "feedback-row"; row.dataset.feedbackRow = call.id;
+      tr.after(row); button.setAttribute("aria-expanded", "true");
+      const paint = () => {
+        row.innerHTML = `<td colspan="${tr.children.length}">${callFeedbackHtml(call, d.feedback_criteria || [], isMgr)}</td>`;
+        const saveFeedback = async (form, path, body) => {
+          const submit = form.querySelector("button[type=submit]"), error = form.querySelector("[data-feedback-error]");
+          if (submit.disabled) return;
+          submit.disabled = true; error.textContent = "";
+          try {
+            const result = await api(path, { id: call.id, ...body });
+            const previous = (call.feedback || []).find((f) => f.author === result.feedback.author);
+            call.feedback = (call.feedback || []).filter((f) => f.author !== result.feedback.author);
+            call.feedback.push({ ...previous, ...result.feedback });
+            if (!row.isConnected) return;
+            const cell = tr.querySelector("[data-feedback-cell]");
+            cell.innerHTML = callFeedbackCell(call, isMgr);
+            const nextButton = cell.querySelector("[data-feedback]");
+            nextButton.setAttribute("aria-expanded", "true"); bindFeedback(nextButton);
+            paint(); toast(isMgr ? "Замечание отмечено решённым" : "Оценка разбора сохранена");
+          } catch (e) { if (e.message !== "auth" && row.isConnected) error.textContent = e.message; }
+          finally { submit.disabled = false; }
+        };
+        const form = row.querySelector("[data-feedback-form]");
+        if (form) {
+          updateCallRating(form);
+          form.elements.rating.addEventListener("change", () => updateCallRating(form));
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const rating = Number(form.elements.rating.value);
+            saveFeedback(form, "/api/call-feedback", { rating,
+              comment: rating === 5 ? "" : form.elements.comment.value,
+              criteria: rating === 5 ? [] : [...form.querySelectorAll("input[name=criteria]:checked")].map((input) => input.value) });
+          });
+        }
+        row.querySelectorAll("[data-feedback-review]").forEach((form) => form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          saveFeedback(form, "/api/call-feedback-review", { author: form.dataset.author,
+            revision: Number(form.dataset.revision), note: form.elements.note.value });
+        }));
+      };
+      paint();
+    });
+    main.querySelectorAll("[data-feedback]").forEach(bindFeedback);
     // расшифровка раскрывается строкой под звонком; щелчок по таймкоду — слушать с этого места
     main.querySelectorAll("[data-text]").forEach((btn) => btn.addEventListener("click", async () => {
-      const tr = btn.closest("tr"), next = tr.nextElementSibling;
-      if (next && next.classList.contains("tr-row")) { next.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+      const tr = btn.closest("tr"), next = main.querySelector(`[data-transcript-row="${CSS.escape(btn.dataset.text)}"]`);
+      if (next) { next.remove(); btn.setAttribute("aria-expanded", "false"); return; }
       const row = document.createElement("tr");
-      row.className = "tr-row";
+      row.className = "tr-row"; row.dataset.transcriptRow = btn.dataset.text;
       row.innerHTML = `<td colspan="${tr.children.length}"><div class="muted small">Загрузка…</div></td>`;
       tr.after(row); btn.setAttribute("aria-expanded", "true");
       try {
@@ -1521,7 +2010,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
             const same = roles && i && lines[i - 1][1] === s[1];  // реплика того же говорящего — без повтора подписи
             return `<p class="${s[1] ? "r" + s[1] : ""}"><button type="button" class="linkish ts" data-at="${s[0]}" title="Слушать с этого места">${dur(Math.floor(s[0]))}</button> ${s[1] && !same ? `<b>${ROLE[s[1]] || ""}:</b> ` : ""}${esc(s[2])}</p>`;
           }).join("") : `<p class="muted">Речь не распознана</p>`}</div></div>
-          <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах. ${roles ? "Кто говорит — определил Claude по смыслу." : "Реплики не размечены: разбора ещё нет."} Разбор — Claude по обезличенному тексту.</div>`;
+          <div class="muted small">Расшифровка автоматическая (GigaAM v3): возможны ошибки в отдельных словах. ${roles ? "Кто говорит — определил Codex по смыслу." : "Реплики не размечены: разбора ещё нет."} Разбор — Codex по обезличенному тексту.</div>`;
         row.querySelectorAll("[data-at]").forEach((b) => b.addEventListener("click", () => player(btn.dataset.text, +b.dataset.at)));
         row.querySelectorAll("[data-secr]").forEach((sel) => sel.addEventListener("change", async () => {
           try {
@@ -1814,7 +2303,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const day = (v) => (v || "").slice(0, 10);
     const inP = (v) => !!v && (!a || day(v) >= a) && (!b || day(v) <= b);
     const url = (t) => (d.portal ? `https://${d.portal}/company/personal/user/${t.uid}/tasks/task/view/${t.id}/` : null);
-    const taskA = (t) => { const u = url(t); return `${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t.id)}</a>` : esc(t.id)} · ${esc(t.title || "")}`; };
+    const taskA = (t) => crmLink(`${t.id} · ${t.title || ""}`, t.url || url(t));
     const person = Object.fromEntries(d.people.map((p) => [p.uid, p]));
     const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort((x, y) => String(x).localeCompare(String(y), "ru"));
     const depts = uniq(d.people.map((p) => p.dept)), projects = uniq(d.tasks.map((t) => t.project)), tags = uniq(d.tasks.flatMap((t) => t.tags));
@@ -1864,7 +2353,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const COLS = ["open", "received", "done", "ontime", "commit", "overdue", "clean", "remarks", "rework", "returns", "help", "review", "blocked"];
     const people = d.people.filter((p) => (!st.dept || p.dept === st.dept) && (!st.uid || String(p.uid) === st.uid));
     const row = (p) => { const ts = tasks.filter((t) => t.uid === p.uid);
-      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button>${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${COLS.map((k) => cell(ts, p.uid, k)).join("")}<td class="nw">${nearest(ts)}</td></tr>`; };
+      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${COLS.map((k) => cell(ts, p.uid, k)).join("")}<td class="nw">${nearest(ts)}</td></tr>`; };
     const totals = `<tr class="wl-total"><td><b>Итого</b></td>${COLS.map((k) => cell(tasks.filter((t) => people.some((p) => p.uid === t.uid)), "all", k)).join("")}<td class="nw">${nearest(tasks)}</td></tr>`;
     const head = `<th>Сотрудник</th>${COLS.map((k) => `<th class="n">${M[k].t}</th>`).join("")}<th>Ближайший срок</th>`;
     // блок ИД: делегированные поручения не суммируются с личными задачами ИД
@@ -1885,8 +2374,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · ${key === "card" ? "задачи" : esc(M[key].t.toLowerCase())}: ${ts.length}</h2>
         ${fromDir ? `<span class="muted small">из них поручений ИД: ${fromDir}, прочих: ${ts.length - fromDir}</span>` : ""}<button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
         <div class="panel-b">${ts.length ? `<div class="scroll"><table class="dt wl-tasks"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Постановщик</th><th>Проект · тип</th><th>Приоритет</th><th>Статус</th><th>Первоначальный срок</th><th>Согласованный срок</th><th>Сдано</th><th>Принято</th><th>Просрочка</th><th>Проверка</th><th>Замечания</th><th class="n">Возвраты</th><th>Подтверждение</th></tr></thead><tbody>
-        ${ts.map((t) => `<tr><td class="wrap">${taskA(t)}${t.blocked ? ' <b class="wl-flag">· блокировка</b>' : ""}${t.help ? ' <b class="wl-flag">· вопрос ИД</b>' : ""}</td><td>${esc((person[t.uid] || {}).name || "")}</td><td>${esc(t.creator_name || "—")}</td>
-          <td>${esc(t.project || "—")}${t.tags.length ? `<div class="muted small">${esc(t.tags.join(", "))}</div>` : ""}</td><td>${t.priority === "2" ? "<b>высокий</b>" : "обычный"}</td><td>${esc(t.status_label)}</td>
+        ${ts.map((t) => `<tr><td class="wrap">${taskA(t)}${t.blocked ? ' <b class="wl-flag">· блокировка</b>' : ""}${t.help ? ' <b class="wl-flag">· вопрос ИД</b>' : ""}</td><td>${crmLink((person[t.uid] || {}).name || "", (person[t.uid] || {}).url)}</td><td>${crmLink(t.creator_name || "—", t.creator_url)}</td>
+          <td>${crmLink(t.project || "—", t.project_url)}${t.tags.length ? `<div class="muted small">${esc(t.tags.join(", "))}</div>` : ""}</td><td>${t.priority === "2" ? "<b>высокий</b>" : "обычный"}</td><td>${esc(t.status_label)}</td>
           <td class="nw">${ruMoment(t.deadline_orig)}</td><td class="nw">${ruMoment(t.deadline)}${t.moves_ok.length + t.moves_late.length ? `<div class="muted small">переносов ${t.moves_ok.length + t.moves_late.length}${t.moves_late.length ? `, после срока ${t.moves_late.length}` : ""}</div>` : ""}${t.self_moves.length ? `<div class="muted small">исполнитель сдвигал: ${t.self_moves.length}</div>` : ""}</td>
           <td class="nw">${ruMoment(t.exec_at)}${t.on_time === false ? ' <b class="wl-flag">не в срок</b>' : ""}</td><td class="nw">${t.mode === "check" ? ruMoment(t.accepted) : '<span class="muted">без проверки</span>'}</td>
           <td class="nw${t.overdue_days ? " wl-bad" : ""}">${t.overdue_days ? `просрочено ${t.overdue_days} дн.` : t.review_delay_days ? `<span class="muted">проверка задержана ${t.review_delay_days} дн.</span>` : "—"}</td>
@@ -1929,7 +2418,9 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   async function loadMoney() {
     clearTimeout(moneyTimer);
     try {
-      const d = await api("/api/money");
+      if (!state.mPer) state.mPer = {mode: "month", month: state.boot.current_month};
+      const [dateFrom, dateTo] = periodRange(state.mPer);
+      const d = await api(`/api/money?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
       renderMoney(d);
       if (d.refreshing) moneyTimer = setTimeout(() => { if (state.view === "money") loadMoney(); }, 4000);  // идёт загрузка из 1С
     } catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
@@ -1958,19 +2449,19 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const payHead = `<thead><tr><th>Получатель</th><th>Основание</th><th>Назначение</th><th class="n">К оплате</th><th>По договору</th><th>План оплаты</th><th>Согласование</th><th>Приоритет</th><th>Учёт</th><th></th></tr></thead>`;
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Деньги · данные 1С</div><h1>Денежное состояние</h1>
-        <div class="sub">Платёжный календарь на ${nf(d.calendar.length)} дней с ${ruDay(d.asof)}. Суммы в рублях с копейками; другие валюты — отдельно, без пересчёта.</div></div></div>
+        <div class="sub">Платёжный календарь за ${periodLabel(d.asof, d.calendar[d.calendar.length - 1].date)}. Суммы в рублях с копейками; другие валюты — отдельно, без пересчёта.</div></div></div>
       <section class="panel"><div class="panel-h"><div class="filters sp-add" style="margin:0">
-        <label>Дата среза<input type="date" id="mAsof" value="${esc(d.asof_manual || d.asof)}"></label>
+        ${periodHtml(state.mPer, "m")}
         <label title="Часть остатка, которой нельзя распоряжаться: вычитается из остатка на начало платёжного календаря">Недоступные средства, ₽<input type="number" step="0.01" id="mAdjust" value="${d.adjust}" style="width:150px"></label>
-        <button class="btn" id="mAsofToday" title="Дата среза — всегда сегодня">Сегодня</button>
         <button class="btn primary" id="mRefresh" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button></div>
         <span class="muted small">Из 1С: ${S.at ? "загружено " + when(S.at) : "ещё не загружено"}${S.last_move ? " · последнее движение по счетам " + when(S.last_move) + " (OData — копия базы за прошлый день)" : ""}</span></div>
         ${S.error ? `<div class="panel-b" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(S.error)}. Показаны суммы последней успешной загрузки${S.at ? " (" + when(S.at) + ")" : ""}.</div>` : ""}
         ${!S.at && !d.refreshing ? `<div class="panel-b">Данных из 1С ещё нет — нажмите «Обновить из 1С».</div>` : ""}</section>
-      <section class="stats stats3">
+      <section class="stats stats4">
         <div class="panel stat"><div class="eyebrow">Дебиторская задолженность</div><div class="v">${d.client_debt == null ? "—" : m2(d.client_debt)}</div><div class="h">${d.client_debt == null ? "появится после «Обновить из 1С»" : `«Долг клиента» по ${nf(d.client_debt_orders)} заказам клиентов (1С)`}</div></div>
-        <div class="panel stat"><div class="eyebrow">Поступления периода</div><div class="v">${m2(T.in)}</div></div>
-        <div class="panel stat"><div class="eyebrow">Выплаты периода</div><div class="v">${m2(T.out)}</div><div class="h">только согласованные с датой</div></div>
+        <div class="panel stat"><div class="eyebrow">Поступления периода</div><div class="v">${m2(T.in)}</div><div class="h">${nf(T.in_count)} безналичных оплат от клиентов · ООО «ТрансТехКом» · по дате «Проведено банком»</div></div>
+        <div class="panel stat"><div class="eyebrow">Выплаты периода</div><div class="v">${m2(T.out)}</div><div class="h">${nf(T.out_count)} полностью оплаченных или закрытых заявок</div></div>
+        <div class="panel stat"><div class="eyebrow">Плановые выплаты</div><div class="v">${m2(T.plan_out)}</div><div class="h">заявки в статусах «Согласована», «Не согласована» и «К оплате»</div></div>
       </section>
       <details class="panel" data-keep ${open[0] ? "open" : ""}><summary class="panel-h" style="cursor:pointer"><h2 style="display:inline">Остатки по счетам и кассам</h2> <span class="muted small">${nf(d.cash.length)} · итого в рублях ${m2(d.cash_rub)}</span></summary>
         <div class="panel-b">${d.cash.length ? `<table class="mt"><thead><tr><th>Счёт / касса</th><th class="n">Остаток</th><th>Валюта</th><th>Последнее движение</th></tr></thead><tbody>
@@ -1978,10 +2469,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
           <div class="muted small" style="margin-top:8px">Остатки по счетам могут быть смещены, если часть операций проведена по другим счетам организации; итог сверяйте с отчётом 1С на ту же дату.</div>` : `<span class="muted">Данных нет</span>`}</div></details>
       <section class="panel"><div class="panel-h"><h2>Платёжный календарь</h2><span class="muted small">поступления — по дате «Ожидаем», выплаты — по «Плану оплаты», только «Согласовано»</span></div>
         <div class="panel-b"><div class="scroll"><table class="mt"><thead><tr><th>Дата</th>${d.calendar.map((c) => `<th class="n">${dayHead(c.date)}</th>`).join("")}</tr></thead><tbody>
-          <tr><th>На начало дня</th>${d.calendar.map((c) => `<td class="n"${neg(c.begin)}>${m2(c.begin)}</td>`).join("")}</tr>
           <tr><th>Поступления</th>${d.calendar.map((c) => `<td class="n">${c.in ? m2(c.in) : "—"}</td>`).join("")}</tr>
-          <tr><th>Выплаты</th>${d.calendar.map((c) => `<td class="n">${c.out ? m2(c.out) : "—"}</td>`).join("")}</tr>
-          <tr class="tot"><th>На конец дня</th>${d.calendar.map((c) => `<td class="n"${neg(c.end)}>${m2(c.end)}</td>`).join("")}</tr></tbody></table></div>
+          <tr><th>Выплаты</th>${d.calendar.map((c) => `<td class="n">${c.out ? m2(c.out) : "—"}</td>`).join("")}</tr></tbody></table></div>
         <div style="margin-top:12px"><b>Максимальная нехватка денег:</b> <span${T.shortfall ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(T.shortfall)}</span>
           <span class="muted"> · дата минимума: ${ruDay(T.low_date)}</span></div></div></section>
       <section class="panel"><div class="panel-h"><h2>Кто должен и когда ожидаем поступления</h2><span class="muted small">долг за отгрузку и аванс — из 1С; «Ожидаем» — дата, которую обещал клиент (договорная дата не меняется) · строка раскрывается по нажатию</span></div>
@@ -2000,27 +2489,26 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         </tbody></table></div>` : `<div class="muted">Долгов и авансов нет</div>`}
         <div style="margin-top:12px"><b>Всего долг клиентов (за отгрузки):</b> ${m2(d.owe_total)} <span class="muted"> · </span><b>Просрочено:</b> <span${d.owe_late ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(d.owe_late)}</span>
           <span class="muted"> · </span><b>Авансы отдельно:</b> ${m2(d.owe_advance)}</div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Плановые выплаты</h2><span class="muted small">согласованные, с датой · заявки на расходование и план оплаты из 1С; движение денег, а не расходы · за пределами периода — ${m2(d.pay_beyond)}</span></div>
+      <section class="panel"><div class="panel-h"><h2>Плановые выплаты</h2><span class="muted small">заявки на расходование ДС в статусах «Согласована», «Не согласована» и «К оплате» · за пределами периода — ${m2(d.pay_beyond)}</span></div>
         <div class="panel-b"><details class="sp-addwrap"><summary class="muted small" style="cursor:pointer">Добавить выплату вручную</summary><form id="mAddOut" class="sp-add" style="margin-top:8px"><input name="party" placeholder="Получатель" required style="width:180px"><input name="basis" placeholder="Основание" style="width:160px">
           <select name="type"><option value=""></option>${O.out_types.map((t) => `<option>${t}</option>`).join("")}</select><input name="amount" type="number" step="0.01" placeholder="К оплате, ₽" required style="width:130px">
           <label class="small">По договору <input name="contract" type="date"></label><label class="small">План оплаты <input name="plan" type="date"></label>
           <select name="approval"><option value="Согласовано">Согласовано</option><option value="Не согласовано">Не согласовано</option></select>
           <select name="priority"><option value="Обязательный">Обязательный</option><option value="Отложить">Отложить</option></select><button class="btn primary">Добавить</button></form></details>
-        ${d.pay.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit">${payHead}<tbody>${d.pay.map(payRow).join("")}</tbody></table></div>` : `<div class="muted">Согласованных платежей с датой нет</div>`}
-        <div style="margin-top:12px"><b>Всего согласовано к оплате:</b> ${m2(d.pay_total)}</div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Несогласованные и без даты</h2><span class="muted small">в календарь не входят · чтобы включить, поставьте «Согласовано» и дату</span></div>
+        ${d.pay.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit">${payHead}<tbody>${d.pay.map(payRow).join("")}</tbody></table></div>` : `<div class="muted">Плановых заявок с датой нет</div>`}
+        <div style="margin-top:12px"><b>Всего запланировано к оплате:</b> ${m2(d.pay_total)}</div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Без даты и дополнительные строки</h2><span class="muted small">в календарь не входят</span></div>
         <div class="panel-b">${d.pay_other.length ? `<div class="dt-wrap" style="max-height:420px"><table class="dt sp-edit">${payHead}<tbody>${d.pay_other.map(payRow).join("")}</tbody></table></div>` : `<div class="muted">Таких платежей нет</div>`}
         <div style="margin-top:12px"><b>Всего:</b> ${m2(d.pay_other_total)}</div></div></section>
       ${d.foreign.length ? `<section class="panel"><div class="panel-h"><h2>Другие валюты</h2><span class="muted small">без пересчёта в рубли, в календарь не входят</span></div><div class="panel-b"><table class="mt"><thead><tr><th>Валюта</th><th class="n">Остаток</th><th class="n">К получению</th><th class="n">К оплате</th></tr></thead><tbody>
         ${d.foreign.map((f) => `<tr><th>${esc(f.currency)}</th><td class="n">${nf(f.cash, 2)}</td><td class="n">${nf(f.in, 2)}</td><td class="n">${nf(f.out, 2)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
-      <div class="muted small" style="margin:4px 0 16px">Остаток — движения по счетам и кассам 1С; поступления — неоплаченные этапы графика оплаты и авансы клиентов; выплаты — заявки на расходование денежных средств (согласованные и «к оплате») и план оплаты поставщикам (без заявки — «не согласовано»). Платёжные документы в 1С на заявки не ссылаются, поэтому в выплаты берутся заявки с датой платежа не раньше даты среза.</div>`;
+      <div class="muted small" style="margin:4px 0 16px">Поступления периода — безналичные платежи ООО «ТрансТехКом» с операцией «Поступление оплаты от клиента», проведённые банком, по дате «Проведено банком». Поступления в календаре — ожидаемые платежи по графикам заказов клиентов. Выплаты периода — полностью оплаченные или закрытые заявки на расходование ДС; плановые выплаты — заявки в статусах «Согласована», «Не согласована» и «К оплате».</div>`;
     document.querySelectorAll("#main .dt-wrap").forEach((w, i) => { if (scroll[i]) { w.scrollTop = scroll[i][0]; w.scrollLeft = scroll[i][1]; } });
     document.querySelectorAll("#main details[data-keep]").forEach((x, i) => { x.open = !!open[i]; });
     const post = async (body) => { try { await api("/api/money", body); loadMoney(); } catch (e) { if (e.message !== "auth") { toast(e.message); loadMoney(); } } };
-    const settings = () => post({ action: "settings", asof: document.getElementById("mAsof").value, adjust: document.getElementById("mAdjust").value });
-    document.getElementById("mAsof").addEventListener("change", settings);
+    const settings = () => post({ action: "settings", adjust: document.getElementById("mAdjust").value });
+    bindPeriod("m", () => state.mPer, (v) => { state.mPer = v; }, loadMoney);
     document.getElementById("mAdjust").addEventListener("change", settings);
-    document.getElementById("mAsofToday").addEventListener("click", () => post({ action: "settings", asof: "", adjust: document.getElementById("mAdjust").value }));
     document.getElementById("mRefresh").addEventListener("click", () => post({ action: "refresh" }));
     for (const [id, kind] of [["mAddIn", "in"], ["mAddOut", "out"]]) {
       document.getElementById(id).addEventListener("submit", (ev) => { ev.preventDefault(); post({ action: "item", kind, ...Object.fromEntries(new FormData(ev.target)) }); });
@@ -2089,7 +2577,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
             ${P.groups.map((g) => `<tr class="sp-grp${s.drill === g.group ? " on" : ""}" data-spdrill="${esc(g.group)}"><th><a href="#" onclick="return false">${esc(g.group)}</a></th><td class="n">${nf(g.total)}</td><td class="n${g.late ? " late" : ""}">${nf(g.late)}</td></tr>`).join("")}
           </tbody></table>
           ${s.drill ? `<div class="sp-drill"><b>${esc(s.drill)}</b>${(P.drill[s.drill] || []).length ? `<table class="mt"><thead><tr><th>Объект</th><th>Клиент</th><th>Сотрудник</th><th>Этап</th><th>Что ещё нужно</th><th>Срок этапа</th></tr></thead><tbody>
-            ${P.drill[s.drill].map((o) => `<tr><td>${esc(o.id)}</td><td style="white-space:normal">${esc(o.client || "—")}</td><td>${esc(o.emp || "—")}</td><td>${esc(o.stage)}</td><td style="white-space:normal">${esc(o.need || "—")}</td><td style="${o.late ? "color:var(--bad);font-weight:600" : ""}">${o.due ? ruMoment(o.due) : "нет срока"}</td></tr>`).join("")}</tbody></table>` : `<div class="muted small">Объектов в группе нет</div>`}</div>` : ""}</div></section>
+            ${P.drill[s.drill].map((o) => `<tr><td>${crmLink(o.id, o.url)}</td><td style="white-space:normal">${crmLink(o.client || "—", o.client_url)}</td><td>${esc(o.emp || "—")}</td><td>${esc(o.stage)}</td><td style="white-space:normal">${esc(o.need || "—")}</td><td style="${o.late ? "color:var(--bad);font-weight:600" : ""}">${o.due ? ruMoment(o.due) : "нет срока"}</td></tr>`).join("")}</tbody></table>` : `<div class="muted small">Объектов в группе нет</div>`}</div>` : ""}</div></section>
         <section class="panel"><div class="panel-h"><h2>Что нужно для расчёта</h2></div>
           <div class="panel-b"><table class="mt"><tbody>${P.need.map((n) => `<tr><th>${esc(n.title)}</th><td class="n"><b>${nf(n.count)}</b></td></tr>`).join("")}</tbody></table>
           <div class="muted small" style="margin-top:10px">Количество объектов на расчёте, где эта часть ещё не готова. Это оставшаяся работа, а не оценка сотрудника.</div></div></section>
@@ -2123,7 +2611,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         ${objs.length ? `<div class="dt-wrap" style="max-height:560px"><table class="dt sp-edit" data-path="/api/sales-object"><thead><tr><th>ID</th><th>Источник</th><th>Статус источника</th><th class="n">Сумма, ₽</th><th>Тип</th><th>Клиент / объект</th><th>Сотрудник</th><th>Канал</th><th>Этап</th><th>Вход на этап</th><th>Срок результата этапа</th>
           ${d.flags.map(([, t]) => `<th>${esc(t)}</th>`).join("")}<th>Результат готов</th><th>Подтверждение результата</th><th>Передача принята</th><th>Документы приняты</th><th>Связанный заказ 1С</th><th class="n">Долг, ₽ с НДС</th><th>Срок оплаты</th><th>Ссылка Битрикс</th>
           <th>Ожидаемый результат</th><th>Что ещё нужно</th><th>Просрочен этап</th><th>Без открытого действия</th><th class="n">Просроченный долг, ₽</th><th>Группа этапов</th><th></th></tr></thead><tbody>
-          ${objs.slice(pg.from, pg.to).map((o) => `<tr data-id="${esc(o.id)}"><th>${esc(o.id)}</th><td>${SRC[o.source] || "Вручную"}</td><td>${esc(o.status_1c || "—")}</td><td class="n">${o.amount ? nf(o.amount) : "—"}</td><td class="in">${spSel("type", o.type, O.types, false)}</td><td class="in">${spIn("client", o.client, "text", 200)}</td>
+          ${objs.slice(pg.from, pg.to).map((o) => `<tr data-id="${esc(o.id)}"><th>${crmLink(o.id, o.url)}</th><td>${SRC[o.source] || "Вручную"}</td><td>${esc(o.status_1c || "—")}</td><td class="n">${o.amount ? nf(o.amount) : "—"}</td><td class="in">${spSel("type", o.type, O.types, false)}</td><td class="in">${spIn("client", o.client, "text", 200)}${o.client_url ? `<div class="small">${crmLink(o.client || "Клиент",o.client_url)}</div>` : ""}</td>
             <td class="in">${spSel("emp", o.emp, team)}</td><td class="in">${spSel("channel", o.channel, O.channels)}</td><td class="in">${spSel("stage", o.stage, O.stages, !!o.source)}</td>
             <td class="in">${spIn("entered", o.entered, "datetime-local")}</td><td class="in">${spIn("due", o.due, "datetime-local")}</td>
             ${d.flags.map(([f]) => `<td class="in">${spSel(f, o[f], O.flags)}</td>`).join("")}
@@ -2290,8 +2778,9 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   const ruDay = (v) => v.split("-").reverse().join(".");
   // ---------- выбор периода (воронки, звонки): всё время, день, месяц, год, с … по …
   const PERIOD_MODES = [["all", "Всё время"], ["day", "День"], ["month", "Месяц"], ["year", "Год"], ["range", "С … по …"]];
-  function periodHtml(per, pfx) {  // поля выбора периода; id — pfx + Mode/Day/Month/Year/From/To
-    return `<label for="${pfx}Mode">Период<select id="${pfx}Mode">${PERIOD_MODES.map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+  function periodHtml(per, pfx, allowAll = true) {  // поля выбора периода; id — pfx + Mode/Day/Month/Year/From/To
+    const modes = allowAll ? PERIOD_MODES : PERIOD_MODES.filter(([v]) => v !== "all");
+    return `<label for="${pfx}Mode">Период<select id="${pfx}Mode">${modes.map(([v, t]) => `<option value="${v}" ${per.mode === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
           ${per.mode === "day" ? `<input type="date" id="${pfx}Day" aria-label="День" value="${esc(per.day || "")}">` : ""}
           ${per.mode === "month" ? `<input type="month" id="${pfx}Month" aria-label="Месяц" value="${esc(per.month || "")}">` : ""}
           ${per.mode === "year" ? `<input type="number" id="${pfx}Year" aria-label="Год" min="2000" max="2100" step="1" style="width:90px" value="${esc(String(per.year || ""))}">` : ""}
@@ -2344,11 +2833,13 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
 
     // --- фильтры: период, ответственные (несколько), воронка сделок
     const fact = state.fMode === "fact" && !PREVIEW;  // «Факт»: движение по истории стадий, а не срез открытых записей
+    if (fact && (!state.fPer || state.fPer.mode === "all")) state.fPer = {mode: "month", month: state.boot.current_month};
     const per = state.fPer || { mode: "all" }, [dFrom, dTo] = funnelPeriod(), byStage = state.fDateField === "stage" && !fact;
-    const perHtml = PREVIEW ? "" : `${periodHtml(per, "f")}
+    const perHtml = PREVIEW ? "" : `${periodHtml(per, "f", !fact)}
           ${per.mode !== "all" && !fact ? `<label for="fField">по дате<select id="fField"><option value="created" ${byStage ? "" : "selected"}>создания</option><option value="stage" ${byStage ? "selected" : ""}>перехода на стадию</option></select></label>` : ""}`;
     const perRange = dFrom && dFrom === dTo ? ruDay(dFrom) : `${dFrom ? "с " + ruDay(dFrom) : ""}${dTo ? " по " + ruDay(dTo) : ""}`.trim();
-    const perTxt = fact ? ` Что произошло ${dFrom || dTo ? perRange : "за всё время, по которому есть история стадий"}: создано, перешло на стадии этапов, закрыто — по истории стадий Битрикс24, в том числе по уже закрытым записям. Одна запись может попасть в несколько этапов.`
+    const historyFrom = [d.leads.history_from, d.deals.history_from].filter(Boolean).sort()[0];
+    const perTxt = fact ? ` Что произошло ${perRange}: переходы по стадиям и закрытие — только по датам истории стадий Битрикс24, в том числе по уже закрытым записям. Дата создания лида или сделки не используется. Одна запись может попасть в несколько этапов.${historyFrom ? " История накоплена с " + ruDay(historyFrom.slice(0, 10)) + "." : ""}`
       : !(dFrom || dTo) ? "" : ` Показаны открытые сейчас записи с датой ${byStage ? "перехода на текущую стадию" : "создания"} ${perRange}.`;
     const resp = new Map();  // ответственные из обеих воронок в одном списке
     FUNNELS.forEach((x) => d[x.kind].filters.responsibles.forEach((r) => {
@@ -2436,7 +2927,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <table class="pr pr-params"><tbody>
           <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
           <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
-          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; ${fact ? "факт: создание, переходы по стадиям и закрытие за период" : "учитываются открытые сейчас лиды и сделки"}</td></tr>
+          <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${fact ? `факт: переходы по истории стадий ${esc(perRange)}` : `${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки`}</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
       ${(() => {
@@ -2475,7 +2966,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
             <div><div class="eyebrow" style="margin-bottom:8px">По ответственным</div>${hbars(cur.by_responsible, amt ? "amount" : "count", (x) => `<button type="button" class="linkish" data-resp="${esc(x.value)}" title="Показать воронки только этого сотрудника">${esc(x.name)}</button>`, amt)}</div>
           </div>
           <div class="dt-wrap" style="max-height:420px"><table class="dt"><thead><tr><th>${K.one}</th><th>Клиент</th><th>Ответственный</th>${manyCats ? "<th>Воронка</th>" : ""}<th>${fact ? "Стадия перехода" : K.stage}</th>${amt ? "<th>Сумма, ₽</th>" : ""}<th>${fact ? "Дней с перехода" : "Дней на стадии"}</th></tr></thead><tbody>
-            ${cur.deals.slice(0, 150).map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(r.client)}</td><td>${esc(r.responsible)}</td>${manyCats ? `<td>${esc(r.category)}</td>` : ""}<td>${esc(r.stage)}</td>
+            ${cur.deals.slice(0, 150).map((r) => `<tr><td>${crmLink(r.title, r.url)}</td><td>${crmLink(r.client, r.client_url)}</td><td>${crmLink(r.responsible, r.responsible_url)}</td>${manyCats ? `<td>${esc(r.category)}</td>` : ""}<td>${esc(r.stage)}</td>
               ${amt ? `<td class="n">${nf(r.amount)}</td>` : ""}<td class="n">${r.days ?? "—"}</td></tr>`).join("")}</tbody></table></div>
           ${cur.deals.length > 150 ? `<div class="muted small">Показаны первые 150 из ${cur.deals.length}.</div>` : ""}` : `<div class="muted">${fact ? "За период на этом этапе ничего не было." : "На этом этапе сейчас ничего нет."}</div>`}
         </div></section>
@@ -2528,6 +3019,8 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     const pr = document.getElementById("fCalPrint"); if (pr) pr.innerHTML = calPrintHtml();
   }
   const calWhen = (x) => x.all_day ? "весь день" : x.from && x.to ? `${x.from}–${x.to}` : x.from ? `с ${x.from}` : `до ${x.to}`;
+  const calType = (x) => x.kind === "activity" ? `Дело CRM · ${x.card} · ${x.done ? "выполнено" : "запланировано"}`
+    : x.kind === "task" ? `Задача · ${x.role} · ${x.done ? "завершена" : x.status}` : `Событие${x.location ? " · " + x.location : ""}`;
   function calPrintHtml() {  // расписание в печатной версии: все записи, без сворачивания
     const c = state.fCal;
     if (PREVIEW || !(state.fLogins || []).length || !c) return "";
@@ -2538,7 +3031,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       const name = (state.fRespNames && state.fRespNames.get(p.key)) || p.key;
       if (p.error) return `<div class="pr-person"><h3>${esc(name)}</h3><p class="sm">${esc(p.error)}</p></div>`;
       return `<div class="pr-person"><h3>${esc(name)}</h3>${p.items.length ? `<table class="pr pr-cal"><thead><tr><th>Время</th><th>Что</th><th>Тип</th></tr></thead><tbody>
-        ${p.items.map((x) => `<tr><td>${esc(calWhen(x))}</td><td>${esc(x.title)}</td><td>${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</td></tr>`).join("")}
+        ${p.items.map((x) => `<tr><td>${esc(calWhen(x))}</td><td>${crmLink(x.title, x.url)}</td><td>${esc(calType(x))}</td></tr>`).join("")}
         </tbody></table>` : `<p class="sm">В этот день ничего не запланировано.</p>`}</div>`;
     }).join("")}</div></section>`;
   }
@@ -2556,15 +3049,17 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
       if (p.error) return `<div class="cal-person"><h3>${esc(name)}</h3><div class="small" style="color:var(--bad)">${esc(p.error)}</div></div>`;
       const li = (x) => `<li class="cal-item ${x.kind}${x.done ? " done" : ""}">
           <span class="cal-t">${esc(calWhen(x))}</span><i class="cal-m" aria-hidden="true"></i>
-          <span class="cal-b"><span class="cal-n">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</span>
-          <span class="cal-s">${x.kind === "task" ? `Задача · ${esc(x.role)} · ${esc(x.done ? "завершена" : x.status)}` : `Событие${x.location ? " · " + esc(x.location) : ""}`}</span></span></li>`;
+          <span class="cal-b"><span class="cal-n">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>` : esc(x.title)}</span>
+          <span class="cal-s">${esc(calType(x))}</span></span></li>`;
       // задачи «на весь день» (в работе до срока) Б24 показывает каждый день — их сворачиваем, если их много
       const longTasks = p.items.filter((x) => x.kind === "task" && x.all_day);
       const fold = longTasks.length > 3;
       const main = fold ? p.items.filter((x) => !longTasks.includes(x)) : p.items;
       return `<div class="cal-person"><h3>${esc(name)}</h3>
-        ${p.calendar_error ? `<div class="muted small">${p.calendar_error === "scope" ? "Нет доступа к событиям календаря: добавьте вебхуку право «Календарь». Показаны только задачи." : "События календаря не загрузились: " + esc(p.calendar_error)}</div>` : ""}
-        ${main.length ? `<ul class="cal-list">${main.map(li).join("")}</ul>` : p.items.length ? `<div class="muted small">Событий и задач со сроком в этот день нет.</div>` : `<div class="muted small">В этот день ничего не запланировано.</div>`}
+        ${p.calendar_error ? `<div class="muted small">${p.calendar_error === "scope" ? "Нет доступа к событиям календаря: вебхуку нужно право «Календарь». Другие доступные источники показаны ниже." : "События календаря не загрузились: " + esc(p.calendar_error)}</div>` : ""}
+        ${p.tasks_error ? `<div class="muted small">Задачи не загрузились: ${esc(p.tasks_error === "scope" ? "нет доступа" : p.tasks_error)}</div>` : ""}
+        ${p.activities_error ? `<div class="muted small">Дела CRM не загрузились: ${esc(p.activities_error === "scope" ? "нет доступа к CRM" : p.activities_error)}</div>` : ""}
+        ${main.length ? `<ul class="cal-list">${main.map(li).join("")}</ul>` : p.items.length ? `<div class="muted small">Других событий и дел со сроком в этот день нет.</div>` : `<div class="muted small">В этот день ничего не запланировано.</div>`}
         ${fold ? `<details class="cal-more"><summary>Ещё задачи в работе на весь день: ${longTasks.length}</summary><ul class="cal-list">${longTasks.map(li).join("")}</ul></details>` : ""}</div>`;
     }).join("")}</div>`;
     return `<section class="panel cal">${head}<div class="panel-b">${body}</div></section>`;
@@ -2579,11 +3074,12 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     dr.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Методика расчёта KPI">
       <div class="head"><div><div class="eyebrow">Методика</div><h1>Правила расчёта KPI</h1></div><button class="btn" type="button" data-close>Закрыть</button></div>
       <p class="desc" style="margin:0">Правила взяты из регламентов KPI. Пункт с несколькими нормативами считается выполненным, когда выполнены все нормативы; процент выполнения пункта — по самому слабому из них.
-      ${b.payout_mode === "binary" ? "Пункт оплачивается полностью при выполнении 100% норматива." : "Пункт оплачивается пропорционально выполнению."}</p>
+      ${b.payout_mode === "binary" ? "Пункт оплачивается полностью при выполнении 100% норматива." : "Выплата = стоимость пункта × целый процент выполнения из карточки / 100, максимум 100% стоимости. Нижнего порога нет: 29% от 2 000 ₽ = 580 ₽; 114% = 2 000 ₽. Обнуления за штрафы и ожидание обязательных данных сохраняются."}</p>
       ${own.map((k) => { const p = b.positions[k]; return `<section style="display:flex;flex-direction:column;gap:10px"><div><div class="eyebrow">${esc(p.department)} · ${esc(p.doc || "")}</div><h2>${esc(p.title)}</h2>
-        <div class="small muted">Оклад ${rub(p.salary)} + KPI ${rub(p.kpi_bonus)}</div></div>
+        <div class="small muted">${p.draft ? "Черновик · начисление отключено · оклад и премия не заданы" : `Оклад ${rub(p.salary)} + KPI ${rub(p.kpi_bonus)}`}</div></div>
+        ${p.draft ? `<div class="panel panel-b"><ul>${p.setup_issues.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></div>` : ""}
         ${p.items.map((i) => `<div class="rule"><div class="w">${Math.round(i.weight * 100)}%</div><div><h3>KPI ${i.n}. ${esc(i.title)}</h3>
-          <div class="small muted">${esc(i.period)} · ${esc(i.target_text)} · ${nf(p.kpi_bonus * i.weight)} ₽</div><p>${esc(i.description)}</p></div></div>`).join("")}</section>`; }).join("")}
+          <div class="small muted">${esc(i.period)} · ${esc(i.target_text)} · ${p.draft ? "Не рассчитывается" : `${nf(p.kpi_bonus * i.weight)} ₽`}</div><p>${esc(i.description)}</p></div></div>`).join("")}</section>`; }).join("")}
     </div>`;
     document.body.appendChild(dr);
     const close = () => dr.remove();
@@ -2647,7 +3143,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
         <span class="hint">Число или ссылка вида …/company/personal/user/56/</span></label>
       <label for="f_onec">ФИО в 1С<input id="f_onec" type="text" maxlength="150" value="${esc(e.onec_manager || "")}" placeholder="Фамилия Имя Отчество">
         <span class="hint">Как сотрудник записан менеджером или ответственным в 1С</span></label>
-      <label for="f_pos">KPI<select id="f_pos"><option value="">— без KPI —</option>${d.positions.map((p) => `<option value="${esc(p.key)}" ${p.key === e.position ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select>
+      <label for="f_pos">KPI<select id="f_pos"><option value="">— без KPI —</option>${d.positions.map((p) => `<option value="${esc(p.key)}" ${p.key === e.position ? "selected" : ""}>${esc(p.title)}${p.draft ? " (черновик)" : ""}</option>`).join("")}</select>
         <span class="hint">Регламент, по которому считается KPI. Можно оставить без KPI</span></label>
       <fieldset><legend>Видимость</legend><div class="opts">
         <label for="f_vis1"><input id="f_vis1" type="radio" name="vis" value="1" ${e.visible !== false ? "checked" : ""}>Открытый</label>
@@ -2739,7 +3235,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
     if (state.boot.me.role !== "manager") {
-      const view = isFunnelHash(h) ? "funnel" : h === "workload" ? "workload" : "emp";
+      const view = isFunnelHash(h) ? "funnel" : h === "calls" && !PREVIEW ? "calls" : "emp";
       const fm = h === "funnel-fact" ? "fact" : "date";
       if (view !== state.view || (view === "funnel" && state.fMode !== fm)) { state.view = view; if (view === "funnel") state.fMode = fm; renderShell(); load(); }
       return;
@@ -2748,6 +3244,7 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (isFunnelHash(h) && (state.view !== "funnel" || state.fMode !== (h === "funnel-fact" ? "fact" : "date"))) { state.view = "funnel"; state.fMode = h === "funnel-fact" ? "fact" : "date"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
+    else if (h === "calls" && !PREVIEW && state.view !== "calls") { state.view = "calls"; renderShell(); load(); }
     else if (h === "workload" && state.view !== "workload") { state.view = "workload"; renderShell(); load(); }
     else if (h === "money" && state.view !== "money") { state.view = "money"; renderShell(); load(); }
     else if (h.split("?")[0] === "suppliers" && (state.view !== "suppliers" || (state.sup && state.sup.hq !== h))) { state.view = "suppliers"; supFromHash(h); renderShell(); load(); }
@@ -2756,3 +3253,4 @@ body::after { content: ""; position: fixed; right: -90px; bottom: -60px; width: 
   start();
 })();
 </script>
+<script src="/assets/brand-field.js?v=4" defer></script>

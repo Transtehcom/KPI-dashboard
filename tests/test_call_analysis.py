@@ -1,6 +1,7 @@
 """Тесты обезличивания и разбора звонков. Запуск из папки kpi-dashboard: python -m unittest discover tests"""
 import json
 import os
+import pathlib
 import sys
 import unittest
 from types import SimpleNamespace
@@ -53,7 +54,7 @@ ANSWER = {"turns": [{"from": 1, "to": 1, "who": "М"}, {"from": 2, "to": 2, "who
           "offer": {"made": True, "what": "защитные сооружения", "kp_promised": True, "price_named": False, "sentences": [3]},
           "agreement": {"reached": True, "what": "КП до пятницы", "when": "пятница", "sentences": [3]},
           "prices": [], "deadlines": [], "objections": [], "tone": {"client": "нейтральный", "manager": "позитивный"},
-          "next_step": "выслать КП"}
+          "secretary": False, "next_step": "выслать КП"}
 
 
 class AnalyzeTest(unittest.TestCase):
@@ -61,11 +62,11 @@ class AnalyzeTest(unittest.TestCase):
         sent = {}
 
         def fake_run(cmd, input, **kw):
-            sent.update(cmd=cmd, input=input)
-            env = {"type": "result", "is_error": False, "result": "```json\n" + json.dumps(answer, ensure_ascii=False) + "\n```",
-                   "total_cost_usd": 0.01, "usage": {"input_tokens": 5, "cache_creation_input_tokens": 900,
-                                                     "output_tokens": 120}, "modelUsage": {"claude-sonnet-5-5": {}}}
-            return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
+            schema_path = pathlib.Path(cmd[cmd.index("--output-schema") + 1])
+            answer_path = pathlib.Path(cmd[cmd.index("--output-last-message") + 1])
+            sent.update(cmd=cmd, input=input, kwargs=kw, schema=json.loads(schema_path.read_text(encoding="utf-8")))
+            answer_path.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
         segs = [[0.5, 3.0, "Добрый день, Транстехком, Мария Мельникова."], [3.5, 6.0, "Слушаю вас. Вышлите КП до пятницы."]]
         with mock.patch.object(call_analysis.subprocess, "run", fake_run):
             res = call_analysis.analyze(segs, {"direction": "out", "duration": 65}, {})
@@ -76,22 +77,35 @@ class AnalyzeTest(unittest.TestCase):
         self.assertNotIn("Мельникова", sent["input"])
         self.assertIn("1 [0:00] Добрый день, Транстехком, [ИМЯ_1].", sent["input"])
         self.assertIn("3 [0:03] Вышлите КП до пятницы.", sent["input"])
+        self.assertIn("недоверенные данные", sent["input"])
+        self.assertIn("подождите 20 секунд", sent["input"])
+        self.assertIn("Не додумывай", sent["input"])
         self.assertEqual(res["summary"], "Мария Мельникова договорилась выслать КП")
         self.assertEqual([l[1] for l in res["lines"]], ["М", "К", "М"])
-        self.assertEqual((call["tokens_in"], call["tokens_out"]), (905, 120))
-        for flag in ("--tools", "--strict-mcp-config", "--no-session-persistence", "--system-prompt"):
+        self.assertEqual((call["model"], call["attempts"], call["tokens_in"], call["tokens_out"], call["cost_usd"]),
+                         (call_analysis.MODEL, 1, None, None, None))
+        self.assertEqual((call_analysis.MODEL, call_analysis.EFFORT), ("gpt-5.6-terra", "high"))
+        for flag in ("--output-schema", "--output-last-message", "--ephemeral", "--ignore-rules",
+                     "--skip-git-repo-check"):
             self.assertIn(flag, sent["cmd"])
-        self.assertEqual(sent["cmd"][sent["cmd"].index("--tools") + 1], "")  # без инструментов
+        self.assertIn("--ignore-user-config", sent["cmd"])
+        self.assertEqual(sent["cmd"][1], "exec")
+        self.assertEqual(sent["cmd"][sent["cmd"].index("--sandbox") + 1], "read-only")
+        self.assertEqual(sent["cmd"][sent["cmd"].index("--disable") + 1], "shell_tool")
+        self.assertEqual(sent["cmd"][-1], "-")
+        self.assertTrue(sent["kwargs"]["env"]["CODEX_HOME"].endswith(".codex"))
+        self.assertFalse(sent["schema"]["additionalProperties"])
+        self.assertIn("secretary", sent["schema"]["required"])
 
     def test_broken_json_is_retried(self):
         answers = iter(['{"turns": [] "call_type": }', json.dumps(ANSWER, ensure_ascii=False)])
 
         def fake_run(cmd, input, **kw):
-            env = {"is_error": False, "result": next(answers), "total_cost_usd": 0.01, "usage": {"output_tokens": 10}}
-            return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
+            pathlib.Path(cmd[cmd.index("--output-last-message") + 1]).write_text(next(answers), encoding="utf-8")
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
         with mock.patch.object(call_analysis.subprocess, "run", fake_run):
-            call = call_analysis.run_claude("текст", {})
-        self.assertEqual((call["attempts"], call["result"]["call_type"], call["tokens_out"]), (2, "продажа", 20))
+            call = call_analysis.run_codex("текст", {})
+        self.assertEqual((call["attempts"], call["result"]["call_type"], call["tokens_out"]), (2, "продажа", None))
 
     def test_partial_turns_leave_gaps(self):
         (res, *_), _ = self.run_with({**ANSWER, "turns": [{"from": 1, "to": 2, "who": "K"}]})  # латиница, без 3-го
@@ -127,9 +141,11 @@ class QueueTest(unittest.TestCase):
     def fake_run(self, answer=None, error=None):
         def run(cmd, input, **kw):
             self.sent.append(input)
-            env = {"is_error": bool(error), "result": error or json.dumps(answer or ANSWER, ensure_ascii=False),
-                   "usage": {"output_tokens": 50}}
-            return SimpleNamespace(stdout=json.dumps(env, ensure_ascii=False), stderr="", returncode=0)
+            if error:
+                return SimpleNamespace(stdout="", stderr=error, returncode=1)
+            pathlib.Path(cmd[cmd.index("--output-last-message") + 1]).write_text(
+                json.dumps(answer or ANSWER, ensure_ascii=False), encoding="utf-8")
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
         return mock.patch.object(call_analysis.subprocess, "run", run)
 
     def analyze_current(self):
@@ -151,9 +167,12 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)  # call2 — слишком короткий, call3 — старая модель
         self.assertNotIn("Мельникова", self.sent[0])
         self.assertNotIn("Нытвинский", self.sent[0])
-        stored = self.con.execute("SELECT result, roles, offer, agreement FROM call_analysis WHERE id='call1'").fetchone()
+        stored = self.con.execute("SELECT result, roles, offer, agreement, model, tokens_in, tokens_out, cost_usd, attempts "
+                                  "FROM call_analysis WHERE id='call1'").fetchone()
         self.assertNotIn("Мельникова", stored["result"])  # в базе — с метками
         self.assertEqual((stored["roles"], stored["offer"], stored["agreement"]), ("МКМК", 1, 1))
+        self.assertEqual((stored["model"], stored["tokens_in"], stored["tokens_out"], stored["cost_usd"], stored["attempts"]),
+                         (call_analysis.MODEL, None, None, None, 1))
         self.assertEqual(call_analysis.get(self.con, "call1")["summary"], "Мария Мельникова договорилась выслать КП")
         self.assertEqual(call_analysis.get(self.con, "call2")["call_type"], "недозвон")
         with self.fake_run():
@@ -179,7 +198,7 @@ class QueueTest(unittest.TestCase):
                     break
                 time.sleep(0.05)
         self.assertEqual((call_analysis.JOB["running"], call_analysis.JOB["done"], call_analysis.JOB["failed"]), (False, 3, 0))
-        self.assertEqual(len(self.sent), 2)  # call2 — короткий, без Claude
+        self.assertEqual(len(self.sent), 2)  # call2 — короткий, без Codex
         self.assertEqual(call_analysis.todo(self.con, ["call1", "call2", "call3"]), {})
         ok, msg = call_analysis.start_job(self.con, ANYTIME, ["call1", "call2", "call3"])
         self.assertFalse(ok)  # всё уже обработано
@@ -193,11 +212,11 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(len(self.sent), 3)
 
     def test_usage_limit_stops_without_counting_attempt(self):
-        with self.fake_run(error="Claude AI usage limit reached|1761058800"):
+        with self.fake_run(error="Codex usage limit reached|1761058800"):
             self.assertEqual(self.analyze_current()[2], True)
         self.assertIsNone(self.con.execute("SELECT 1 FROM call_analysis WHERE id='call1'").fetchone())
 
-    def test_secretary_from_claude_and_manager_mark(self):
+    def test_secretary_from_codex_and_manager_mark(self):
         with self.fake_run({**ANSWER, "secretary": True}):
             self.analyze_current()
         self.assertEqual(call_analysis.secretary_marks(self.con, ["call1"]), {"call1": {"ai": 1, "manual": None}})

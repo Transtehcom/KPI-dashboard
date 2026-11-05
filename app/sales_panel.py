@@ -6,6 +6,7 @@
 """
 import datetime as dt
 import re
+from .crm_links import client_url, object_url
 
 # этап → (результат этапа, группа, где фиксировать) — справочник внизу листа «Реестр»
 STAGES = [
@@ -155,7 +156,7 @@ def _debt_1c(con, order):
     rows = con.execute("SELECT amount, due_date, paid_date FROM receivables WHERE doc = ?", (order.strip(),)).fetchall()
     if not rows:
         return 0.0, None
-    open_ = [r for r in rows if not r[2]]
+    open_ = [r for r in rows if not r[2] and (r[0] or 0) > 0]
     return sum(r[0] or 0 for r in open_), min((r[1] for r in open_ if r[1]), default=None)
 
 
@@ -175,9 +176,10 @@ def _autofill(con, o, handed, signed, portal):
     """Пустые поля из систем: ссылка на карточку Битрикса; для заказа 1С — приём снабжением (есть отработанная заявка снабжения)
     и подписанная реализация. Ручной ввод руководителя не перезаписывается; список заполненных полей — в o["auto"]."""
     o["auto"] = []
-    m = re.fullmatch(r"Б24-([СЛ])-(.+)", o["id"] or "")
+    m = re.fullmatch(r"Б24-([СЛ])-([0-9]+)", o["id"] or "")
     if m and portal and not o["url"]:
-        o["url"] = f"https://{portal}/crm/{'deal' if m.group(1) == 'С' else 'lead'}/details/{m.group(2)}/"
+        o["url"] = object_url({"webhook":portal if "://" in portal else "https://"+portal},
+                              "deal" if m.group(1)=="С" else "lead",m.group(2))
         o["auto"].append("url")
     order = (o["order_1c"] or "").strip()
     if order and order in handed and not o["handover"]:
@@ -196,11 +198,17 @@ def build(con, team, now=None, channel="Все", emp="Все", portal=None):
     now = now or dt.datetime.now()
     today = now.date()
     objs = {}
+    crm_objects = {r["id"]:dict(r) for r in con.execute("SELECT * FROM crm_deals")}
     handed = {(r[0] or "").strip(): r[1] for r in con.execute("SELECT customer_order, doc FROM supply_funnel WHERE stage='ordered' AND customer_order<>''")}
     signed = [r[0] or "" for r in con.execute("SELECT doc FROM sales WHERE signed=1")]
     for r in con.execute("SELECT * FROM sales_objects ORDER BY rowid"):
         o = dict(r)
         _autofill(con, o, handed, signed, portal)
+        match = re.fullmatch(r"Б24-([СЛ])-([0-9]+)",o["id"])
+        source = crm_objects.get(("deal" if match.group(1)=="С" else "lead")+match.group(2),{}) if match else {}
+        o["client_url"] = client_url({"webhook":portal if "://" in portal else "https://"+portal},source) if portal else None
+        if source and not source.get("client"):
+            o["client_url"] = o["url"]
         d1c = _debt_1c(con, o["order_1c"])
         o["debt_1c"] = d1c is not None
         if d1c:
@@ -267,7 +275,7 @@ def build(con, team, now=None, channel="Все", emp="Все", portal=None):
                  "late": (a["late_hours"] or 0) > 0} for a in ask[:4]],
         "control": {"no_link": sum(a["manager"] == "Нет связи" for a in acts),
                     "no_due": sum(a["selected"] and a["late_hours"] is None for a in acts)},
-        "drill": {g: [{"id": o["id"], "client": o["client"], "emp": team.get(o["emp"], o["emp"]), "stage": o["stage"],
+        "drill": {g: [{"id": o["id"], "url":o["url"], "client_url":o["client_url"], "client": o["client"], "emp": team.get(o["emp"], o["emp"]), "stage": o["stage"],
                        "need": o["need"], "due": o["due"], "late": o["late"]} for o in sel if o["group"] == g] for g in GROUPS}}
     return {"panel": panel, "objects": list(objs.values()), "actions": acts, "team": team,
             "options": {"types": TYPES, "channels": CHANNELS, "stages": [s[0] for s in STAGES], "flags": FLAG_OPTS,

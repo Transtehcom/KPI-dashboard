@@ -84,7 +84,7 @@ def upsert(con, rows):
     """Записать объекты в реестр, не трогая ручные поля. Возвращает (создано, обновлено).
     Строка с match — объект цепочки уже есть в реестре (id в match): ему лишь ставится этап, если он ещё пуст."""
     from .sales_panel import STAGE
-    unpaid = {r[0] for r in con.execute("SELECT DISTINCT doc FROM receivables WHERE paid_date IS NULL OR paid_date = ''")}
+    unpaid = {r[0] for r in con.execute("SELECT DISTINCT doc FROM receivables WHERE amount > 0 AND (paid_date IS NULL OR paid_date = '')")}
     now = dt.datetime.now().isoformat(timespec="seconds")
     seen, sources, created, updated = set(), {r["source"] for r in rows}, 0, 0
     for r in rows:

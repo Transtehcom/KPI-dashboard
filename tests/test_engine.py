@@ -8,10 +8,11 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import demo, manual, sync  # noqa: E402
-from app.common import (connect, load_json, load_rules, month_add, month_bounds, replace_rows,  # noqa: E402
+from app.common import (connect, load_json, load_rules, merge_rows, month_add, month_bounds, replace_rows,  # noqa: E402
                         weeks_of_month, working_days)
 from app.engine import Engine  # noqa: E402
 from app.funnel import deal_funnel  # noqa: E402
+from app.onec_receivables import control_rows  # noqa: E402
 
 TODAY = dt.date(2026, 10, 20)
 EXAMPLE_RULES_DEP = load_rules()["departments"]["ОП"]  # «Отдел продаж (ОП)»
@@ -65,6 +66,12 @@ class EngineTest(unittest.TestCase):
     def params(self, position, code):
         return next(i["params"] for i in self.rules["positions"][position]["items"] if i["code"] == code)
 
+    def conversion_orders(self, emp, count, month, role="sales"):
+        self.con.executemany("INSERT OR REPLACE INTO dataset_state VALUES (?,'2026-01-01','2026-12-31','test')",
+                             [(name,) for name in ("conversion_orders", "kp", "tenders_1c", "supply_funnel")])
+        insert(self.con, "conversion_orders", [{"id": f"order{emp}{i}", "order_key": f"o{emp}{i}", "emp": emp,
+            "dt": month + "-10", "doc": f"ЗК-{i}", "status": "ТТК_ВЗакуп", "role": role} for i in range(count)])
+
     def calc(self, login, code, month, **params):
         e = self.engine.employee(login)
         return getattr(self.engine, "calc_" + code)(e, self.engine._ctx(month), {**self.params(e["position"], code), **params})
@@ -86,6 +93,41 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(working_days(first, last, ["2026-11-04"], ["2026-11-07"]), 21)
 
     # ---------------------------------------------------------------- звонки
+    def test_crm_todo_fetch_flows_into_tender_kpi2_and_sales_kpi4(self):
+        from app.bitrix24 import Bitrix24
+        from tests.test_crm_activities import activity, call as crm_call
+        for login, code, number in (("tender", "base_development", 2), ("pm", "operational_activity", 4)):
+            for dated in (False, True):
+                with self.subTest(login=login, dated=dated):
+                    b24 = Bitrix24({"webhook": "https://crm.example.test/rest/1/test/",
+                                    "fields": {"lead_lpr": "LPR"}}, log=lambda *a: None)
+                    def rest_list(method, params, key=None):
+                        if method == "crm.activity.list" and ">=CREATED" in params["filter"]:
+                            self.assertIn("DEADLINE", params["select"])
+                            self.assertNotIn("RESPONSIBLE_ID", params["filter"])
+                            return [activity(DEADLINE="2026-11-11T16:00:00+05:00" if dated else None)]
+                        if method == "voximplant.statistic.get":
+                            return [crm_call(CALL_TYPE="1", CALL_DURATION="180")]
+                        if method == "crm.lead.list" and "ID" in params["filter"]:
+                            return [{"ID": "2414", "TITLE": "Клиент", "LPR": "Да"}]
+                        return []
+                    b24.list_all = rest_list
+                    b24.batch = mock.Mock(return_value=({"binding201": [{"entityTypeId": 1, "entityId": 2414}]}, {}))
+                    b24.resolve_field = mock.Mock(return_value=None)
+                    b24._meeting_calendar_files = mock.Mock(return_value={})
+                    b24._legacy_tenders = mock.Mock(return_value=[])
+                    b24._enum_yes = mock.Mock(return_value={})
+                    b24.lead_statuses = mock.Mock(return_value={})
+                    rows = b24.fetch({56: login}, dt.date(2026, 11, 1))["activities"]
+                    self.assertEqual(rows[0]["crm_activity_id"], "100")  # Also retained without a recording.
+                    self.assertEqual(rows[0]["next_step"], 1)
+                    self.con.execute("DELETE FROM activities")
+                    insert(self.con, "activities", rows)
+                    funnel = self.engine.call_funnel(login, dt.date(2026, 11, 1), dt.date(2026, 11, 30))
+                    self.assertEqual(funnel["result"], 1)
+                    self.assertTrue(funnel["kpi"].startswith(f"KPI {number}."))
+                    self.assertEqual(self.calc(login, code, "2026-11")["components"][0]["fact"], 1)
+
     def test_pm_calls_do_not_require_lpr_but_tender_calls_do(self):
         insert(self.con, "activities", [call(1, "pm", "2026-09-10", lpr=0), call(2, "pm", "2026-09-11", lpr=1),
                                         call(3, "pm", "2026-09-11", secretary=1),
@@ -111,7 +153,7 @@ class EngineTest(unittest.TestCase):
                                      for i in range(9)])
         r = self.calc("lead", "base_development", "2026-10")
         self.assertEqual([(c["name"], c["fact"], c["target"]) for c in r["components"]],
-                         [("Активные клиенты с потребностью и стратегией", 7, 7)])
+                         [("Клиенты, ставшие активными в месяце", 7, 7)])
         self.assertEqual(len(r["details"]["rows"]), 7)
         self.assertIsNone(r["funnel"])
 
@@ -152,12 +194,8 @@ class EngineTest(unittest.TestCase):
             rec_sep = next(i for i in sep if i["code"] == code)
             rec_oct = next(i for i in octo if i["code"] == "receivables_overdue")  # с октября — шкала по просрочке
             self.assertEqual((rec_sep["n"], rec_sep["weight"], rec_sep["amount"]), (6, 0.10, 1000))
-            if login == "pm":
-                self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
-            else:  # тендерный отдел: 10% — шкала по просрочке, ещё 10% — «Обеспечение и штрафы» (возвращено 26.10.2026)
-                self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.10, 1000))
-                pen = next(i for i in octo if i["code"] == "tender_receivables")
-                self.assertEqual((pen["n"], pen["weight"], pen["amount"], pen["title"]), (6, 0.10, 1000, "Обеспечение и штрафы"))
+            self.assertEqual((rec_oct["n"], rec_oct["weight"], rec_oct["amount"]), (5, 0.20, 2000))
+            self.assertNotIn("tender_receivables",[i["code"] for i in octo])
             self.assertAlmostEqual(sum(i["weight"] for i in octo), 1.0)
         supply = [i["code"] for i in self.engine.compute("supply", "2026-10")["items"]]
         self.assertIn("exec_discipline", supply)  # у снабженца пункт остаётся
@@ -165,6 +203,7 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([c["n"] for c in cols], [1, 2, 3, 4, 5])
 
     def test_receivables_overdue_scale_from_october(self):
+        self.rules["payout"]["mode"] = "binary"  # Legacy policy remains available explicitly.
         # просрочка в рабочих днях → доля выплаты: до 7 — 100%, 8–14 — 50%, от 15 — 0%; только этот пункт
         cases = [("2026-10-01", "2026-10-01", 0, 1.0, "met"),  # оплачено в срок
                  ("2026-10-01", "2026-10-12", 7, 1.0, "met"),
@@ -172,6 +211,7 @@ class EngineTest(unittest.TestCase):
                  ("2026-09-30", "2026-10-20", 14, 0.5, "partial"),
                  ("2026-09-29", "2026-10-20", 15, 0.0, "progress_fail")]  # октябрь ещё идёт (сегодня 20.10)
         for login in ("pm", "tender", "lead"):
+            manual.set_penalty_check(self.con,login,"2026-10",True,"boss")
             for due, paid, days, share, status in cases:
                 with self.subTest(login=login, days=days):
                     replace_rows(self.con, "sales", [{"id": f"s-{login}", "emp": login, "dt": "2026-09-15", "doc": "РТУ-1",
@@ -179,7 +219,7 @@ class EngineTest(unittest.TestCase):
                                  emps=[login])
                     r = self.engine.compute(login, "2026-10")
                     it = next(i for i in r["items"] if i["code"] == "receivables_overdue")
-                    amount = 2000 if login == "pm" else 1000  # у тендерного отдела вторая половина — «Обеспечение и штрафы»
+                    amount = 2000
                     self.assertEqual((it["n"], it["amount"], it["components"][0]["fact"]), (5, amount, days))
                     self.assertEqual((it["pct"], it["payout"], it["status"]), (share, round(amount * share), status))
                     self.assertEqual(r["zero_all"], [])  # весь KPI не обнуляется
@@ -199,26 +239,18 @@ class EngineTest(unittest.TestCase):
         it = next(i for i in self.engine.compute("pm", "2026-10")["items"] if i["code"] == "receivables_overdue")
         self.assertEqual((it["pct"], it["payout"]), (None, 0))
 
-    def test_tender_conversion_by_report_columns_from_october(self):
-        # («КП → Заказ» + «Выигран») / («КП» + «Валидные заявки») по столбцам отчёта 1С «Отчёт ОП», за месяц;
-        # «КП» отчёта = КП менеджера + все его тендеры, «КП → Заказ» = КП и тендеры с заказом клиента
+    def test_tender_conversion_orders_over_kp_and_tenders_from_october(self):
         for emp in ("tender", "lead"):
-            insert(self.con, "kp", [{"id": f"{emp}k1", "emp": emp, "dt": "2026-10-03", "ordered": 1},
-                                    {"id": f"{emp}k2", "emp": emp, "dt": "2026-10-04", "ordered": 0},
-                                    {"id": f"{emp}k3", "emp": emp, "dt": "2026-10-05", "ordered": 0},
-                                    {"id": f"{emp}k0", "emp": emp, "dt": "2026-09-30", "ordered": 1}])  # другой месяц
-            insert(self.con, "tenders_1c", [{"id": f"{emp}t1", "emp": emp, "dt": "2026-10-02", "status": "Действует", "ordered": 0},
-                                            {"id": f"{emp}t2", "emp": emp, "dt": "2026-10-06", "status": "Выиграно", "ordered": 1},
-                                            {"id": f"{emp}t3", "emp": emp, "dt": "2026-10-07", "status": "Отменено", "ordered": 0},
-                                            {"id": f"{emp}t4", "emp": emp, "dt": "2026-10-08", "status": "Черновик", "ordered": 0}])
+            self.conversion_orders(emp, 3, "2026-10")
+            insert(self.con, "kp", [{"id": f"{emp}k{i}", "emp": emp, "dt": "2026-10-03", "ordered": 1} for i in range(3)])
+            insert(self.con, "tenders_1c", [{"id": f"{emp}t{i}", "emp": emp, "dt": "2026-10-04", "status": status}
+                for i, status in enumerate(("Действует", "Выиграно", "Отменено", "Черновик"))])
             it = self.item(emp, "conversion_kp_tenders", "2026-10")
-            self.assertEqual((it["n"], it["weight"]), (1, 0.25))
-            # КП 3 + тендеров 4 = 7; КП → Заказ 1 + 1 = 2; валидные 2; выигран 1 → (2 + 1) / (7 + 2)
-            self.assertAlmostEqual(it["components"][0]["fact"], 3 / 9)
-            self.assertEqual(it["components"][0]["target"], 0.10)
+            self.assertEqual((it["n"], it["weight"]), (1, .25))
+            self.assertAlmostEqual(it["components"][0]["fact"], 3 / 7)
+            self.assertEqual(it["components"][0]["target"], .10)
             ex = {x["label"]: x["value"] for x in it["extra"]}
-            self.assertEqual((ex["КП, шт."], ex["КП → Заказ, шт."], ex["Валидные заявки, шт."], ex["Выиграно, шт."]), (7, 2, 2, 1))
-            self.assertEqual(self.engine.compute(emp, "2026-09")["items"][0]["code"], "conversion_tender")  # сентябрь — как было
+            self.assertEqual((ex["КП за период"], ex["Тендеры за период"], ex["Заказы клиента «В закуп»"]), (3, 4, 3))
 
     def test_incoming_calls_do_not_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
@@ -278,8 +310,8 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(sep["components"][0]["fact"], 100)
         self.assertEqual(len(sep["details"]["rows"]), 3)  # 1 засчитан + 2 ждут подписи на конец сентября
         self.assertEqual(self.calc("pm", "gross_profit", "2026-10", metric="gross_profit")["components"][0]["fact"], 400)
-        # по регламенту сейчас считается выручка без НДС: в октябре подписан УПД-1 на 1000
-        self.assertEqual(self.calc("pm", "gross_profit", "2026-10")["components"][0]["fact"], 1000)
+        # The sales plan uses customer-order amounts; signed realizations alone do not define its fact.
+        self.assertIsNone(self.calc("pm", "gross_profit", "2026-10")["components"][0]["fact"])
 
     def test_gross_profit_without_cost_is_no_data(self):
         # себестоимость в 1С не рассчитана: ВП не должна совпасть с выручкой
@@ -333,15 +365,39 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.calc("supply", "deferred_payment", "2026-09")["components"][0]["fact"], 1.0)
 
     # ---------------------------------------------------------------- активные клиенты
+    def test_active_client_links_use_company_identity_and_configured_portal(self):
+        self.engine.config["bitrix24"] = {"webhook": "https://crm.transtehcom.ru/rest/1/private-token/"}
+        insert(self.con, "clients", [{"id": "co42", "emp": "lead", "name": "Компания <А>", "need": 1, "strategy": 1},
+                                     {"id": "demo", "emp": "lead", "name": "Без CRM ID", "need": 1, "strategy": 1}])
+        current = self.calc("lead", "base_development", "2026-10")
+        expected = "https://crm.transtehcom.ru/crm/company/details/42/"
+        self.assertEqual(current["details"]["links"], [[expected], [None]])
+        self.assertEqual(current["extra"][0]["links"][0], {"label": "Компания <А>", "url": expected})
+        self.assertEqual(current["components"][0]["fact"], 2)
+        self.con.execute("INSERT INTO clients_monthly VALUES ('2026-09','co42','lead','Историческое имя',1,1)")
+        past = self.calc("lead", "base_development", "2026-09")
+        self.assertEqual(past["details"]["rows"], [["Историческое имя"]])
+        self.assertEqual(past["details"]["links"], [[expected]])
+        self.engine.config["bitrix24"] = {}
+        self.assertEqual(self.calc("lead", "base_development", "2026-09")["details"]["links"], [[None]])
+
     def test_active_clients_past_month_uses_snapshot(self):
         insert(self.con, "clients", [{"id": f"cl{i}", "emp": "lead", "name": f"К{i}", "need": 1, "strategy": 1,
                                       "updated": "2026-10-19T10:00:00"} for i in range(8)])
         self.con.executemany("INSERT INTO clients_monthly VALUES ('2026-09', ?, 'lead', ?, 1, ?)",
                              [(f"cl{i}", f"К{i}", int(i < 5)) for i in range(8)])
-        sep = [c for c in self.calc("lead", "base_development", "2026-09")["components"] if "Активные" in c["name"]][0]
-        octo = [c for c in self.calc("lead", "base_development", "2026-10")["components"] if "Активные" in c["name"]][0]
+        sep = self.calc("lead", "base_development", "2026-09")["components"][0]
+        octo = self.calc("lead", "base_development", "2026-10")["components"][0]
         self.assertEqual(sep["fact"], 5)
-        self.assertEqual(octo["fact"], 8)
+        self.assertEqual(octo["fact"], 3)  # пять клиентов уже были активны в сентябре
+
+    def test_active_clients_do_not_carry_to_next_month(self):
+        clients = [{"id": f"cl{i}", "emp": "lead", "name": f"К{i}", "need": 1, "strategy": 1} for i in range(8)]
+        insert(self.con, "clients", clients)
+        self.con.executemany("INSERT INTO clients_monthly VALUES ('2026-10', ?, 'lead', ?, 1, 1)",
+                             [(r["id"], r["name"]) for r in clients])
+        nov = self.calc("lead", "base_development", "2026-11")["components"][0]
+        self.assertEqual(nov["fact"], 0)
 
     def test_snapshot_clients(self):
         insert(self.con, "clients", [{"id": "a", "emp": "lead", "name": "А", "need": 1, "strategy": 1}])
@@ -350,16 +406,37 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM clients_monthly").fetchone()[0], 1)
 
     # ---------------------------------------------------------------- снабжение
-    def test_competitive_purchases_counts_requests_with_three_suppliers(self):
-        insert(self.con, "supply_funnel", [
-            {"id": "f1", "emp": "supply", "dt": "2026-09-02", "doc": "З1", "stage": "ordered", "suppliers": 3},
-            {"id": "f2", "emp": "supply", "dt": "2026-09-03", "doc": "З2", "stage": "done", "suppliers": 2},
-            {"id": "f3", "emp": "supply", "dt": "2026-09-04", "doc": "З3", "stage": "done", "suppliers": 7},
-            {"id": "f4", "emp": "supply", "dt": "2026-09-05", "doc": "З4", "stage": "open", "suppliers": 1},
-            {"id": "f5", "emp": "supply", "dt": "2026-10-01", "doc": "З5", "stage": "done", "suppliers": 0}])
+    def test_competitive_purchases_uses_kpi2_orders_and_groups_only_explicit_lots(self):
+        # Релевантность, сканы и аффилированность из таблицы регламента не влияют: важны 3 поставщика в заявке.
+        rows = [order(1, "2026-09-02", 600000, kp_count=3, relevant=0, evidence=0, affiliated=1)]
+        rows += [order(10 + i, "2026-09-03", 150000, supplier=f"Поставщик {i}") for i in range(5)]  # не суммируются
+        rows += [order(20 + i, "2026-09-04", 150000, lot="Лот-750", supplier=f"Завод {i}") for i in range(5)]
+        rows += [order(30, "2026-09-05", 700000, single_source=1),  # исключается из базы
+                 order(31, "2026-09-06", 800000, emergency=1),      # исключается из базы
+                 order(32, "2026-09-07", 900000, kp_count=1, relevant=0, evidence=0, justified=1),
+                 order(33, "2026-09-08", 1000000, kp_count=1, relevant=0, evidence=0, justified=0)]
+        insert(self.con, "supplier_orders", rows)
         r = self.calc("supply", "competitive_purchases", "2026-09")
-        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 3)
+        self.assertAlmostEqual(r["components"][0]["fact"], 3 / 4)
+        extra = {x["label"]: x["value"] for x in r["extra"]}
+        self.assertEqual(extra["Закупок от 500 000 ₽ без НДС"], 6)  # 4 в базе + 2 исключённых
+        self.assertEqual(extra["Не менее 3 поставщиков или есть обоснование"], 3)
+        self.assertNotIn("Исключено: монополии и аварийные", extra)
+        self.assertNotIn("Нет данных о поставщиках в заявке", extra)
+        self.assertTrue(any(row[0] == "Лот-750" and row[2] == 750000 for row in r["details"]["rows"]))
+        self.assertFalse(any("ЗП-10" in str(row[0]) for row in r["details"]["rows"]))
         self.assertIsNone(self.calc("supply", "competitive_purchases", "2026-08")["components"][0]["fact"])
+        self.assertEqual(self.item("supply", "competitive_purchases", "2026-08")["status"], "nodata")
+
+    def test_competitive_purchases_has_no_data_without_request_suppliers(self):
+        insert(self.con, "supplier_orders", [order(1, "2026-09-02", 600000, kp_count=None)])
+        r = self.calc("supply", "competitive_purchases", "2026-09")
+        self.assertIsNone(r["components"][0]["fact"])
+        self.assertNotIn("Нет данных о поставщиках в заявке", {x["label"] for x in r["extra"]})
+        self.assertEqual(self.item("supply", "competitive_purchases", "2026-09")["status"], "nodata")
+
+    def test_competitive_purchases_manual_entry_only_shows_lot(self):
+        self.assertEqual(manual.ENTRY["competitive_purchases"], ("supplier_orders", ["lot"]))
 
     def test_split_orders_raise_warning(self):
         insert(self.con, "supplier_orders", [order(1, "2026-09-02", 300000, lot="L1"),
@@ -367,7 +444,7 @@ class EngineTest(unittest.TestCase):
                                              order(3, "2026-09-04", 100000, customer_order="ЗК-1"),
                                              order(4, "2026-09-05", 100000, customer_order="ЗК-1")])
         r = self.engine.compute("supply", "2026-09")
-        self.assertEqual(len(r["warnings"]), 1)
+        self.assertEqual(sum("возможное дробление" in w for w in r["warnings"]), 1)
         alerts = self.engine.overview("2026-09")["alerts"]
         self.assertTrue(any(a["level"] == "warning" and a["login"] == "supply" for a in alerts))
 
@@ -377,22 +454,21 @@ class EngineTest(unittest.TestCase):
         self.assertEqual({order_key(x) for x in ("00ЦБ-000067", "ЦБ-67", "67", " 00ЦБ-000067 ")}, {"67"})
         self.assertIsNone(order_key("без номера"))
 
-    def test_tender_conversion_from_1c_report(self):
+    def test_historical_tender_conversion_uses_orders_and_all_tenders(self):
+        self.conversion_orders("tender", 2, "2026-09")
         statuses = ["Действует"] * 6 + ["Выиграно"] + ["Проиграно"] * 9 + ["Отменено"] * 5 + ["Черновик"]
         insert(self.con, "tenders_1c", [{"id": f"t{i}", "emp": "tender", "dt": "2026-09-10", "status": s}
                                         for i, s in enumerate(statuses)])
         r = self.calc("tender", "conversion_tender", "2026-09")
-        self.assertAlmostEqual(r["components"][0]["fact"], 1 / 16)  # как у Пепеляевой в «Отчёте ОП»: 6,25%
-        extra = {x["label"]: x["value"] for x in r["extra"]}
-        self.assertEqual((extra["Валидные заявки"], extra["Действует"]), (16, 6))
-        self.assertAlmostEqual(extra["Win-rate"], 0.1)
-        self.assertAlmostEqual(self.calc("tender", "conversion_tender", "2026-09", basis="decided")["components"][0]["fact"], 0.1)
+        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 22)
+        self.assertEqual(r["components"][0]["target"], .10)
 
-    def test_pm_conversion_kp_to_customer_order(self):
-        insert(self.con, "kp", [{"id": f"k{i}", "emp": "pm", "dt": "2026-09-10", "ordered": int(i < 2)} for i in range(61)])
+    def test_pm_conversion_counts_actual_customer_orders(self):
+        self.conversion_orders("pm", 2, "2026-09")
+        insert(self.con, "kp", [{"id": f"k{i}", "emp": "pm", "dt": "2026-09-10", "ordered": 0} for i in range(61)])
         r = self.calc("pm", "conversion_sales", "2026-09")
-        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 61)  # 3,28%, как в «Отчёте ОП»
-        self.assertEqual(r["components"][0]["target"], 0.07)
+        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 61)
+        self.assertEqual(r["components"][0]["target"], .07)
 
     def test_pm_conversion_target_is_10_percent_from_october(self):
         self.con.execute("INSERT OR REPLACE INTO baselines VALUES ('pm', 'conversion_last_year', 0.2)")
@@ -412,13 +488,15 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([Bitrix24.filled(v) for v in ["Ежемесячные КП по БПЛА", "звонок раз в неделю"]], [1, 1])
         self.assertEqual([Bitrix24.filled(v) for v in ["", None, "-", " — ", "нет", "Нет."]], [0] * 6)
 
-    def test_next_step_is_any_activity_except_telephony_calls(self):
+    def test_next_step_accepts_any_activity_except_calls(self):
         from app.bitrix24 import Bitrix24
         f = Bitrix24.next_step_activity
         self.assertFalse(f({"ID": "5", "PROVIDER_ID": "CRM_TODO"}, "5"))  # сам звонок
         self.assertFalse(f({"ID": "6", "TYPE_ID": "2", "PROVIDER_ID": "VOXIMPLANT_CALL"}, "5"))  # повторный звонок
-        for provider in ("CRM_TODO", "CRM_TASKS_TASK", "CRM_EMAIL", None):
-            self.assertTrue(f({"ID": "7", "PROVIDER_ID": provider}, "5"), provider)
+        self.assertTrue(f({"ID": "7", "PROVIDER_ID": "CRM_TODO"}, "5"))
+        for provider in ("CRM_TODO", "CRM_TASKS_TASK"):
+            self.assertTrue(f({"ID": "7", "PROVIDER_ID": provider, "DEADLINE": "2026-11-11T16:00:00"}, "5"), provider)
+        self.assertTrue(f({"ID": "7", "TYPE_ID": "4", "PROVIDER_ID": "CRM_EMAIL", "START_TIME": "2026-11-11T16:00:00"}, "5"))
 
     def test_lpr_field_ignores_dashes_plus_and_placeholder(self):
         from app.bitrix24 import Bitrix24
@@ -485,7 +563,7 @@ class EngineTest(unittest.TestCase):
     def test_secretary_by_call_analysis_from_october(self):
         insert(self.con, "activities", [call(1, "pm", "2026-10-05"), call(2, "pm", "2026-10-06"), call(3, "pm", "2026-10-07"),
                                         call(4, "pm", "2026-09-07")])
-        for rid, secr in (("cpm1", 1), ("cpm2", 1), ("cpm4", 1)):  # Claude: только секретарь
+        for rid, secr in (("cpm1", 1), ("cpm2", 1), ("cpm4", 1)):  # Codex: только секретарь
             self.con.execute("INSERT INTO call_analysis (id, version, result, secretary) VALUES (?, 4, '{}', ?)", (rid, secr))
         self.con.execute("INSERT INTO call_marks VALUES ('cpm2', 0, 'boss', '2026-10-08')")  # руководитель: не секретарь
         steps = dict(self.engine.call_funnel("pm", dt.date(2026, 10, 1), dt.date(2026, 10, 31))["steps"])
@@ -494,6 +572,8 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(steps["Не секретарь"], 1)  # сентябрь — только по должности в Битрикс24
 
     def test_receivables_overdue_from_1c_customer_orders(self):
+        for login in ("pm","lead"):
+            manual.set_penalty_check(self.con,login,"2026-10",True,"boss")
         insert(self.con, "receivables", [{"id": "r1", "emp": "pm", "doc": "00ЦБ-000098", "client": "Кедр",
                                           "ship_date": "2026-07-14", "due_date": "2026-10-13", "paid_date": "2026-10-16",
                                           "amount": 50153.16}])
@@ -504,25 +584,52 @@ class EngineTest(unittest.TestCase):
         it = self.item("lead", "receivables_overdue", "2026-10")  # в выгрузке 1С заказов сотрудника нет — просрочки нет
         self.assertEqual((it["components"][0]["fact"], it["status"]), (0, "met"))
 
-    def test_proportional_close_threshold_follows_min_pct(self):
+    def test_receivable_carries_to_december_without_reset_and_closes_after_payment(self):
+        stage = control_rows([("2026-11-29", 2469.62)], [("2026-08-28", "Receipt", 2469.62),
+                                                        ("2026-12-18", "Expense", 2469.62)])[0]
+        insert(self.con, "receivables", [{"id": "maria", "emp": "pm", "doc": "00ЦБ-000118", "client": "Меретояханефтегаз",
+                                         "order_date": "2026-07-01", **{k: stage[k] for k in
+                                         ("ship_date", "due_date", "paid_date", "amount", "history", "planned_amount")}}])
+        for at, month, days, share in [(dt.date(2026, 11, 30), "2026-11", 1, 1),
+                                       (dt.date(2026, 12, 9), "2026-12", 8, 0.5),
+                                       (dt.date(2026, 12, 18), "2026-12", 15, 0)]:
+            with self.subTest(at=at), mock.patch("app.engine.today", return_value=at):
+                result = self.calc("pm", "receivables_overdue", month)
+                self.assertEqual(result["components"][0]["fact"], days)
+                self.assertAlmostEqual(result["components"][0]["pct"], min(1, 7 / days))
+                self.assertNotIn("payout_share", result)
+                self.assertEqual(len(result["details"]["rows"]), 1)
+                self.assertEqual(result["details"]["rows"][0][3], "2026-11-29")
+        with mock.patch("app.engine.today", return_value=dt.date(2027, 1, 31)):
+            self.assertEqual(self.calc("pm", "receivables_overdue", "2027-01")["details"]["rows"], [])
+
+    def test_receivable_shows_future_due_dates_and_historical_unpaid_status(self):
+        stage = control_rows([("2027-02-01", 1000)], [("2026-10-15", "Receipt", 1000),
+                                                     ("2026-11-05", "Expense", 1000)])[0]
+        insert(self.con, "receivables", [{"id": "future-due", "emp": "pm", "doc": "З-1", "client": "Кедр",
+                                         "order_date": "2026-01-01", **{k: stage[k] for k in
+                                         ("ship_date", "due_date", "paid_date", "amount", "history", "planned_amount")}}])
+        with mock.patch("app.engine.today", return_value=dt.date(2026, 11, 30)):
+            row = self.calc("pm", "receivables_overdue", "2026-10")["details"]["rows"][0]
+        self.assertEqual((row[4], row[5], row[6], row[7]), ("не оплачено", 0, 1000, "Срок не наступил"))
+
+    def test_proportional_payout_has_no_minimum_threshold(self):
         self.rules["payout"] = {"mode": "proportional", "min_pct": 0.9}
         insert(self.con, "leads", [{"id": f"l{i}", "emp": "pm", "qualified_date": "2026-09-10T10:00:00", "need": 1,
                                     "budget": 1, "lpr": 1, "solvency": 1, "next_step": 1} for i in range(8)])
         it = self.item("pm", "qualified_leads", "2026-09")
-        self.assertEqual(it["status"], "fail")  # 80% < min_pct 90%
-        self.assertEqual(it["payout"], 0)
+        self.assertEqual(it["status"], "partial")
+        self.assertEqual(it["payout"], 800)  # 80% pays even with an obsolete min_pct setting.
 
-    def test_supply_funnel_requests_to_customer_orders(self):
+    def test_supply_conversion_counts_orders_over_all_requests(self):
+        self.conversion_orders("supply", 2, "2026-09", role="supply")
         stages = ["ordered", "ordered", "done", "done", "done", "open", "cancelled"]
-        insert(self.con, "supply_funnel", [{"id": f"f{i}", "emp": "supply", "dt": "2026-09-05", "doc": f"ЗС-{i}",
-                                            "customer_order": "12" if s == "ordered" else None, "stage": s}
+        insert(self.con, "supply_funnel", [{"id": f"f{i}", "emp": "supply", "dt": "2026-09-05", "doc": f"ЗС-{i}", "stage": s}
                                            for i, s in enumerate(stages)] +
                [{"id": "old", "emp": "supply", "dt": "2026-08-31", "doc": "ЗС-0", "stage": "ordered"}])
         r = self.calc("supply", "supply_funnel", "2026-09")
-        c = r["components"][0]
-        self.assertAlmostEqual(c["fact"], 2 / 5)  # 2 заявки с заказом из 5 отработанных
-        self.assertAlmostEqual(c["target"], 0.10)  # конверсия 10% — 100% плана
-        self.assertEqual([n for _, n in r["funnel"]["steps"]], [7, 5, 2])
+        self.assertAlmostEqual(r["components"][0]["fact"], 2 / 7)
+        self.assertEqual(r["components"][0]["target"], .10)
         self.assertEqual(self.item("supply", "supply_funnel", "2026-09")["status"], "met")
 
     def test_absence_whole_month_not_counted(self):
@@ -607,12 +714,26 @@ class EngineTest(unittest.TestCase):
         f = deal_funnel(self.con, {"employees": []}, date_from="2026-09-01", date_to="2026-09-30", mode="fact")
         self.assertEqual(f["mode"], "fact")
         self.assertEqual({s["title"]: s["count"] for s in f["sections"]},
-                         {"Создано в периоде": 1, "В работе": 2, "Преддоговорные сделки": 2, "Договорные сделки": 0,
+                         {"В работе": 2, "Преддоговорные сделки": 2, "Договорные сделки": 0,
                           "Закрыто успешно": 1, "Закрыто неуспешно": 0})
         self.assertEqual(f["total"], 2)  # октябрьская сделка в сентябре не участвует
         oct_ = deal_funnel(self.con, {"employees": []}, date_from="2026-10-01", date_to="2026-10-31", mode="fact")
-        self.assertEqual({s["title"]: s["count"] for s in oct_["sections"]}["Создано в периоде"], 1)
+        self.assertEqual(oct_["total"], 1)
+        self.assertEqual(f["history_from"], "2026-08-20T10:00:00")
         self.assertEqual(f["other_stages"], [])
+
+    def test_fact_ignores_card_creation_without_stage_change_in_period(self):
+        replace_rows(self.con, "fact_records", [{"id": "deal1", "entity": "deal", "created": "2026-09-10T10:00:00",
+                                                   "category_id": "0", "category": "Общая", "title": "Сделка"}])
+        replace_rows(self.con, "stage_moves", [])
+        f = deal_funnel(self.con, {"employees": []}, kind="deals", mode="fact",
+                        date_from="2026-09-01", date_to="2026-09-30")
+        self.assertEqual(f["total"], 0)
+
+    def test_fact_history_merge_keeps_old_transitions(self):
+        merge_rows(self.con, "stage_moves", [{"id": "old", "entity": "deal", "rid": "deal1", "ts": "2026-08-01T10:00:00"}])
+        merge_rows(self.con, "stage_moves", [{"id": "new", "entity": "deal", "rid": "deal1", "ts": "2026-11-01T10:00:00"}])
+        self.assertEqual([r[0] for r in self.con.execute("SELECT id FROM stage_moves ORDER BY ts")], ["old", "new"])
 
     def test_funnel_department_filter(self):
         def row(i, emp, rid):

@@ -102,6 +102,13 @@ CREATE TABLE IF NOT EXISTS deal_failures (
 CREATE TABLE IF NOT EXISTS tenders_1c (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, title TEXT, status TEXT, amount REAL, ordered INTEGER);
 
+-- Orders are counted independently for their sales manager and linked supply responsibles.
+CREATE TABLE IF NOT EXISTS conversion_orders (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, status TEXT, role TEXT,
+  order_key TEXT, request_docs TEXT, amount REAL);
+CREATE TABLE IF NOT EXISTS dataset_state (
+  dataset TEXT PRIMARY KEY, date_from TEXT, date_to TEXT, updated_at TEXT);
+
 -- исходящие письма с КП и вложением в карточках сделок Б24 (подтверждение отправки КП)
 CREATE TABLE IF NOT EXISTS kp_letters (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, deal TEXT, subject TEXT);
@@ -142,6 +149,11 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
   kp_count INTEGER, relevant INTEGER, evidence INTEGER, affiliated INTEGER,
   single_source INTEGER, emergency INTEGER, justified INTEGER, customer_order TEXT);
 
+CREATE TABLE IF NOT EXISTS supply_contracts (
+  id TEXT PRIMARY KEY, emp TEXT, doc TEXT, dt TEXT, supplier TEXT, request_docs TEXT,
+  contract_name TEXT, contract_key TEXT, files TEXT, has_contract INTEGER);
+CREATE INDEX IF NOT EXISTS ix_supply_contracts_emp_date ON supply_contracts(emp,dt);
+
 CREATE TABLE IF NOT EXISTS supply_funnel (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, customer_order TEXT, client TEXT, stage TEXT, doc TEXT,
   status TEXT, created_at TEXT, closed_at TEXT, due_at TEXT, order_dt TEXT, suppliers INTEGER);
@@ -180,6 +192,9 @@ CREATE TABLE IF NOT EXISTS money_cash (account TEXT, currency TEXT, amount REAL,
 CREATE TABLE IF NOT EXISTS money_plan (
   id TEXT PRIMARY KEY, kind TEXT, source TEXT, doc TEXT, doc_date TEXT, party TEXT, basis TEXT, purpose TEXT, detail TEXT,
   amount REAL, currency TEXT, contract TEXT, plan TEXT, approval TEXT, priority TEXT);
+-- фактические поступления и выплаты для плиток периода: документы поступления и полностью оплаченные/закрытые заявки
+CREATE TABLE IF NOT EXISTS money_actual (
+  id TEXT PRIMARY KEY, kind TEXT, doc TEXT, dt TEXT, amount REAL, currency TEXT);
 CREATE TABLE IF NOT EXISTS money_override (id TEXT PRIMARY KEY, plan TEXT, approval TEXT);
 -- вкладка «Поставщики»: строки поступлений (in) и возвратов (ret) из 1С, цены и суммы без НДС; supplier_meta — время и ошибка загрузки
 CREATE TABLE IF NOT EXISTS supplier_lines (
@@ -210,6 +225,23 @@ CREATE TABLE IF NOT EXISTS manual_scores (
   emp TEXT, week TEXT, criterion TEXT, score REAL, comment TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (emp, week, criterion));
 
+CREATE TABLE IF NOT EXISTS monthly_scores (
+  emp TEXT, month TEXT, criterion TEXT, score REAL, comment TEXT, author TEXT, updated TEXT,
+  PRIMARY KEY (emp, month, criterion));
+
+CREATE TABLE IF NOT EXISTS client_approvals (
+  emp TEXT, month TEXT, ref TEXT, approved INTEGER, author TEXT, updated TEXT,
+  PRIMARY KEY (emp, month, ref));
+
+CREATE TABLE IF NOT EXISTS lead_approvals (
+  emp TEXT, month TEXT, ref TEXT, approved INTEGER, author TEXT, updated TEXT,
+  PRIMARY KEY (emp, month, ref));
+
+-- Задачи исполнителей/соисполнителей с историей для формулы месячной эффективности.
+CREATE TABLE IF NOT EXISTS task_efficiency_tasks (
+  id TEXT PRIMARY KEY, title TEXT, responsible_id INTEGER, creator_id INTEGER,
+  created TEXT, deadline TEXT, closed TEXT, status TEXT, accomplices TEXT, history TEXT);
+
 CREATE TABLE IF NOT EXISTS plans (
   emp TEXT, month TEXT, metric TEXT, value REAL, PRIMARY KEY (emp, month, metric));
 
@@ -238,18 +270,24 @@ CREATE TABLE IF NOT EXISTS call_transcripts (
   id TEXT PRIMARY KEY, segments TEXT, text TEXT, duration REAL, engine TEXT, spent REAL, created TEXT,
   error TEXT, attempts INTEGER DEFAULT 0);
 
--- разбор звонков через Claude (app/call_analysis.py): result — JSON с метками вместо персональных данных,
+-- разбор звонков через Codex (app/call_analysis.py): result — JSON с метками вместо персональных данных,
 -- pii — таблица замен (только на этом компьютере, удаляется вместе с записью по сроку хранения), roles — роль говорящего
 -- по предложениям расшифровки (М — сотрудник, К — собеседник, А — автоответчик, «-» — не определена);
--- version — версия инструкции для Claude (PROMPT_VERSION): разборы прежней версии делаются заново
+-- version — версия инструкции для Codex (PROMPT_VERSION): разборы прежней версии делаются заново
 CREATE TABLE IF NOT EXISTS call_analysis (
   id TEXT PRIMARY KEY, version INTEGER, call_type TEXT, offer INTEGER, agreement INTEGER, result TEXT, roles TEXT,
   pii TEXT, model TEXT, tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL, spent REAL, created TEXT,
   error TEXT, attempts INTEGER DEFAULT 0, secretary INTEGER);
 
--- отметка руководителя к звонку поверх разбора Claude (повторный разбор её не стирает): secretary 1/0
+-- отметка руководителя к звонку поверх разбора Codex (повторный разбор её не стирает): secretary 1/0
 CREATE TABLE IF NOT EXISTS call_marks (
   id TEXT PRIMARY KEY, secretary INTEGER, author TEXT, updated TEXT);
+
+-- Оценка сотрудником разбора своего звонка и результат проверки администратором.
+CREATE TABLE IF NOT EXISTS call_feedback (
+  record TEXT, author TEXT, rating INTEGER, comment TEXT, criteria TEXT, updated TEXT,
+  revision INTEGER, resolved_by TEXT, resolved_at TEXT, resolution TEXT,
+  PRIMARY KEY (record, author));
 
 -- журнал прослушиваний записей звонков: кто, какую запись (call_records.id), чей звонок, когда, с какого адреса;
 -- result: ok — прослушал, read — открыл расшифровку, denied — запросил чужую запись без прав
@@ -268,12 +306,14 @@ CREATE TABLE IF NOT EXISTS sync_log (
 """
 
 # таблицы, которые полностью перезаписываются при синхронизации
-SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales",
+SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales", "supply_contracts",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
-               "deal_failures", "task_ledger", "task_people"]
+               "deal_failures", "task_ledger", "task_people", "conversion_orders", "task_efficiency_tasks"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],
+                 "conversion_orders": [("amount", "REAL")],
+                 "receivables": [("order_date", "TEXT"), ("planned_amount", "REAL"), ("history", "TEXT")],
                  "sales": [("signed_date", "TEXT"), ("due_date", "TEXT"), ("paid_date", "TEXT")],
                  "crm_deals": [("entity", "TEXT")], "tenders": [("rejected", "INTEGER")],
                  "supply_funnel": [("doc", "TEXT"), ("status", "TEXT"), ("created_at", "TEXT"), ("closed_at", "TEXT"),
@@ -282,6 +322,15 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL"), ("due_at", "TEXT")],
                  "forwarder_orders": [("fact_sum", "REAL"), ("dop", "TEXT"), ("dof", "TEXT"), ("dpp", "TEXT"), ("dfp", "TEXT")],
                  "sales_objects": [("source", "TEXT"), ("status_1c", "TEXT"), ("amount", "REAL"), ("stage_auto", "INTEGER")]}
+
+for _crm_table in ("activities", "call_records", "tenders", "deals", "crm_deals", "fact_records", "deal_failures"):
+    ADDED_COLUMNS.setdefault(_crm_table, []).append(("client_ref", "TEXT"))
+ADDED_COLUMNS["task_ledger"] = [("project_id", "TEXT")]
+ADDED_COLUMNS["clients"] = [("strategy_count", "INTEGER"), ("strategy_date_count", "INTEGER")]
+ADDED_COLUMNS["activities"].append(("crm_activity_id", "TEXT"))
+ADDED_COLUMNS["supplier_orders"] = [("customer_order_key", "TEXT"), ("customer_order_date", "TEXT"),
+                                     ("customer_actual_date", "TEXT"), ("defect_fixed_date", "TEXT"),
+                                     ("author_key", "TEXT")]
 
 
 def migrate(con):
@@ -327,6 +376,19 @@ def replace_rows(con, table, rows, emps=None, date_field=None, date_from=None, c
                 q += f" AND ({date_field} >= ? OR {date_field} IS NULL)"
                 args.append(date_from)
             con.execute(q, args)
+        for r in rows:
+            keys = [k for k in r if k in cols]
+            con.execute(
+                f"INSERT OR REPLACE INTO {table} ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                [r[k] for k in keys])
+        if commit:
+            con.commit()
+
+
+def merge_rows(con, table, rows, commit=True):
+    """Добавить или обновить строки по первичному ключу, не удаляя накопленные ранее."""
+    cols = table_columns(con, table)
+    with _db_lock:
         for r in rows:
             keys = [k for k in r if k in cols]
             con.execute(

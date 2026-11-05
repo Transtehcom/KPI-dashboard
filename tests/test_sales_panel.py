@@ -68,6 +68,7 @@ class SalesPanelTest(unittest.TestCase):
         self.assertEqual((o["debt"], o["debt_late"], o["need"]), (500, 500, "Оплата клиента"))
 
     def test_debt_zero_when_order_not_in_receivables_and_none_before_execution(self):
+        self.con.execute("INSERT INTO receivables (id,doc,due_date,amount) VALUES ('planned','00ЦБ-9','2026-10-01',0)")
         self.obj(id="И-1", type="Исполнение", stage="Исполнение", order_1c="00ЦБ-9")  # заказ не отгружен: долга в дебиторке нет
         self.obj(id="С-1", stage="КП")  # до исполнения долга не бывает
         self.obj(id="И-2", type="Исполнение", stage="Приёмка и оплата", docs="Принято")  # приёмка без заказа: данных нет
@@ -75,6 +76,11 @@ class SalesPanelTest(unittest.TestCase):
         self.assertEqual((o["И-1"]["debt"], o["И-1"]["debt_late"]), (0.0, 0))
         self.assertTrue(o["С-1"]["pre_exec"] and o["С-1"]["debt_late"] is None)
         self.assertTrue(not o["И-2"]["pre_exec"] and o["И-2"]["debt_late"] is None)
+
+    def test_unshipped_schedule_does_not_move_order_to_payment_stage(self):
+        self.con.execute("INSERT INTO receivables (id,doc,due_date,amount) VALUES ('planned','00ЦБ-9','2026-10-01',0)")
+        reg.upsert(self.con, [self.row(source="order", id="И-9", type="Исполнение", stage="Исполнение", order_1c="00ЦБ-9")])
+        self.assertEqual(sp.build(self.con, TEAM, now=NOW)["objects"][0]["stage"], "Исполнение")
 
     def test_autofill_from_supply_sales_and_bitrix_without_overwriting_manual(self):
         self.con.execute("INSERT INTO supply_funnel (id, customer_order, stage, doc) VALUES ('s1','00ЦБ-1','ordered','00ЦБ-9_1')")

@@ -1,4 +1,4 @@
-"""Вкладка «Деньги» по «вкладка _Деньги_.xlsx» и «Краткому ТЗ»: платёжный календарь на 8 дней, кто должен и когда ждём
+"""Вкладка «Деньги» по «вкладка _Деньги_.xlsx» и «Краткому ТЗ»: платёжный календарь за выбранный период, кто должен и когда ждём
 деньги, плановые выплаты.
 
 Все суммы приходят из 1С (app/onec_money.py при синхронизации и по кнопке): остатки по счетам и кассам, долги за
@@ -108,11 +108,19 @@ def save_expect(con, rec_id, expected):
         con.execute("DELETE FROM money_expect WHERE rec_id = ?", (str(rec_id),))
 
 
-def build(con, today=None):
+def build(con, today=None, date_from=None, date_to=None):
     st = settings(con)
-    asof = _date(st["asof"]) or today or dt.date.today()
+    requested_from, requested_to = _date(date_from), _date(date_to)
+    if (date_from and requested_from is None) or (date_to and requested_to is None):
+        raise ValueError("период указывается датами ГГГГ-ММ-ДД")
+    if requested_from and requested_to and requested_from > requested_to:
+        requested_from, requested_to = requested_to, requested_from
+    asof = requested_from or _date(st["asof"]) or today or dt.date.today()
+    end = requested_to or (asof + dt.timedelta(days=DAYS - 1))
+    if (end - asof).days > 366:
+        raise ValueError("период платёжного календаря не может быть больше 367 дней")
     iso0 = asof.isoformat()
-    days = [asof + dt.timedelta(days=i) for i in range(DAYS)]
+    days = [asof + dt.timedelta(days=i) for i in range((end - asof).days + 1)]
     last_day = days[-1].isoformat()
     promises = {r[0]: r[1] for r in con.execute("SELECT rec_id, expected FROM money_expect")}
     over = {r[0]: (r[1], r[2]) for r in con.execute("SELECT id, plan, approval FROM money_override")}
@@ -126,43 +134,51 @@ def build(con, today=None):
         exp = promises.get(r["id"]) or (r["due_date"] if due else None)  # «Ожидаем» — обещание клиента, иначе «Дата платежа» из правил оплаты заказа
         owe.append({"id": r["id"], "src": "1c", "party": r["client"], "basis": r["doc"], "type": "Отгрузка", "amount": r["amount"],
                     "owed": r["amount"], "contract": r["due_date"], "plan": exp, "promised": r["id"] in promises, "currency": "руб.",
+                    "plan_source": "receivable",
                     "detail": "Дебиторская задолженность: неоплаченный этап графика оплаты заказа " + (r["doc"] or "")})
     for r in con.execute("SELECT * FROM money_plan WHERE kind = 'in' ORDER BY plan, party"):
         plan = promises.get(r["id"]) or r["plan"]
         owe.append({"id": r["id"], "src": "1c", "party": r["party"], "basis": r["basis"], "type": "Аванс", "amount": r["amount"],
                     "owed": 0, "contract": r["contract"], "plan": plan, "promised": r["id"] in promises,
-                    "currency": r["currency"] or "руб.", "detail": r["detail"]})
+                    "currency": r["currency"] or "руб.", "plan_source": r["source"], "detail": r["detail"]})
     for r in con.execute("SELECT * FROM money_items WHERE kind = 'in' ORDER BY plan, id"):
         owe.append({"id": r["id"], "src": "manual", "party": r["party"], "basis": r["basis"], "type": r["type"], "amount": r["amount"],
                     "owed": r["owed"] or 0, "contract": r["contract"], "plan": r["plan"], "currency": "руб.",
-                    "promised": bool(r["plan"] and r["plan"] != r["contract"]), "detail": "Введено вручную"})
+                    "promised": bool(r["plan"] and r["plan"] != r["contract"]), "plan_source": "manual", "detail": "Введено вручную"})
     for o in owe:
         due = _date(o["contract"])
         o["late_days"] = max(0, (asof - due).days) if o["owed"] and due else 0
         o["status"] = "Обещание" if o["promised"] else "По договору" if o["plan"] else "Не обещано"
 
-    pay = []  # плановые выплаты из 1С (заявки, план оплаты поставщикам) и ручные
+    pay = []  # плановые выплаты: заявки из 1С в трёх статусах и ручные строки
     for r in con.execute("SELECT * FROM money_plan WHERE kind = 'out' ORDER BY plan, party"):
         plan, approval = over.get(r["id"], (None, None))
         pay.append({"id": r["id"], "src": "1c", "party": r["party"], "basis": r["basis"], "type": r["purpose"], "amount": r["amount"],
                     "contract": r["contract"], "plan": plan or r["plan"], "approval": approval or r["approval"],
                     "priority": r["priority"], "currency": r["currency"] or "руб.", "moved": bool(plan or approval),
+                    "plan_source": r["source"],
                     "detail": f"{r['detail'] or ''} · документ {r['doc'] or '—'}" + (f" от {r['doc_date']}" if r["doc_date"] else "")})
     for r in con.execute("SELECT * FROM money_items WHERE kind = 'out' ORDER BY plan, id"):
         pay.append({"id": r["id"], "src": "manual", "party": r["party"], "basis": r["basis"], "type": r["type"], "amount": r["amount"],
                     "contract": r["contract"], "plan": r["plan"], "approval": r["approval"], "priority": r["priority"],
-                    "currency": "руб.", "moved": False, "detail": "Введено вручную"})
+                    "currency": "руб.", "moved": False, "plan_source": "manual", "detail": "Введено вручную"})
     for p in pay:
-        p["in_cal"] = bool(p["approval"] == "Согласовано" and p["plan"] and rub(p["currency"]) and iso0 <= p["plan"] <= last_day)
-    pay_main = [p for p in pay if p["approval"] == "Согласовано" and p["plan"]]
-    pay_other = [p for p in pay if not (p["approval"] == "Согласовано" and p["plan"])]
+        eligible = p["plan_source"] == "request" or p["approval"] == "Согласовано"
+        p["in_cal"] = bool(eligible and p["plan"] and rub(p["currency"]) and iso0 <= p["plan"] <= last_day)
+    pay_main = [p for p in pay if p["plan"] and (p["plan_source"] == "request" or p["approval"] == "Согласовано")]
+    pay_other = [p for p in pay if p not in pay_main]
+
+    actual = [dict(r) for r in con.execute("SELECT * FROM money_actual WHERE dt>=? AND dt<=?", (iso0, last_day))]
+    actual_in = [r for r in actual if r["kind"] == "in" and rub(r["currency"])]
+    actual_out = [r for r in actual if r["kind"] == "out" and rub(r["currency"])]
 
     cash_rub = round(sum(c["amount"] for c in cash if rub(c["currency"])), 2)
     start = round(cash_rub - st["adjust"], 2)
     cal, bal = [], start
     for d in days:
         iso = d.isoformat()
-        inc = round(sum(o["amount"] for o in owe if o["plan"] == iso and rub(o["currency"])), 2)
+        inc = round(sum(o["amount"] for o in owe if o["plan_source"] in {"customer_plan", "manual"}
+                        and o["plan"] == iso and rub(o["currency"])), 2)
         out = round(sum(p["amount"] for p in pay_main if p["plan"] == iso and rub(p["currency"])), 2)
         cal.append({"date": iso, "begin": round(bal, 2), "in": inc, "out": out, "end": round(bal + inc - out, 2)})
         bal += inc - out
@@ -175,7 +191,11 @@ def build(con, today=None):
                 f[key] += x[field]
     return {"asof": iso0, "asof_manual": st["asof"], "adjust": st["adjust"], "cash": cash, "cash_rub": cash_rub, "calendar": cal,
             "sync": {"at": st["synced_at"], "error": st["error"], "last_move": max((c["last"] for c in cash), default=None)},
-            "tiles": {"start": start, "in": round(sum(c["in"] for c in cal), 2), "out": round(sum(c["out"] for c in cal), 2),
+            "tiles": {"start": start, "in": round(sum(r["amount"] for r in actual_in), 2),
+                      "out": round(sum(r["amount"] for r in actual_out), 2),
+                      "plan_out": round(sum(c["out"] for c in cal), 2),
+                      "in_count": len(actual_in),
+                      "out_count": len(actual_out),
                       "low": low, "shortfall": max(0.0, -low), "low_date": next(c["date"] for c in cal if c["end"] == low)},
             "client_debt": st["client_debt"], "client_debt_orders": st["client_debt_orders"],
             "owe": owe, "owe_total": round(sum(o["owed"] for o in owe), 2),

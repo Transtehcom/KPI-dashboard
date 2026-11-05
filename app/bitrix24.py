@@ -7,6 +7,9 @@ import urllib.parse
 import urllib.request
 
 from .common import parse_date
+from .client_qualification import qualify_client
+from .crm_activities import (activity_bindings, activity_datetime, activity_deadline, call_binding, followup_activity,
+                             is_next_step_for_call, planned_activity)
 
 OWNER_TYPES = {"LEAD": 1, "DEAL": 2, "CONTACT": 3, "COMPANY": 4}
 
@@ -125,9 +128,32 @@ class Bitrix24:
 
     @staticmethod
     def next_step_activity(a, call_activity_id):
-        """Подходит ли дело CRM как «следующий шаг» после звонка: любое дело, кроме самого этого звонка и других звонков телефонии
-        (повторный звонок тому же клиенту следующим шагом не считается; запланированное дело «Связаться с клиентом» — считается)."""
-        return str(a.get("ID")) != str(call_activity_id) and a.get("PROVIDER_ID") != "VOXIMPLANT_CALL"
+        """Любое дело, кроме самого звонка и повторного звонка."""
+        return str(a.get("ID")) != str(call_activity_id) and followup_activity(a)
+
+    def next_step_index(self, activities, calls):
+        """Read explicit card bindings for non-call activities created after a loaded call."""
+        starts = [activity_datetime(c.get("CALL_START_DATE")) for c in calls if call_binding(c)]
+        earliest = min((s for s in starts if s), default=None)
+        candidates = {}
+        for activity in activities:
+            if not followup_activity(activity):
+                continue
+            created = activity_datetime(activity.get("CREATED"))
+            if created and earliest and created > earliest:
+                candidates[str(activity["ID"])] = activity
+        if not candidates:
+            return {}
+        bindings, errors = self.batch({"binding" + aid: ("crm.activity.binding.list", {"activityId": aid})
+                                       for aid in candidates})
+        if errors or any("binding" + aid not in bindings for aid in candidates):
+            raise B24Error("Не удалось прочитать CRM-привязки следующих шагов; расчёт KPI не обновлён")
+        index = {}
+        for aid, activity in candidates.items():
+            row = {**activity, "BINDINGS": bindings["binding" + aid]}
+            for owner in activity_bindings(row):
+                index.setdefault(owner, []).append(row)
+        return index
 
     @staticmethod
     def lpr(v):
@@ -159,6 +185,32 @@ class Bitrix24:
         return str(v)[:19]
 
     # ---------- сбор
+    def fetch_clients(self, employees):
+        metadata = self.call("crm.company.fields").get("result") or {}
+        resolved = []
+        for key, labels in (("company_need", ("Потребность выявлена", "Потребность выявлена (да/нет)")),
+                            ("company_strategy", ("Стратегия",)),
+                            ("company_strategy_dates", ("Дата реализации стратегии",))):
+            code = self.f.get(key)
+            if code not in metadata:
+                wanted = {label.casefold() for label in labels}
+                code = next((name for name, field in metadata.items() if name.startswith("UF_") and
+                             wanted & {str(field.get(label) or "").strip().casefold()
+                                       for label in ("formLabel", "listLabel", "title")}), None)
+            if not code:
+                raise B24Error(f"Не найдено поле компании «{labels[0]}» для KPI активных клиентов")
+            resolved.append(code)
+        rows = self.list_all("crm.company.list", {"filter": {"ASSIGNED_BY_ID": [int(uid) for uid in employees]},
+                             "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "DATE_MODIFY"] + resolved})
+        out = []
+        for company in rows:
+            owner = employees.get(int(company.get("ASSIGNED_BY_ID") or 0))
+            if owner:
+                out.append({"id": "co" + str(company["ID"]), "emp": owner, "name": company.get("TITLE"),
+                            "updated": str(company.get("DATE_MODIFY"))[:19],
+                            **qualify_client(*(company.get(code) for code in resolved))})
+        return out
+
     def fetch(self, employees, date_from, record_employees=None):
         """employees: {b24_user_id: login} — сотрудники с KPI. record_employees — те, чьи записи звонков нужны
         разделу «Звонки» (все сотрудники с ID в Б24; по умолчанию — employees). Возвращает словарь таблица → строки."""
@@ -173,20 +225,17 @@ class Bitrix24:
         # активности CRM (встречи, следующие шаги)
         self.log("Б24: дела CRM")
         acts = self.list_all("crm.activity.list", {
-            "filter": {"RESPONSIBLE_ID": uids, ">=CREATED": df},
-            "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "DIRECTION", "CREATED", "START_TIME",
+            "filter": {">=CREATED": df},
+            "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "DIRECTION", "CREATED", "START_TIME", "DEADLINE",
                        "END_TIME", "COMPLETED", "SUBJECT", "DESCRIPTION", "RESPONSIBLE_ID", "STORAGE_ELEMENT_IDS", "FILES",
                        "LAST_UPDATED"],
             "order": {"ID": "ASC"}})
-        by_owner = {}
-        for a in acts:
-            by_owner.setdefault((int(a["OWNER_TYPE_ID"] or 0), str(a["OWNER_ID"])), []).append(a)
-
         # звонки (телефония): исходящие и входящие; в KPI идут только исходящие (direction = out)
         self.log("Б24: звонки")
         calls = self.list_all("voximplant.statistic.get", {
             "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": sorted(set(uids) | {int(u) for u in record_employees})},
             "SORT": "CALL_START_DATE", "ORDER": "ASC"})
+        by_owner = self.next_step_index(acts, calls)
         # к чему привязаны звонки и встречи: контакт, компания или лид
         bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set()}
         for c in calls:
@@ -262,6 +311,12 @@ class Bitrix24:
             return 0, 0, ""
 
         rows, records = [], []
+        def client_reference(etype, eid):
+            if etype == "CONTACT":
+                contact_row = contacts.get(str(eid), {})
+                company = str(contact_row.get("COMPANY_ID") or "")
+                return "COMPANY:" + company if companies_of_calls.get(company, {}).get("TITLE") else "CONTACT:" + str(eid)
+            return f"{etype}:{eid}" if etype in ("COMPANY", "LEAD") else None
         for c in calls:
             login, rec_login = emp(c.get("PORTAL_USER_ID")), rec_emp(c.get("PORTAL_USER_ID"))
             if not (login or rec_login):
@@ -276,25 +331,19 @@ class Bitrix24:
                 records.append({"id": "call" + str(c["ID"]), "call_id": c.get("CALL_ID"), "emp": rec_login, "dt": start,
                                 "direction": direction, "duration": int(c.get("CALL_DURATION") or 0),
                                 "phone": c.get("PHONE_NUMBER"), "crm_entity": contact if c.get("CRM_ENTITY_ID") else None,
+                                "client_ref": client_reference(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID")),
                                 "client": client, "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None,
                                 "record_file_id": str(c.get("RECORD_FILE_ID") or "") or None,
                                 "record_url": c.get("CALL_RECORD_URL") or None})
             if not login:  # звонки сотрудника без KPI — только записи, в KPI не идут
                 continue
-            owner = (OWNER_TYPES.get(c.get("CRM_ENTITY_TYPE"), 0), str(c.get("CRM_ENTITY_ID")))
-            t0 = dt.datetime.fromisoformat(start)
-            nxt = 0
-            for a in by_owner.get(owner, []):
-                if not self.next_step_activity(a, c.get("CRM_ACTIVITY_ID")):
-                    continue
-                created = dt.datetime.fromisoformat(str(a["CREATED"])[:19])
-                if t0 <= created <= t0 + dt.timedelta(days=1):
-                    nxt = 1
-                    break
+            nxt = int(any(is_next_step_for_call(a, c) for a in by_owner.get(call_binding(c), [])))
             # с кем разговор (contact): сущность CRM, а если звонок не привязан — номер телефона
             rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": direction,
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
-                         "next_step": nxt, "status": "done", "subject": "", "client": client, "contact": contact})
+                         "next_step": nxt, "status": "done", "subject": "", "client": client, "contact": contact,
+                         "client_ref": client_reference(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID")),
+                         "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None})
         out["call_records"] = records
         meeting_files = self._meeting_calendar_files(df)
         for a in acts:
@@ -316,7 +365,9 @@ class Bitrix24:
                          "has_summary": int(len((a.get("DESCRIPTION") or "").strip()) >= 20),
                          # точной даты закрытия дела в REST нет — берём дату последнего изменения
                          "closed_dt": self.iso(a.get("LAST_UPDATED")) if done else None,
-                         "subject": a.get("SUBJECT"), "client": client})
+                         "subject": a.get("SUBJECT"), "client": client,
+                         "contact": f"{etype}:{a['OWNER_ID']}" if etype else None,
+                         "client_ref": client_reference(etype,a["OWNER_ID"])})
         out["activities"] = rows
 
         # исходящие письма с КП и вложением в карточках сделок — подтверждение отправки КП (ПМ, KPI 4)
@@ -369,7 +420,7 @@ class Bitrix24:
             result_date = (str(max(final_ts))[:10] if final_ts else str(d.get("CLOSEDATE") or "")[:10]) if result != "open" else None
             rows.append({
                 "id": "deal" + str(d["ID"]), "emp": login, "title": d.get("TITLE"),
-                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "created": str(d.get("DATE_CREATE"))[:10],
                 "in_work": int(bool(visited & set(st.get("in_work", [])))),
                 "price_review": int(bool(visited & set(st.get("price_review", [])))),
@@ -388,7 +439,7 @@ class Bitrix24:
             "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "COMPANY_ID", "DATE_CREATE", "CLOSEDATE", "STAGE_SEMANTIC_ID", "OPPORTUNITY"]})
         companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
         out["deals"] = [{"id": "deal" + str(d["ID"]), "emp": emp(d["ASSIGNED_BY_ID"]), "title": d.get("TITLE"),
-                         "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                         "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                          "created": str(d.get("DATE_CREATE"))[:10], "closed_date": str(d.get("CLOSEDATE"))[:10],
                          "result": "won" if d.get("STAGE_SEMANTIC_ID") == "S" else "lost", "amount": float(d.get("OPPORTUNITY") or 0)}
                         for d in deals if emp(d.get("ASSIGNED_BY_ID"))]
@@ -445,14 +496,8 @@ class Bitrix24:
 
         # компании: активные клиенты с выявленной потребностью и стратегией
         self.log("Б24: компании")
-        cf = [self.resolve_field("crm.company.fields", self.f.get("company_need"), "Потребность выявлена (да/нет)"),
-              self.resolve_field("crm.company.fields", self.f.get("company_strategy"), "Стратегия")]
-        if all(cf):
-            comps = self.list_all("crm.company.list", {"filter": {"ASSIGNED_BY_ID": uids},
-                                                       "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "DATE_MODIFY"] + cf})
-            out["clients"] = [{"id": "co" + str(c["ID"]), "emp": emp(c["ASSIGNED_BY_ID"]), "name": c.get("TITLE"),
-                               "need": self.yes(c.get(cf[0])), "strategy": self.filled(c.get(cf[1])),
-                               "updated": str(c.get("DATE_MODIFY"))[:19]} for c in comps if emp(c.get("ASSIGNED_BY_ID"))]
+        if self.f.get("company_need") and self.f.get("company_strategy"):
+            out["clients"] = self.fetch_clients(employees)
 
         # проваленные сделки для KPI 3 тендерного отдела: воронка «Реализация», стадия «Сделка провалена»
         fc = self.cfg.get("deal_failures") or {}
@@ -468,7 +513,7 @@ class Bitrix24:
                 "ENTITY_ID": f"DEAL_STAGE_{fc['category_id']}" if fc.get("category_id") else "DEAL_STAGE"}})}
             out["deal_failures"] = [{
                 "id": "fail" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
-                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 # дата провала — дата закрытия сделки (CLOSEDATE): MOVED_TIME сбивается массовыми переносами сделок;
                 # без неё — переход на стадию
                 "dt": (self.iso(d.get("CLOSEDATE")) or self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_MODIFY")) or "")[:10] or None,
@@ -542,7 +587,7 @@ class Bitrix24:
             gid, parent = str(t.get("groupId") or "0"), t.get("parentId")
             rows.append({"id": tid, "uid": int(t.get("responsibleId") or 0), "title": t.get("title"), "status": str(t.get("status")),
                          "priority": str(t.get("priority") or "1"),
-                         "project": group.get("name") or (f"Проект {gid}" if gid != "0" else None),
+                         "project": group.get("name") or (f"Проект {gid}" if gid != "0" else None), "project_id": gid if gid != "0" else None,
                          "tags": json.dumps([x for x in tags if x], ensure_ascii=False), "creator": int(t.get("createdBy") or 0),
                          "control": int(t.get("taskControl") == "Y"), "created": self.ekb(t.get("createdDate")),
                          "deadline": self.ekb(t.get("deadline")), "closed": self.ekb(t.get("closedDate")),
@@ -597,7 +642,7 @@ class Bitrix24:
                 result, result_date = "open", None
             rows.append({
                 "id": "deal" + str(d["ID"]), "emp": emp(d.get("ASSIGNED_BY_ID")), "title": d.get("TITLE"),
-                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "created": str(d.get("DATE_CREATE"))[:10], "in_work": 1,
                 "price_review": int(result == "won" or d.get("STAGE_ID") in lost_st),
                 "submitted_date": None, "result": result, "result_date": result_date,
@@ -732,7 +777,7 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
                 "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
-                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         return rows
@@ -763,7 +808,7 @@ class Bitrix24:
         deals = self.by_ids("crm.deal.list", owners["deal"], ["ID", "TITLE", "ASSIGNED_BY_ID", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID",
                                                                "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_ID"])
         leads = self.by_ids("crm.lead.list", owners["lead"], ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "STATUS_SEMANTIC_ID",
-                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_TITLE"])
+                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID"])
         companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals.values()], ["ID", "TITLE"])
         users = self._user_names(d.get("ASSIGNED_BY_ID") for d in [*deals.values(), *leads.values()])
         snap = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -778,7 +823,7 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
                 "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
-                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""),
+                "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         for d in leads.values():
@@ -788,7 +833,7 @@ class Bitrix24:
                 "id": "lead" + str(d["ID"]), "entity": "lead", "emp": employees.get(int(rid)) if rid else None,
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": "lead", "category": "Лиды",
                 "stage_id": d.get("STATUS_ID"), "stage": st.get("name") or d.get("STATUS_ID"), "stage_sort": st.get("sort", 0),
-                "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "",
+                "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "", "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         known = {r["id"] for r in records}
@@ -802,7 +847,7 @@ class Bitrix24:
         leads = self.list_all("crm.lead.list", {
             "filter": flt, "order": {"ID": "ASC"},
             "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "STATUS_SEMANTIC_ID", "OPPORTUNITY", "DATE_CREATE",
-                       "MOVED_TIME", "COMPANY_TITLE"]})
+                       "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID"]})
         users = self._user_names(d.get("ASSIGNED_BY_ID") for d in leads)
         snap = time.strftime("%Y-%m-%dT%H:%M:%S")
         rows = []
@@ -813,7 +858,7 @@ class Bitrix24:
                 "id": "lead" + str(d["ID"]), "entity": "lead", "emp": employees.get(int(rid)) if rid else None,
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": "lead", "category": "Лиды",
                 "stage_id": d.get("STATUS_ID"), "stage": st.get("name") or d.get("STATUS_ID"), "stage_sort": st.get("sort", 0),
-                "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "",
+                "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "", "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         return rows

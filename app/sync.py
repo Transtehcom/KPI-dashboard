@@ -3,12 +3,12 @@ import datetime as dt
 import threading
 import traceback
 
-from . import call_records, demo, employees, manual, workload
+from . import call_records, demo, employees, manual, workload, task_efficiency, supply_documents
 from .bitrix24 import Bitrix24
-from .common import current_month, db_lock, load_rules, month_add, month_bounds, replace_rows, today
+from .common import current_month, db_lock, load_rules, merge_rows, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
 from . import b24_sales_register, onec_money, onec_sales_register
-from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC
+from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC, supplier_date_from
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
                    "leads": "qualified_date", "clients": None, "tasks": "deadline", "deal_failures": "dt"}
@@ -106,6 +106,13 @@ def run(con, config, force_demo=False):
                     status = "error"
                     log.append(f"Ошибка Битрикс24 (задачи для загрузки): {e}")
                     traceback.print_exc()
+                try:
+                    rows = task_efficiency.fetch(b24,config["employees"],date_from)
+                    writes.append(("Б24","task_efficiency_tasks",rows,None))
+                except Exception as e:  # noqa
+                    status = "error"
+                    log.append(f"Ошибка Битрикс24 (месячная эффективность задач): {e}")
+                    traceback.print_exc()
             else:
                 log.append("Битрикс24 не настроен (bitrix24.webhook)")
 
@@ -140,6 +147,14 @@ def run(con, config, force_demo=False):
                     onec = OneC(onec_cfg, log=log.append)
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)
+                    supplier_ds = onec_cfg.get("datasets", {}).get("supplier_orders", {})
+                    if supplier_ds.get("source") == "supply_requests":
+                        try:
+                            contract_rows = supply_documents.fetch(onec, supplier_ds, managers, date_from, date_to)
+                            writes.append(("1С", "supply_contracts", contract_rows, "dt"))
+                        except Exception as e:
+                            status = "error"
+                            log.append(f"Ошибка договоров снабжения из 1С: {e}")
                     try:  # реестр «Метрики → Отдел продаж»: тендеры, КП и заказы клиентов с начала года
                         register = onec_sales_register.fetch(onec, managers)
                     except Exception as e:  # noqa
@@ -166,6 +181,13 @@ def run(con, config, force_demo=False):
                             if table == "call_records":  # записи звонков копятся, а не перезаписываются
                                 call_records.upsert(con, rows, commit=False)
                                 continue
+                            if table == "task_efficiency_tasks":
+                                replace_rows(con,table,rows,commit=False)
+                                for employee in config["employees"]:
+                                    if employee.get("position") == "supply" and employee.get("b24_user_id"):
+                                        con.execute("INSERT OR REPLACE INTO dataset_state VALUES(?,?,?,?)",
+                                            ("task_efficiency:"+str(employee["b24_user_id"]),date_from.isoformat(),date_to.isoformat(),dt.datetime.now().isoformat()))
+                                continue
                             if table == "leads":
                                 rows = qualify_leads(con, rows)
                             # воронки сделок и лидов — срез по всем ответственным, заменяется целиком
@@ -173,9 +195,20 @@ def run(con, config, force_demo=False):
                             if table in KEEP_UNMAPPED:  # и ответственные не из дашборда («1c:ФИО»)
                                 owners = logins + [r[0] for r in con.execute(
                                     f"SELECT DISTINCT emp FROM {table} WHERE emp LIKE ?", (UNMAPPED + "%",))]
-                            replace_rows(con, table, rows, emps=None if table in ("crm_deals", "stage_moves", "fact_records", "task_ledger", "task_people") else owners,
-                                         date_field=date_field,
-                                         date_from=date_from.isoformat(), commit=False)
+                            if table in ("stage_moves", "fact_records"):
+                                # История «Воронки → Факт» накапливается; повторная выгрузка обновляет записи по ID.
+                                merge_rows(con, table, rows, commit=False)
+                            elif table == "receivables" and config.get("onec", {}).get("datasets", {}).get("receivables", {}).get("source") == "order_payments":
+                                # Полная выгрузка всех заказов с графиком оплаты, включая старые неоплаченные.
+                                replace_rows(con, table, rows, commit=False)
+                            else:
+                                window_from = supplier_date_from(con, date_from) if src == "1С" and table == "supplier_orders" and \
+                                    config.get("onec", {}).get("datasets", {}).get("supplier_orders", {}).get("source") == "supply_requests" else date_from
+                                replace_rows(con, table, rows, emps=None if table in ("crm_deals", "task_ledger", "task_people", "supply_contracts") else owners,
+                                             date_field=date_field, date_from=window_from.isoformat(), commit=False)
+                            if src == "1С" and table in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties", "supply_contracts"):
+                                con.execute("INSERT OR REPLACE INTO dataset_state VALUES (?,?,?,?)",
+                                            (table, date_from.isoformat(), date_to.isoformat(), dt.datetime.now().isoformat()))
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки
                         if money_data is not None:
                             onec_money.store(con, money_data)
@@ -251,10 +284,28 @@ def start_scheduler(con, config):
     def loop():
         import time
         while True:
-            time.sleep(minutes * 60)
             try:
-                run(con, config)
+                delay = 30
+                if not is_running():
+                    with db_lock():
+                        last = last_sync(con)
+                    interval = minutes * 60
+                    if last:
+                        retry = last.get("status") != "ok"
+                        base = (last.get("finished") if retry else last.get("started")) or last.get("finished")
+                        due = dt.datetime.fromisoformat(base) + dt.timedelta(seconds=min(interval, 300) if retry else interval)
+                        delay = max(0, min(30, (due - dt.datetime.now()).total_seconds()))
+                    else:
+                        delay = 0
+                    if delay <= 0:
+                        print("Автообновление Б24 и 1С: запуск", dt.datetime.now().isoformat(timespec="seconds"), flush=True)
+                        result = run(con, config)
+                        print("Автообновление Б24 и 1С:", result["status"], flush=True)
+                        delay = 30
             except Exception:  # noqa
                 traceback.print_exc()
+                delay = 30
+            # Журнал переживает перезапуск сервера. Короткое ожидание также учитывает ручные обновления.
+            time.sleep(delay)
 
     threading.Thread(target=loop, daemon=True).start()

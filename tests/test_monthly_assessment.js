@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const html=fs.readFileSync('web/index.html','utf8');
+const start=html.indexOf('  function manualBlock('),end=html.indexOf('\n  // ручной ввод',start);
+const context={state:{boot:{me:{role:'manager'},criteria_titles:{docs:'Документооборот'}}},esc:v=>String(v??''),nf:String};
+vm.createContext(context);vm.runInContext(html.slice(start,end),context);
+const item={manual:{period:'month',month:'2026-11',criteria:['docs'],scores:{docs:{score:75,comment:'Проверено за ноябрь'}}}};
+const rendered=context.manualBlock({month:'2026-11'},item);
+assert.ok(rendered.includes('data-month-assessment'));
+assert.ok(rendered.includes('2026-11'));
+assert.ok(!rendered.includes('data-week'));
+assert.ok(rendered.includes('Проверено за ноябрь'));
+assert.equal((rendered.match(/data-month-score/g)||[]).length,1);
+context.state.boot.me.role='employee';
+const employee=context.manualBlock({month:'2026-11'},item);
+assert.ok(!employee.includes('<input'));assert.ok(!employee.includes('<form'));
+assert.ok(employee.includes('75'));
+console.log('Monthly supply assessment rendering: OK');

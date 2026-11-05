@@ -4,21 +4,18 @@
 несколько: предоплата, оплата после отгрузки…). Долг и оплаты — регистр РасчетыСКлиентами по объекту расчётов
 заказа, как в отчёте «Карточка расчётов с клиентами»: приход — долг клиента (реализация), расход — оплата
 (поступление денег, возврат). Строка таблицы receivables — этап графика оплаты:
-  сумма этапа ограничена отгруженным: пока не отгружено, долга нет и просрочки тоже;
+  все этапы сохраняются независимо от даты заказа и срока оплаты; до отгрузки остаток долга равен нулю;
   срок оплаты — «Дата платежа» этапа как есть: крайний день оплаты, после него долг просрочен;
-  оплачено — день, когда оплаты по заказу покрыли этот этап нарастающим итогом.
+  оплачено — день, когда оплаты по заказу покрыли этот этап нарастающим итогом;
+  история движений хранит остаток и оплату на дату выбранного периода, неоплаченные этапы продолжают контролироваться.
 Ответственный — тот, кто ведёт заказ (как у выручки, onec_sales.order_lead), иначе менеджер заказа.
 """
-import datetime as dt
+import json
 
 from .onec_sales import order_lead
 
 EMPTY = "00000000-0000-0000-0000-000000000000"
 TOLERANCE = 1.0  # ₽: копеечные расхождения не считаются долгом
-
-
-def _when(d):
-    return d.isoformat() + "T00:00:00"
 
 
 def _day(v):
@@ -59,17 +56,47 @@ def stage_rows(stages, moves):
     return out
 
 
+def control_rows(stages, moves):
+    """Все этапы графика и их состояние по датам движений, включая ещё не отгруженные.
+
+    История нужна для KPI прошлых месяцев: поздняя оплата не уменьшает долг на прежнюю дату.
+    """
+    stages = sorted(stages)
+    history = {n: [] for n in range(1, len(stages) + 1)}
+    for day in sorted({m[0] for m in moves}):
+        at = [m for m in moves if m[0] <= day]
+        states = {s["n"]: s for s in stage_rows(stages, at)}
+        paid = sorted((d, v) for d, kind, v in at if kind == "Expense" and v)
+        cumulative = 0.0
+        for n, (due, planned) in enumerate(stages, 1):
+            cumulative += planned
+            state = states.get(n, {"amount": 0.0, "ship_date": None, "paid_date": _first_reach(paid, cumulative)})
+            history[n].append({"at": day, **{k: state[k] for k in ("amount", "ship_date", "paid_date")}})
+    return [{"n": n, "due_date": due, "planned_amount": planned,
+             **({k: history[n][-1][k] for k in ("amount", "ship_date", "paid_date")} if history[n]
+                else {"amount": 0.0, "ship_date": None, "paid_date": None}),
+             "history": json.dumps(history[n], ensure_ascii=False)}
+            for n, (due, planned) in enumerate(stages, 1)]
+
+
+def state_at(row, asof):
+    """Состояние этапа на выбранную дату; старые выгрузки без истории поддерживаются."""
+    if row.get("history"):
+        states = [s for s in json.loads(row["history"]) if s["at"] <= asof.isoformat()]
+        return {**row, **(states[-1] if states else {"amount": 0.0, "ship_date": None, "paid_date": None})}
+    return row
+
+
 def fetch_receivables(onec, ds, date_from, date_to):
     """Строки для таблицы receivables с полем manager (ФИО того, кто ведёт заказ)."""
-    since = date_from - dt.timedelta(days=ds.get("lookback_days", 365))
     orders = onec._odata("Document_ЗаказКлиента", {
         "$format": "json", "$expand": "Менеджер,Контрагент",
-        "$filter": f"Posted eq true and DeletionMark eq false and Date ge datetime'{_when(since)}'",
+        "$filter": "Posted eq true and DeletionMark eq false",
         "$select": "Ref_Key,Number,Date,ДокументОснование,ОбъектРасчетов_Key,Менеджер/Description,Контрагент/Description,"
                    "ЭтапыГрафикаОплаты/ДатаПлатежа,ЭтапыГрафикаОплаты/СуммаПлатежа"})
     moves = {}
     for r in onec._odata("AccumulationRegister_РасчетыСКлиентами_RecordType", {
-            "$format": "json", "$filter": f"Period ge datetime'{_when(since)}' and Active eq true",
+            "$format": "json", "$filter": "Active eq true",
             "$select": "Period,RecordType,Сумма,ОбъектРасчетов_Key"}):
         if r.get("Сумма"):
             moves.setdefault(r["ОбъектРасчетов_Key"], []).append((r["Period"][:10], r["RecordType"], r["Сумма"]))
@@ -79,11 +106,12 @@ def fetch_receivables(onec, ds, date_from, date_to):
         obj = o.get("ОбъектРасчетов_Key")
         stages = [(_day(x.get("ДатаПлатежа")), x.get("СуммаПлатежа") or 0) for x in o.get("ЭтапыГрафикаОплаты") or []]
         stages = [(d, v) for d, v in stages if d and v > 0]
-        if not obj or obj == EMPTY or not stages or obj not in moves:
+        if not obj or obj == EMPTY or not stages:
             continue
         who = lead_of(o) or (o.get("Менеджер") or {}).get("Description")
-        for st in stage_rows(stages, moves[obj]):
+        for st in control_rows(stages, moves.get(obj, [])):
             out.append({"id": f"{o['Ref_Key']}-{st['n']}", "manager": who, "doc": o["Number"].strip(),
                         "client": (o.get("Контрагент") or {}).get("Description"), "ship_date": st["ship_date"],
-                        "due_date": st["due_date"], "paid_date": st["paid_date"], "amount": st["amount"]})
+                        "due_date": st["due_date"], "paid_date": st["paid_date"], "amount": st["amount"],
+                        "order_date": _day(o.get("Date")), "planned_amount": st["planned_amount"], "history": st["history"]})
     return out

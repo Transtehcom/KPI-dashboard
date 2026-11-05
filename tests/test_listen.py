@@ -1,6 +1,7 @@
 """Права на прослушивание записей и журнал: запросы к настоящему HTTP-серверу на временной базе.
 Запуск из папки kpi-dashboard: python -m unittest discover tests"""
 import json
+import gzip
 import os
 import pathlib
 import sys
@@ -11,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -89,6 +91,88 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_monthly_supply_score_access_and_validation(self):
+        employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
+        self.app.config['employees'].append(employee)
+        self.addCleanup(lambda:self.app.config['employees'].remove(employee))
+        def post(login,body):
+            req=urllib.request.Request(self.base+'/api/month-score',data=json.dumps(body).encode(),
+                headers={'Cookie':self.tokens[login],'Content-Type':'application/json'},method='POST')
+            try:
+                with urllib.request.urlopen(req) as r:return r.status
+            except urllib.error.HTTPError as e:
+                with e:return e.code
+        body={'emp':'supply-test','month':'2026-11','criterion':'docs','score':90,'comment':'месяц'}
+        self.assertEqual(post('boss',body),200)
+        self.assertEqual(post('pm',{**body,'score':100}),403)
+        self.assertEqual(post('boss',{**body,'criterion':'tasks'}),400)
+        self.assertEqual(post('boss',{**body,'score':101}),400)
+        self.assertEqual(post('boss',{**body,'emp':'pm'}),400)
+        row=self.con.execute("SELECT score FROM monthly_scores WHERE emp='supply-test' AND month='2026-11'").fetchone()
+        self.assertEqual(row['score'],90)
+
+    def test_client_approval_is_admin_only_and_invalidates_the_employee_report(self):
+        with db_lock():
+            self.con.execute("INSERT INTO clients(id,emp,name,need,strategy) VALUES('co99001','lead','Тест согласования',1,1)")
+            self.con.commit()
+        def cleanup():
+            with db_lock():
+                self.con.execute("DELETE FROM clients WHERE id='co99001'")
+                self.con.execute("DELETE FROM client_approvals WHERE ref='co99001'")
+                self.con.commit()
+        self.addCleanup(cleanup)
+        body = {"emp":"lead","month":"2026-11","ref":"co99001","value":0}
+        def post(login, value):
+            req = urllib.request.Request(self.base+"/api/client-approval",data=json.dumps(value).encode(),
+                                         headers={"Cookie":self.tokens[login],"Content-Type":"application/json"})
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code
+        def count():
+            report = json.loads(self.get("boss","/api/employee?login=lead&month=2026-11")[2])
+            return next(i for i in report["items"] if i["code"]=="base_development")["components"][0]["fact"]
+        initial = count()
+        self.assertEqual(post("lead",body),403)
+        self.assertEqual(post("boss",{**body,"value":True}),400)
+        self.assertEqual(post("boss",{**body,"emp":"pm"}),400)
+        self.assertEqual(post("boss",{**body,"ref":"missing"}),400)
+        self.assertEqual(post("boss",body),200)
+        self.assertEqual(count(),initial-1)
+        self.assertEqual(post("boss",{**body,"value":None}),200)
+        self.assertEqual(count(),initial)
+
+    def test_lead_approval_is_admin_only_and_checks_owner_and_profile(self):
+        with db_lock():
+            self.con.execute("INSERT INTO leads(id,emp,title) VALUES('lead99111','pm','Тест согласования лида')")
+            self.con.commit()
+        def cleanup():
+            with db_lock():
+                self.con.execute("DELETE FROM leads WHERE id='lead99111'")
+                self.con.execute("DELETE FROM lead_approvals WHERE ref='lead99111'")
+                self.con.commit()
+        self.addCleanup(cleanup)
+        body = {"emp":"pm","month":"2026-11","ref":"lead99111","value":0}
+        def post(login, value):
+            req = urllib.request.Request(self.base+"/api/lead-approval",data=json.dumps(value).encode(),
+                                         headers={"Cookie":self.tokens[login],"Content-Type":"application/json"})
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code
+        self.assertEqual(post("pm",body),403)
+        self.assertEqual(post("boss",{**body,"emp":"lead"}),400)
+        self.assertEqual(post("boss",{**body,"ref":"missing"}),400)
+        self.assertEqual(post("boss",{**body,"value":True}),400)
+        self.assertEqual(post("boss",body),200)
+        self.assertEqual(self.con.execute("SELECT approved FROM lead_approvals WHERE ref='lead99111'").fetchone()[0],0)
+        self.assertEqual(post("boss",{**body,"value":None}),200)
+        self.assertIsNone(self.con.execute("SELECT approved FROM lead_approvals WHERE ref='lead99111'").fetchone())
+
     def test_owner_listens_and_is_logged_once(self):
         code, h, body = self.get("pm", "/api/call-audio?id=call1")
         self.assertEqual((code, body, h["Content-Type"]), (200, AUDIO, "audio/mpeg"))
@@ -123,6 +207,11 @@ class ListenTest(unittest.TestCase):
         d = json.loads(self.get("boss", "/api/calls?login=&deal=12")[2])
         self.assertEqual([(c["id"], c["deals"], c["listens"]) for c in d["calls"]], [("call1", [12], 1)])
         self.assertEqual(self.get("pm", "/api/calls?deal=abc")[0], 400)
+
+    def test_workload_is_temporarily_admin_only(self):
+        for login in ("pm","tender","lead"):
+            self.assertEqual(self.get(login,"/api/workload")[0],403)
+        self.assertEqual(self.get("boss","/api/workload")[0],200)
 
     def test_listen_journal_only_for_admin(self):
         self.get("pm", "/api/call-audio?id=call1")
@@ -176,7 +265,7 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(self.log(), [("pm", "call1", "pm", "read"), ("tender", "call1", "pm", "denied")])
         calls = json.loads(self.get("pm", "/api/calls?month=2026-10")[2])["calls"]
         self.assertEqual({c["id"]: c["transcript"] for c in calls}, {"call1": "ready", "call2": None})
-        with db_lock():  # разбор Claude: роли по предложениям, имена — из таблицы замен
+        with db_lock():  # разбор Codex: роли по предложениям, имена — из таблицы замен
             self.con.execute("INSERT OR REPLACE INTO call_analysis (id, version, call_type, offer, agreement, result, roles, pii) "
                              "VALUES ('call1', 2, 'продажа', 1, 0, ?, 'К', ?)",
                              ('{"summary": "[ИМЯ_1] согласен с ценой", "call_type": "продажа", "offer": {"made": true}}',
@@ -215,6 +304,153 @@ class ListenTest(unittest.TestCase):
             urllib.request.urlopen(self.base + "/api/call-audio?id=call1")
         e.exception.close()
         self.assertEqual(e.exception.code, 401)
+
+    def test_gzip_responses_and_conditional_page_loading(self):
+        with urllib.request.urlopen(self.base + "/") as response:
+            plain = response.read()
+            tag = response.headers.get("ETag")
+        self.assertTrue(tag)
+        req = urllib.request.Request(self.base + "/",headers={"Accept-Encoding":"gzip"})
+        with urllib.request.urlopen(req) as response:
+            compressed = response.read()
+            self.assertEqual(response.headers.get("Content-Encoding"),"gzip")
+            self.assertLess(len(compressed),len(plain) / 2)
+            self.assertEqual(gzip.decompress(compressed),plain)
+            self.assertIn("Accept-Encoding",response.headers.get("Vary",""))
+        req = urllib.request.Request(self.base + "/",headers={"If-None-Match":tag})
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(req)
+        with error.exception:
+            self.assertEqual(error.exception.code,304)
+            self.assertEqual(error.exception.read(),b"")
+        code, headers, body = self.get("pm","/api/employee?month=2026-11",{"Accept-Encoding":"gzip"})
+        self.assertEqual(code,200)
+        self.assertEqual(json.loads(gzip.decompress(body))["login"],"pm")
+        self.assertEqual(headers.get("Cache-Control"),"no-store")
+        code, headers, body = self.get("pm","/api/employee?month=2026-11",{"Accept-Encoding":"gzip;q=0, *;q=1"})
+        self.assertEqual(code,200)
+        self.assertNotIn("Content-Encoding",headers)
+        self.assertEqual(json.loads(body)["login"],"pm")
+        self.assertEqual(self.get("tender","/api/employee?login=pm&month=2026-11")[0],403)
+
+    def test_employee_feedback_and_admin_review(self):
+        with db_lock():
+            self.con.execute("INSERT OR REPLACE INTO call_analysis(id,result) VALUES (?,?)",
+                             ("call1", json.dumps({"summary": "Договорились о встрече"})))
+            self.con.commit()
+        def clean_feedback():
+            with db_lock():
+                self.con.execute("DELETE FROM call_analysis WHERE id='call1'")
+                self.con.execute("DELETE FROM call_feedback WHERE record='call1'")
+                self.con.commit()
+        self.addCleanup(clean_feedback)
+
+        def post(login, path, body):
+            req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(),
+                                         headers={"Cookie": self.tokens[login], "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.load(r)
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, json.load(e)
+
+        body = {"id": "call1", "rating": 3, "comment": "Договорились о встрече, это не секретарь",
+                "criteria": ["secretary", "agreement", "tone"]}
+        self.assertEqual(post("tender", "/api/call-feedback", body)[0], 403)
+        self.assertEqual(post("boss", "/api/call-feedback", body)[0], 403)
+        self.assertEqual(post("pm", "/api/call-feedback", {**body, "comment": "   "})[0], 400)
+        self.assertEqual(post("pm", "/api/call-feedback", {**body, "criteria": ["invented"]})[0], 400)
+        for rating in (True, None, "3", 0, 6, 3.5):
+            self.assertEqual(post("pm", "/api/call-feedback", {**body, "rating": rating})[0], 400)
+        code, saved = post("pm", "/api/call-feedback", body)
+        self.assertEqual(code, 200)
+        revision = saved["feedback"]["revision"]
+        self.assertEqual(saved["feedback"]["status"], "pending")
+        pending = json.loads(self.get("boss", "/api/calls?all=1&feedback=pending")[2])
+        self.assertEqual([c["id"] for c in pending["calls"]], ["call1"])
+        manager = json.loads(self.get("boss", "/api/calls?all=1")[2])
+        call = next(c for c in manager["calls"] if c["id"] == "call1")
+        self.assertEqual(call["feedback"][0]["criteria"], body["criteria"])
+        self.assertEqual(call["feedback"][0]["comment"], body["comment"])
+        self.assertIn("secretary", {c["key"] for c in manager["feedback_criteria"]})
+        lead = self.app.user("lead")
+        old_department = lead["department"]
+        lead["department"] = "ОП"
+        try:
+            coworker = json.loads(self.get("lead", "/api/calls?all=1")[2])
+            self.assertEqual(post("lead", "/api/call-feedback", body)[0], 403)
+        finally:
+            lead["department"] = old_department
+        self.assertEqual(next(c for c in coworker["calls"] if c["id"] == "call1")["feedback"], [])
+        review = {"id": "call1", "author": "pm", "revision": revision, "note": "Проверено вручную"}
+        self.assertEqual(post("pm", "/api/call-feedback-review", review)[0], 403)
+        code, reviewed = post("boss", "/api/call-feedback-review", review)
+        self.assertEqual(code, 200)
+        self.assertEqual(reviewed["feedback"]["status"], "resolved")
+        self.assertEqual(reviewed["feedback"]["resolution"], review["note"])
+        pending = json.loads(self.get("boss", "/api/calls?all=1&feedback=pending")[2])
+        self.assertEqual(pending["calls"], [])
+        unchanged = post("pm", "/api/call-feedback", body)[1]["feedback"]
+        self.assertEqual((unchanged["revision"], unchanged["status"]), (revision, "resolved"))
+        code, saved = post("pm", "/api/call-feedback", {**body, "comment": "Есть ещё ошибка в интонации"})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["feedback"]["status"], "pending")
+        self.assertGreater(saved["feedback"]["revision"], revision)
+        self.assertEqual(post("boss", "/api/call-feedback-review", review)[0], 409)
+        self.assertEqual(post("pm", "/api/call-feedback", {"id": "call1", "rating": 5})[0], 200)
+        own = json.loads(self.get("pm", "/api/calls?all=1")[2])
+        feedback = next(c for c in own["calls"] if c["id"] == "call1")["feedback"][0]
+        self.assertEqual((feedback["rating"], feedback["comment"], feedback["criteria"], feedback["status"]),
+                         (5, "", [], "accepted"))
+        self.assertIsNone(self.con.execute("SELECT secretary FROM call_marks WHERE id='call1'").fetchone())
+
+    def test_feedback_respects_listening_permission_and_requires_analysis(self):
+        req = urllib.request.Request(self.base + "/api/call-feedback",
+                                     data=json.dumps({"id": "call1", "rating": 5}).encode(),
+                                     headers={"Cookie": self.tokens["pm"], "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(req)
+        error.exception.close()
+        self.assertEqual(error.exception.code, 400)
+        self.app.config["call_records"]["listen_own"] = False
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(req)
+            error.exception.close()
+            self.assertEqual(error.exception.code, 403)
+        finally:
+            del self.app.config["call_records"]["listen_own"]
+
+    def test_slow_response_does_not_block_another_employee_request(self):
+        sending, release, completed = threading.Event(), threading.Event(), threading.Event()
+        original = Handler.send_json
+        results = []
+
+        def slow_send(handler, *args, **kwargs):
+            if "slow_client=1" in handler.path:
+                sending.set()
+                release.wait(5)
+            return original(handler, *args, **kwargs)
+
+        def quick_request():
+            results.append(self.get("pm", "/api/employee?month=2026-11"))
+            completed.set()
+
+        with patch.object(Handler, "send_json", slow_send):
+            slow = threading.Thread(target=lambda: self.get("pm", "/api/calls?slow_client=1"))
+            quick = threading.Thread(target=quick_request)
+            slow.start()
+            try:
+                self.assertTrue(sending.wait(2), "slow response did not start")
+                quick.start()
+                self.assertTrue(completed.wait(2), "a slow client held the shared database lock")
+                self.assertEqual(results[0][0], 200)
+            finally:
+                release.set()
+                slow.join(5)
+                if quick.ident is not None:
+                    quick.join(5)
 
 
 if __name__ == "__main__":

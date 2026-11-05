@@ -2,14 +2,12 @@
 
 Остаток — движения регистров денежных средств (безналичные, наличные, ККМ): приход минус расход по счетам и кассам,
 отдельно по валютам; дата последнего движения показывается рядом (OData в 1С — копия базы на прошлый день).
-Плановые выплаты:
-  заявки на расходование денежных средств с датой платежа не раньше среза — «Согласована» и «К оплате» считаются
-  согласованными, «Не согласована» — нет; платёжные документы на заявки не ссылаются, поэтому оплаченные раньше
-  заявки с прошлой датой не берутся;
-  план оплаты поставщикам (регистр РасчетыСПоставщикамиПланОплат) — открытые этапы (приход минус расход) с датой
-  не раньше среза. Заявки на них в 1С не связаны, поэтому они «не согласованы» и в календарь не входят.
-Авансы клиентов — открытые этапы плана оплаты клиентов «до отгрузки» / «до обеспечения» (регистр РасчетыСКлиентамиПланОплат);
-этапы после отгрузки — долг за отгрузку, он берётся из дебиторки.
+Поступления периода — безналичные поступления ООО «ТрансТехКом» с операцией «Поступление оплаты от клиента»,
+проведённые банком; период определяется датой проведения банком.
+Плановые выплаты — заявки на расходование денежных средств со статусами «Согласована», «Не согласована» и «К оплате».
+Фактические выплаты — сумма заявок, отмеченных «Закрыта», либо полностью покрытых проведёнными документами
+«Списание безналичных денежных средств» (связь хранится в строках расшифровки платежа).
+Графики оплаты сохраняются за все даты: период календаря выбирается после загрузки.
 """
 import datetime as dt
 
@@ -22,9 +20,12 @@ OPERATIONS = {"ОплатаПоставщику": "Оплата поставщи
               "ПрочаяВыдачаДенежныхСредств": "Прочая выплата"}
 # внутренние переводы между своими счетами в поток не входят
 INTERNAL_OPERATIONS = {"ПеречислениеНаДругойСчет", "ПеремещениеДенежныхСредств", "ПереводМеждуСвоимиСчетами"}
+PLAN_STATUSES = {"Согласована", "НеСогласована", "КОплате"}
 APPROVED = {"Согласована", "КОплате"}
 ADVANCE_VARIANTS = {"ПредоплатаДоОтгрузки", "АвансДоОбеспечения"}
 OPEN_EPS = 0.5
+RECEIPT_ORGANIZATION = "ООО «ТрансТехКом»"
+CUSTOMER_RECEIPT_OPERATION = "ПоступлениеОплатыОтКлиента"
 
 
 def _day(v):
@@ -63,7 +64,7 @@ def open_plan(rows):
 
 def request_row(r, counterparty, priorities, currencies, today):
     """Заявка на расходование ДС → строка плановых выплат или None (внутренний перевод, дата раньше среза)."""
-    if r["ХозяйственнаяОперация"] in INTERNAL_OPERATIONS:
+    if r["ХозяйственнаяОперация"] in INTERNAL_OPERATIONS or r.get("Статус") not in PLAN_STATUSES:
         return None
     plan = _day(r.get("ДатаПлатежа")) or _day(r.get("ЖелательнаяДатаПлатежа"))
     if plan and plan < today:
@@ -76,6 +77,80 @@ def request_row(r, counterparty, priorities, currencies, today):
             "contract": _day(r.get("ЖелательнаяДатаПлатежа")), "plan": plan,
             "approval": "Согласовано" if r["Статус"] in APPROVED else "Не согласовано",
             "priority": priorities.get(r.get("ПриоритетОплаты_Key"))}
+
+
+def actual_rows(requests, payments, currencies):
+    """Фактические движения для плиток. Заявка считается выплаченной только целиком: явный флаг «Закрыта» либо
+    сумма проведённых списаний по ссылкам из РасшифровкаПлатежа покрывает сумму заявки."""
+    paid, paid_date = {}, {}
+    for p in payments:
+        if not p.get("Posted") or p.get("DeletionMark"):
+            continue
+        for line in p.get("РасшифровкаПлатежа") or []:
+            ref = line.get("ЗаявкаНаРасходованиеДенежныхСредств")
+            if not ref or ref == "00000000-0000-0000-0000-000000000000":
+                continue
+            paid[ref] = paid.get(ref, 0.0) + (line.get("Сумма") or 0)
+            paid_date[ref] = max(paid_date.get(ref, ""), _day(p.get("Date")) or "")
+    out = []
+    for r in requests:
+        amount = round(r.get("СуммаДокумента") or 0, 2)
+        if r.get("ХозяйственнаяОперация") in INTERNAL_OPERATIONS or amount <= 0:
+            continue
+        full = bool(r.get("Закрыта")) or paid.get(r["Ref_Key"], 0) >= amount - OPEN_EPS
+        if not full:
+            continue
+        day = paid_date.get(r["Ref_Key"]) or _day(r.get("ДатаПлатежа")) or _day(r.get("Date"))
+        out.append({"id": "out:" + r["Ref_Key"], "kind": "out", "doc": (r.get("Number") or "").strip(),
+                    "dt": day, "amount": amount, "currency": currencies.get(r.get("Валюта_Key"), "руб.")})
+    return out
+
+
+def customer_payment_rows(orders, currencies):
+    """Все датированные этапы «Безналичные платежи: к поступлению» из графиков оплаты заказов клиентов.
+
+    Прошедшие даты сохраняются: пользователь может выбрать в платёжном календаре прошлый период.
+    """
+    out = []
+    for o in orders:
+        num = (o.get("Number") or "").strip()
+        party = (o.get("Контрагент") or {}).get("Description") or "Клиент"
+        for i, stage in enumerate(o.get("ЭтапыГрафикаОплаты") or []):
+            day = _day(stage.get("ДатаПлатежа"))
+            amount = round(stage.get("СуммаПлатежа") or 0, 2)
+            if not day or amount <= 0:
+                continue
+            out.append({"id": f"cp:{o['Ref_Key']}:{i}:{day}", "kind": "in", "source": "customer_plan",
+                        "doc": num, "doc_date": _day(o.get("Date")), "party": party, "basis": num or "—",
+                        "purpose": "Безналичные платежи: к поступлению", "detail": "Этап графика оплаты заказа клиента",
+                        "amount": amount, "currency": currencies.get(o.get("Валюта_Key"), "руб."),
+                        "contract": day, "plan": day, "approval": None, "priority": None})
+    return out
+
+
+def receipt_organization_key(organizations):
+    """Точное имя организации без различий в кавычках, регистре и пробелах."""
+    normalize = lambda v: "".join(str(v or "").translate(str.maketrans("", "", '\"«»„“”')).split()).casefold()
+    keys = [r["Ref_Key"] for r in organizations if not r.get("DeletionMark")
+            and normalize(r.get("Description")) == normalize(RECEIPT_ORGANIZATION)]
+    if len(keys) != 1:
+        raise ValueError(f"Не найдена однозначно организация {RECEIPT_ORGANIZATION} для поступлений периода")
+    return keys[0]
+
+
+def customer_receipt_rows(receipts, organization_key, currencies):
+    """Фактические оплаты клиентов нужной организации по дате «Проведено банком»."""
+    out = []
+    for r in receipts:
+        if (not r.get("Posted") or not r.get("ПроведеноБанком") or r.get("DeletionMark") or r.get("Организация_Key") != organization_key
+                or r.get("ХозяйственнаяОперация") != CUSTOMER_RECEIPT_OPERATION):
+            continue
+        amount = round(r.get("СуммаДокумента") or 0, 2)
+        day = _day(r.get("ДатаПроведенияБанком"))
+        if amount > 0 and day:
+            out.append({"id": "in:" + r["Ref_Key"], "kind": "in", "doc": (r.get("Number") or "").strip(),
+                        "dt": day, "amount": amount, "currency": currencies.get(r.get("Валюта_Key"), "руб.")})
+    return out
 
 
 def fetch(onec, today=None):
@@ -98,43 +173,32 @@ def fetch(onec, today=None):
     cash = cash_balances(records, accounts, currencies)
 
     priorities = {p["Ref_Key"]: p["Description"] for p in q("Catalog_ПриоритетыОплаты")}
+    since = (dt.date.fromisoformat(today) - dt.timedelta(days=62)).isoformat()
     reqs = q("Document_ЗаявкаНаРасходованиеДенежныхСредств", {
-        "$filter": "DeletionMark eq false and Posted eq true and ДатаПлатежа ge datetime'%sT00:00:00'" % today, "$expand": "Контрагент",
+        "$filter": "DeletionMark eq false and Posted eq true and ДатаПлатежа ge datetime'%sT00:00:00'" % since, "$expand": "Контрагент",
         "$select": "Ref_Key,Number,Date,Статус,ХозяйственнаяОперация,СуммаДокумента,Валюта_Key,НазначениеПлатежа,ЖелательнаяДатаПлатежа,"
-                   "ДатаПлатежа,ПриоритетОплаты_Key,Контрагент/Description"})
+                   "ДатаПлатежа,Закрыта,ПриоритетОплаты_Key,Контрагент/Description"})
     plan = []
     for r in reqs:
         row = request_row(r, (r.get("Контрагент") or {}).get("Description"), priorities, currencies, today)
         if row:
             plan.append(row)
-    sel = "Period,RecordType,ОбъектРасчетов_Key,Валюта_Key,ДокументПлан,ДатаПлановогоПогашения,ВариантОплаты,КОплате"
-    sup_orders = {o["Ref_Key"]: o for o in q("Document_ЗаказПоставщику", {"$expand": "Контрагент",
-                                                                         "$select": "Ref_Key,Number,Date,Контрагент/Description"})}
-    for s in open_plan(q("AccumulationRegister_РасчетыСПоставщикамиПланОплат_RecordType", {"$filter": "Active eq true", "$select": sel})):
-        if s["date"] < today:
-            continue
-        o = sup_orders.get(s["doc_key"], {})
-        num = (o.get("Number") or "").strip()
-        plan.append({"id": f"sp:{s['doc_key']}:{s['date']}:{s['variant']}", "kind": "out", "source": "supplier_plan", "doc": num, "doc_date": _day(o.get("Date")),
-                     "party": (o.get("Контрагент") or {}).get("Description") or "Поставщик", "basis": num or "—",
-                     "purpose": "Аванс" if "Предоплата" in s["variant"] or "Аванс" in s["variant"] else "Оплата по графику",
-                     "detail": "План оплаты заказа поставщику (" + s["variant"] + ")", "amount": s["amount"],
-                     "currency": currencies.get(s["currency_key"], "руб."), "contract": s["date"], "plan": s["date"],
-                     "approval": "Не согласовано", "priority": None})
+    payments = q("Document_СписаниеБезналичныхДенежныхСредств", {
+        "$filter": "DeletionMark eq false and Posted eq true and Date ge datetime'%sT00:00:00'" % since,
+        "$select": "Ref_Key,Number,Date,Posted,DeletionMark,РасшифровкаПлатежа"})
+    actual = actual_rows(reqs, payments, currencies)
+    organization_key = receipt_organization_key(q("Catalog_Организации"))
+    receipts = q("Document_ПоступлениеБезналичныхДенежныхСредств", {
+        "$filter": "DeletionMark eq false and Posted eq true and ПроведеноБанком eq true and "
+                   f"Организация_Key eq guid'{organization_key}' and ХозяйственнаяОперация eq '{CUSTOMER_RECEIPT_OPERATION}'",
+        "$select": "Ref_Key,Number,Date,Posted,DeletionMark,ПроведеноБанком,ДатаПроведенияБанком,"
+                   "Организация_Key,ХозяйственнаяОперация,СуммаДокумента,Валюта_Key"})
+    actual.extend(customer_receipt_rows(receipts, organization_key, currencies))
     cust_orders = {o["Ref_Key"]: o for o in q("Document_ЗаказКлиента", {"$filter": "DeletionMark eq false",
-                                                                       "$expand": "Контрагент", "$select": "Ref_Key,Number,Date,Статус,ОбъектРасчетов_Key,Контрагент/Description"})}
+        "$expand": "Контрагент", "$select": "Ref_Key,Number,Date,Статус,ОбъектРасчетов_Key,Валюта_Key,ЭтапыГрафикаОплаты,Контрагент/Description"})}
     debt = client_debt(cust_orders.values(), q("AccumulationRegister_РасчетыСКлиентами/Balance()"))
-    for s in open_plan(q("AccumulationRegister_РасчетыСКлиентамиПланОплат_RecordType", {"$filter": "Active eq true", "$select": sel})):
-        if s["variant"] not in ADVANCE_VARIANTS or s["date"] < today:  # давние открытые этапы — не оплаты, а недозакрытый план
-            continue
-        o = cust_orders.get(s["doc_key"], {})
-        num = (o.get("Number") or "").strip()
-        plan.append({"id": f"cp:{s['doc_key']}:{s['date']}:{s['variant']}", "kind": "in", "source": "customer_plan", "doc": num, "doc_date": _day(o.get("Date")),
-                     "party": (o.get("Контрагент") or {}).get("Description") or "Клиент", "basis": num or "—", "purpose": "Аванс",
-                     "detail": "План оплаты заказа клиента (" + s["variant"] + ")", "amount": s["amount"],
-                     "currency": currencies.get(s["currency_key"], "руб."), "contract": s["date"], "plan": s["date"],
-                     "approval": None, "priority": None})
-    return {"cash": cash, "plan": plan, "debt": debt}
+    plan.extend(customer_payment_rows(cust_orders.values(), currencies))
+    return {"cash": cash, "plan": plan, "actual": actual, "debt": debt}
 
 
 # в сумму «Долга клиента» идут только заказы в этих статусах (решение от 29.10.2026)
@@ -165,6 +229,9 @@ def store(con, data, now=None):
             "approval", "priority"]
     con.executemany(f"INSERT OR REPLACE INTO money_plan ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                     [[p[c] for c in cols] for p in data["plan"]])
+    con.execute("DELETE FROM money_actual")
+    con.executemany("INSERT OR REPLACE INTO money_actual (id,kind,doc,dt,amount,currency) VALUES (?,?,?,?,?,?)",
+                    [(r["id"], r["kind"], r["doc"], r["dt"], r["amount"], r["currency"]) for r in data.get("actual", [])])
     if data.get("debt"):
         con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt', ?)", (str(data["debt"]["amount"]),))
         con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt_orders', ?)", (str(data["debt"]["orders"]),))

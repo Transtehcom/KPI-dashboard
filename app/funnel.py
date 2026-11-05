@@ -2,6 +2,7 @@
 import datetime as dt
 
 from .common import load_rules
+from .crm_links import record_url, client_url, object_url
 
 DEFAULT_SECTIONS = {
     "deals": [
@@ -28,14 +29,12 @@ def _days(since, now):
         return None
 
 
-# «Факт»: лишние этапы вокруг этапов из настроек — «Создано» в начале и итоги закрытия в конце
-FACT_FIRST = {"key": "_created", "title": "Создано в периоде", "created": True}
+# «Факт» строится только по времени переходов из истории стадий Битрикс24.
 FACT_LAST = [{"key": "_won", "title": "Закрыто успешно", "semantic": "S"}, {"key": "_lost", "title": "Закрыто неуспешно", "semantic": "F"}]
 
 
 def _fact_rows(con, entity, date_from, date_to):
-    """Записи, с которыми что-то произошло в периоде (создание или переход на стадию), и сами переходы периода.
-    У записи _new — создана в периоде."""
+    """Записи, у которых был переход по истории стадий в периоде, и сами переходы периода."""
     recs = {r["id"]: dict(r) for r in con.execute("SELECT * FROM fact_records WHERE entity = ?", (entity,))}
     inside = lambda ts: bool(ts) and (not date_from or ts[:10] >= date_from) and (not date_to or ts[:10] <= date_to)
     moves = [dict(r) for r in con.execute("SELECT * FROM stage_moves WHERE entity = ? ORDER BY ts", (entity,))
@@ -43,9 +42,7 @@ def _fact_rows(con, entity, date_from, date_to):
     by_rec = {}
     for m in moves:
         by_rec.setdefault(m["rid"], []).append(m)
-    for r in recs.values():
-        r["_new"] = inside(r["created"])
-    touched = {i for i, r in recs.items() if r["_new"] or i in by_rec}
+    touched = set(by_rec)
     return [recs[i] for i in touched], by_rec
 
 
@@ -57,10 +54,6 @@ def _fact_pick(sc, rows, by_rec):
     only_cats = {str(c) for c in sc.get("category_ids") or []}
     out = []
     for r in rows:
-        if sc.get("created"):
-            if r["_new"]:
-                out.append(r)
-            continue
         hit = None
         for m in by_rec.get(r["id"], []):
             if only_cats and m["category_id"] not in only_cats:
@@ -84,7 +77,7 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
     """login — ключ ответственного (логин сотрудника или «id:<ID в Б24>») либо список таких ключей.
     date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
     в период: created — дата создания, stage — дата перехода на текущую стадию.
-    mode="fact" — «Факт»: что произошло в периоде по истории стадий (создано, перешло на стадии этапов, закрыто),
+    mode="fact" — «Факт»: переходы по стадиям и закрытие в периоде по истории стадий,
     включая уже закрытые записи; date_field в этом режиме не используется.
     departments — отделы ответственных из раздела «Сотрудники» (по логину, а без KPI — по ID в Б24);
     «» — ответственные, которых в разделе нет («Без отдела»)."""
@@ -94,7 +87,7 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
     fact = mode == "fact"
     if fact:
         all_rows, by_rec = _fact_rows(con, entity, date_from, date_to)
-        sections_cfg = [FACT_FIRST, *sections_cfg, *FACT_LAST]
+        sections_cfg = [*sections_cfg, *FACT_LAST]
     else:
         all_rows = [dict(r) for r in con.execute("SELECT * FROM crm_deals WHERE COALESCE(entity, 'deal') = ?", (entity,))]
         if not fcfg.get("include_closed"):
@@ -190,7 +183,10 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
             "avg_days_on_stage": round(sum(ages) / len(ages)) if ages else None,
             "by_stage": sorted(by_stage.values(), key=lambda x: (x["category"], x["sort"])),
             "by_responsible": sorted(by_resp.values(), key=lambda x: (-x["amount"], -x["count"])),
-            "deals": [{"title": r["title"], "client": r["client"], "responsible": r["responsible"], "category": r["category"],
+            "deals": [{"id": r["id"], "title": r["title"], "client": r["client"],
+                       "url": record_url(config, "fact_records" if fact else "crm_deals", r), "client_url": client_url(config, r),
+                       "responsible_url": object_url(config, "user", r["responsible_id"]),
+                       "responsible": r["responsible"], "category": r["category"],
                        "stage": r["stage"], "amount": r["amount"], "days": _days(r["stage_since"], now)} for r in deals[:300]],
         })
     first = sections[0]["count"] if sections else 0
@@ -210,6 +206,8 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         "mode": mode,
         "config_key": cfg_key,
         "snapshot": snap,
+        "history_from": min((r[0] for r in con.execute(
+            "SELECT ts FROM stage_moves WHERE entity=? AND ts IS NOT NULL", (entity,))), default=None),
         "sections": sections,
         "total": len(in_funnel),
         "total_amount": sum(r["amount"] or 0 for r in rows if r["id"] in in_funnel),

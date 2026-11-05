@@ -6,13 +6,16 @@
 Если по основанию несколько заявок с разными ответственными, заказ ни на кого не относится.
 
 Плановая дата поставки — «Конечная дата поставки» (ТТК_КонечнаяДатаПоставки) в связанном заказе клиента;
-если она не заполнена, заказ в KPI 1 не попадает, пока руководитель не введёт дату в дашборде.
+фактическая для KPI 1 — ТТК_ФактическаяДатаПоставки того же заказа (customer_actual_date).
+actual_date хранит дату поступления по заказу поставщику отдельно и не подменяет дату клиента.
+Месяц KPI 1 определяется конечной датой поставки заказа клиента; без неё заказ не попадает в выборку.
 
 Отсрочка — из «Правил оплаты» заказа поставщику (ЭтапыГрафикаОплаты): строки «от даты заказа» с контролем «Оплата до
 отгрузки» или «Оплата после отгрузки»; «% платежа» → доля отсрочки (сумма по таким строкам), «Срок (дн)» → дней отсрочки
 (наименьший). Нет таких строк — отсрочки нет (0); нет правил оплаты — ждёт ввода руководителя.
-Поля без источника в 1С (брак, пересорт, лот, признаки конкурентности) вводит руководитель в дашборде; его ввод
-важнее выгрузки и для отсрочки.
+Количество поставщиков для KPI 3 берётся из полей Поставщик 1…10 связанной заявки в отдел снабжения и хранится
+в исторически названном поле kp_count. Поля без источника в 1С (брак, пересорт, лот, монополия, аварийность,
+утверждённое обоснование) вводит руководитель в дашборде; его ввод важнее выгрузки и для отсрочки.
 """
 import datetime as dt
 
@@ -45,32 +48,47 @@ def _moment(v):
     return None if not v or str(v).startswith("0001") else str(v)[:19]
 
 
+def supply_request_context(onec, ds, date_from):
+    """Заказы клиентов и заявки снабжения для определения ответственного по основанию."""
+    lookback = date_from - dt.timedelta(days=ds.get("lookback_days", 365))
+    customer_orders = onec._odata("Document_ЗаказКлиента", {
+        "$format": "json", "$filter": f"Date ge datetime'{_when(lookback)}'",
+        "$select": "Ref_Key,Number,Date,ДокументОснование,ТТК_КонечнаяДатаПоставки,ТТК_ФактическаяДатаПоставки"})
+    requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
+        "$format": "json", "$expand": "ОтветственныйСнабжение",
+        "$filter": f"DeletionMark eq false and Date ge datetime'{_when(lookback)}'",
+        "$select": "Ref_Key,Number,ДокументОснования,СтатусЗаявки,ОтветственныйСнабжение/Description," + ",".join(SUPPLIERS)})
+    by_base = {}
+    for request in requests:
+        by_base.setdefault(request.get("ДокументОснования"), []).append(request)
+    return {"customers": {c["Ref_Key"]: c for c in customer_orders},
+            "by_base": by_base, "by_id": {r["Ref_Key"]: r for r in requests}}
+
+
+def order_requests(order, context):
+    customer = context["customers"].get(order.get("ТТК_ЗаказКлиента_Key"))
+    direct = context["by_id"].get(order.get("ДокументОснование"))
+    requests = context["by_base"].get(customer.get("ДокументОснование"), []) if customer else []
+    if direct:
+        requests = [direct]
+    return [r for r in requests if r.get("СтатусЗаявки") != "Отменена"] or requests
+
+
 def fetch_supplier_orders(onec, ds, date_from, date_to):
     """onec: OneC; ds: настройки набора. Возвращает строки для таблицы supplier_orders с полем manager (ФИО)."""
-    lookback = date_from - dt.timedelta(days=ds.get("lookback_days", 365))
     posted = "Posted eq true and DeletionMark eq false"
     orders = onec._odata("Document_ЗаказПоставщику", {
         "$format": "json", "$expand": "Контрагент",
         "$filter": f"{posted} and Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
-        "$select": "Ref_Key,Number,Date,ТТК_ЗаказКлиента_Key,Контрагент/Description,"
+        "$select": "Ref_Key,Number,Date,Автор_Key,ТТК_ЗаказКлиента_Key,ДокументОснование,Контрагент/Description,"
                    "Товары/СуммаСНДС,Товары/СуммаНДС,Товары/Отменено,ЭтапыГрафикаОплаты"})
-    customer_orders = onec._odata("Document_ЗаказКлиента", {
-        "$format": "json", "$filter": f"Date ge datetime'{_when(lookback)}'",
-        "$select": "Ref_Key,Number,ДокументОснование,ТТК_КонечнаяДатаПоставки"})
-    requests = onec._odata("Document_ТТК_ЗаявкаВОтделСнабжения", {
-        "$format": "json", "$expand": "ОтветственныйСнабжение",
-        "$filter": f"DeletionMark eq false and Date ge datetime'{_when(lookback)}'",
-        "$select": "Ref_Key,ДокументОснования,СтатусЗаявки,ОтветственныйСнабжение/Description," + ",".join(SUPPLIERS)})
+    context = supply_request_context(onec, ds, date_from)
     receipts = onec._odata("Document_ПриобретениеТоваровУслуг", {
         "$format": "json", "$filter": f"{posted} and Date ge datetime'{_when(date_from)}'",
         "$select": "Ref_Key,Date,Товары/ЗаказПоставщику_Key"})
     balance = onec._odata("AccumulationRegister_ЗаказыПоставщикам/Balance()", {
         "$format": "json", "$select": "ЗаказПоставщику_Key,КПоступлениюBalance"})
 
-    co = {c["Ref_Key"]: c for c in customer_orders}
-    by_base = {}
-    for r in requests:
-        by_base.setdefault(r.get("ДокументОснования"), []).append(r)
     last_receipt = {}
     for rc in receipts:
         for line in rc.get("Товары") or []:
@@ -84,22 +102,27 @@ def fetch_supplier_orders(onec, ds, date_from, date_to):
 
     out = []
     for o in orders:
-        c = co.get(o.get("ТТК_ЗаказКлиента_Key"))
-        reqs = by_base.get(c["ДокументОснование"], []) if c else []
-        active = [r for r in reqs if r.get("СтатусЗаявки") != "Отменена"] or reqs
+        c = context["customers"].get(o.get("ТТК_ЗаказКлиента_Key"))
+        active = order_requests(o, context)
         names = {(r.get("ОтветственныйСнабжение") or {}).get("Description") for r in active} - {None, ""}
         manager = names.pop() if len(names) == 1 else None
-        kp_count = max((sum(1 for s in SUPPLIERS if r.get(s) and r[s] != EMPTY) for r in active), default=None)
+        # Явное правило по автору имеет приоритет перед ответственным заявки.
+        manager = ds.get("author_owners", {}).get(o.get("Автор_Key")) or manager
+        supplier_count = max((sum(1 for s in SUPPLIERS if r.get(s) and r[s] != EMPTY) for r in active), default=None)
         lines = [x for x in o.get("Товары") or [] if not x.get("Отменено")]
         out.append({
             "id": o["Ref_Key"], "manager": manager, "doc": o["Number"].strip(), "dt": o["Date"][:10],
+            "author_key": o.get("Автор_Key"),
             "supplier": (o.get("Контрагент") or {}).get("Description"),
             "amount_novat": round(sum((x.get("СуммаСНДС") or 0) - (x.get("СуммаНДС") or 0) for x in lines), 2),
             "planned_date": _date(c.get("ТТК_КонечнаяДатаПоставки")) if c else None,
             "actual_date": last_receipt.get(o["Ref_Key"]),
             "complete": to_receive.get(o["Ref_Key"], 0) <= 0,
             "customer_order": c["Number"].strip() if c else None,
-            "kp_count": kp_count,
+            "customer_order_key": c["Ref_Key"] if c else None,
+            "customer_order_date": _date(c.get("Date")) if c else None,
+            "customer_actual_date": _date(c.get("ТТК_ФактическаяДатаПоставки")) if c else None,
+            "kp_count": supplier_count,  # историческое имя столбца; фактически поставщики в заявке снабжения
             **dict(zip(("deferred_share", "deferral_days"), deferral(o.get("ЭтапыГрафикаОплаты") or []))),
         })
     return out

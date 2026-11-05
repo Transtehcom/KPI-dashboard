@@ -312,9 +312,23 @@ def generate(con, config):
                      planned_cost=round(r["price"] * 1.04, -3), actual_cost=round(r["price"] * 1.05, -3))
             break
 
+    # Demo orders follow the same independent-document conversion as the live dataset.
+    for table, role in (("kp", "sales"), ("tenders_1c", "sales"), ("supply_funnel", "supply")):
+        for r in data[table]:
+            if not (r.get("ordered") or r.get("status") == "Выиграно" or r.get("stage") == "ordered"):
+                continue
+            key = nid("co")
+            data["conversion_orders"].append({"id": key, "order_key": key, "emp": r["emp"], "dt": r["dt"],
+                "doc": r.get("customer_order") or "ЗК-" + key, "client": r.get("client"), "role": role,
+                "status": "ТТК_ВЗакуп", "amount": r.get("amount", 100000),
+                "request_docs": r.get("doc") if role == "supply" else None})
+
     with db_lock():
         for table in SYNC_TABLES:
             replace_rows(con, table, data[table], commit=False)
+        con.executemany("INSERT OR REPLACE INTO dataset_state VALUES (?,?,?,?)",
+                        [(name, months[0] + "-01", t.isoformat(), dt.datetime.now().isoformat())
+                         for name in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties")])
         con.execute("DELETE FROM clients_monthly")
         con.executemany("INSERT INTO clients_monthly (month, id, emp, name, need, strategy) VALUES (?,?,?,?,?,?)", snapshots)
         con.execute("DELETE FROM manual_scores")

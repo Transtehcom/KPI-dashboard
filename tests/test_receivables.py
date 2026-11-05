@@ -1,14 +1,45 @@
 """Тесты дебиторки по заказам клиентов из 1С. Запуск из папки kpi-dashboard: python -m unittest discover tests"""
 import os
+import datetime as dt
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.onec_receivables import stage_rows  # noqa: E402
+from app.onec_receivables import control_rows, fetch_receivables, stage_rows, state_at  # noqa: E402
 
 
 class StageRowsTest(unittest.TestCase):
+    def test_control_keeps_unshipped_stages_without_debt(self):
+        row = control_rows([("2026-12-01", 1000)], [])[0]
+        self.assertEqual((row["planned_amount"], row["amount"], row["ship_date"]), (1000, 0, None))
+
+    def test_state_at_excludes_later_shipments_and_payments(self):
+        row = control_rows([("2026-10-10", 1000)], [
+            ("2026-10-01", "Receipt", 600), ("2026-10-20", "Expense", 100),
+            ("2026-11-03", "Receipt", 400), ("2026-11-10", "Expense", 900)])[0]
+        oct_state = state_at(row, dt.date(2026, 10, 31))
+        self.assertEqual((oct_state["amount"], oct_state["paid_date"]), (500, None))
+        self.assertEqual(state_at(row, dt.date(2026, 9, 30))["amount"], 0)
+        self.assertEqual(state_at(row, dt.date(2026, 11, 30))["paid_date"], "2026-11-10")
+
+    def test_loader_keeps_old_orders_and_future_payment_dates(self):
+        queries = {}
+
+        class FakeOneC:
+            def _odata(self, entity, params):
+                queries[entity] = params
+                if entity == "Document_ЗаказКлиента":
+                    return [{"Ref_Key": "old", "Number": "З-1", "Date": "2020-01-01T00:00:00",
+                             "ОбъектРасчетов_Key": "obj", "Менеджер": {"Description": "Мария"},
+                             "ЭтапыГрафикаОплаты": [{"ДатаПлатежа": "2027-02-01T00:00:00", "СуммаПлатежа": 1000}]}]
+                return []
+
+        rows = fetch_receivables(FakeOneC(), {}, dt.date(2026, 10, 1), dt.date(2026, 11, 2))
+        self.assertEqual((rows[0]["order_date"], rows[0]["due_date"]), ("2020-01-01", "2027-02-01"))
+        self.assertNotIn("Date ge", queries["Document_ЗаказКлиента"]["$filter"])
+        self.assertNotIn("Period ge", queries["AccumulationRegister_РасчетыСКлиентами_RecordType"]["$filter"])
+
     def test_paid_in_full_after_shipment(self):
         # заказ 00ЦБ-000098: отгрузка 14.07, срок по правилам оплаты 13.10, оплата 21.10
         rows = stage_rows([("2026-10-13", 50153.16)], [("2026-07-14", "Receipt", 50153.16), ("2026-10-21", "Expense", 50153.16)])

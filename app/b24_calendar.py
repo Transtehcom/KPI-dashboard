@@ -4,15 +4,17 @@
 - события календаря сотрудника (calendar.event.get; вебхуку нужно право «Календарь» — calendar);
 - задачи, где он ответственный или соисполнитель: задача видна в каждый день от начала работы над ней
   (или даты создания) до крайнего срока, если к этому дню она ещё не закрыта.
+- CRM-дела с назначенной датой из лидов, сделок, контактов и компаний — в день срока выполнения.
 Данные читаются из Битрикс24 при открытии, а не при синхронизации; ответ кэшируется на минуту.
 """
 import datetime as dt
 import re
 import threading
 import time
-from urllib.parse import urlparse
 
 from .bitrix24 import B24Error, Bitrix24
+from .crm_activities import activity_bindings, activity_datetime, activity_deadline
+from .crm_links import portal_origin, object_url, activity_url
 
 CACHE_SECONDS = 60
 TASK_STATUS = {"1": "новая", "2": "ждёт выполнения", "3": "выполняется", "4": "ждёт контроля", "5": "завершена",
@@ -34,11 +36,10 @@ def _parse(v):
 
 
 def _portal(cfg):
-    u = urlparse(cfg.get("webhook") or "")
-    return f"{u.scheme}://{u.netloc}" if u.netloc else None
+    return portal_origin(cfg)
 
 
-def _events(b24, uid, day):
+def _events(b24, uid, day, portal=None):
     """События календаря сотрудника, пересекающие день. Без права calendar — B24Error insufficient_scope."""
     rows = b24.call("calendar.event.get", {"type": "user", "ownerId": uid,
                                            "from": day.isoformat(), "to": day.isoformat()}).get("result") or []
@@ -57,6 +58,7 @@ def _events(b24, uid, day):
         private = e.get("PRIVATE_EVENT") in ("Y", True, "1") and str(e.get("OWNER_ID")) != str(uid)
         out.append({
             "kind": "event", "title": "Занят(а)" if private else (e.get("NAME") or "Событие"),
+            "url": object_url({"webhook": portal},"event",e.get("ID"),uid) if not private and portal else None,
             "all_day": all_day or (f <= start and t >= end),
             "from": f.strftime("%H:%M") if f.date() == day and not all_day else None,
             "to": t.strftime("%H:%M") if t.date() == day and not all_day else None,
@@ -103,25 +105,64 @@ def _tasks(b24, uid, day, portal):
     return out
 
 
+def _crm_activities(b24, uid, day, portal):
+    """Dated CRM_TODO entries, once per activity ID regardless of the number of bound cards."""
+    start, end = dt.datetime.combine(day, dt.time()), dt.datetime.combine(day, dt.time(23, 59, 59))
+    select = ["ID", "SUBJECT", "OWNER_TYPE_ID", "OWNER_ID", "RESPONSIBLE_ID", "PROVIDER_ID", "TYPE_ID",
+              "CREATED", "DEADLINE", "START_TIME", "COMPLETED"]
+    found = {}
+    # Two simple REST filters also cover entries whose deadline is empty but start time is assigned.
+    for field in ("DEADLINE", "START_TIME"):
+        for row in b24.list_all("crm.activity.list", {"filter": {"RESPONSIBLE_ID": uid, "PROVIDER_ID": "CRM_TODO",
+                ">=" + field: start.astimezone().isoformat(), "<=" + field: end.astimezone().isoformat()}, "select": select}):
+            found[str(row["ID"])] = row
+    types = {1: ("lead", "Лид"), 2: ("deal", "Сделка"), 3: ("contact", "Контакт"), 4: ("company", "Компания")}
+    out = []
+    for row in found.values():
+        due = activity_deadline(row)
+        if (row.get("PROVIDER_ID") != "CRM_TODO" or str(row.get("RESPONSIBLE_ID")) != str(uid)
+                or not due or due.date() != day):
+            continue
+        bindings = sorted(activity_bindings(row))
+        primary = (int(row.get("OWNER_TYPE_ID") or 0), str(row.get("OWNER_ID") or ""))
+        binding = primary if primary in bindings else next((b for b in bindings if b[0] in types), None)
+        if not binding or binding[0] not in types:
+            continue
+        kind, label = types[binding[0]]
+        created = activity_datetime(row.get("CREATED"))
+        if created and created > end:
+            continue
+        done = row.get("COMPLETED") in ("Y", True, "1")
+        out.append({"id": str(row["ID"]), "kind": "activity", "title": row.get("SUBJECT") or "Дело CRM",
+                    "all_day": False, "from": None, "to": due.strftime("%H:%M"), "done": done,
+                    "status": "выполнено" if done else "запланировано", "card": f"{label} №{binding[1]}",
+                    "url": activity_url({"webhook": portal},row["ID"],kind.upper()+":"+binding[1]) if portal else None,
+                    "card_url": object_url({"webhook": portal},kind,binding[1]) if portal else None, "sort": due.strftime("%H:%M")})
+    return out
+
+
 def day_schedule(cfg, uid, day):
     """Расписание пользователя Б24 uid на дату day: {items, calendar_error}. Кэш — минута."""
-    key = (uid, day.isoformat())
+    key = (cfg.get("webhook"), uid, day.isoformat())
     with _cache_lock:
         hit = _cache.get(key)
         if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
             return hit[1]
     b24 = Bitrix24(cfg, log=lambda *a: None)
-    items, error = [], None
-    try:
-        items += _events(b24, uid, day)
-    except B24Error as e:
-        error = "scope" if "insufficient_scope" in str(e) else str(e)[:200]
-    items += _tasks(b24, uid, day, _portal(cfg))
+    items, errors = [], {}
+    for name, load in (("calendar_error", lambda: _events(b24, uid, day, _portal(cfg))),
+                       ("tasks_error", lambda: _tasks(b24, uid, day, _portal(cfg))),
+                       ("activities_error", lambda: _crm_activities(b24, uid, day, _portal(cfg)))):
+        try:
+            items += load()
+            errors[name] = None
+        except B24Error as e:
+            errors[name] = "scope" if "insufficient_scope" in str(e) else str(e)[:200]
     # сначала «весь день», потом по времени
     items.sort(key=lambda x: (not x["all_day"], x["sort"] or "", x["title"]))
     for x in items:
         x.pop("sort", None)
-    res = {"items": items, "calendar_error": error}
+    res = {"items": items, **errors}
     with _cache_lock:
         _cache[key] = (time.monotonic(), res)
     return res

@@ -5,6 +5,7 @@
 """
 import base64
 import csv
+import datetime as dt
 import json
 import os
 import ssl
@@ -23,6 +24,7 @@ DATASETS = {
     "supplier_orders": ("supplier_orders", "dt"),
     "supply_funnel": ("supply_funnel", "dt"),
     "tenders_1c": ("tenders_1c", "dt"),
+    "conversion_orders": ("conversion_orders", "dt"),
     "transport_requests": ("transport_requests", "dt"),
     "forwarder_orders": ("forwarder_orders", "dt"),
 }
@@ -33,7 +35,7 @@ UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified", "posted", "deleted"}
 NUM_FIELDS = {"plan_sum", "fact_sum", "revenue", "cost", "amount", "amount_novat", "deferred_share", "deferral_days", "kp_count", "suppliers"}
-DATE_FIELDS = {"ship_date", "delivery_date", "dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date"}
+DATE_FIELDS = {"ship_date", "delivery_date", "dt", "signed_date", "ship_date", "due_date", "paid_date", "acts_date", "unblock_date", "return_date", "planned_date", "actual_date", "customer_order_date", "customer_actual_date"}
 
 
 def _get_path(obj, path):
@@ -69,6 +71,12 @@ def _to_num(v):
         return float(str(v).replace(" ", "").replace(" ", "").replace(",", "."))
     except ValueError:
         return None
+
+
+def supplier_date_from(con, date_from):
+    """Refresh all retained supplier orders, including copied customer dates on older rows."""
+    first = con.execute("SELECT min(dt) FROM supplier_orders WHERE id LIKE '1c-supplier_orders-%'").fetchone()[0]
+    return min(date_from, dt.date.fromisoformat(first[:10])) if first else date_from
 
 
 class OneC:
@@ -149,6 +157,9 @@ class OneC:
         if src == "tender_status":  # тендеры с ведущим менеджером и статусом (Отчёт ОП, ТТК)
             from .onec_report import fetch_tenders
             return fetch_tenders(self, ds, date_from, date_to)
+        if src == "conversion_orders":
+            from .onec_conversions import fetch_conversion_orders
+            return fetch_conversion_orders(self, ds, date_from, date_to)
         if src == "csv":
             path = ds["file"] if os.path.isabs(ds["file"]) else os.path.join(ROOT, ds["file"])
             with open(path, encoding=ds.get("encoding", "utf-8-sig"), newline="") as f:
@@ -163,7 +174,8 @@ class OneC:
                 continue
             table, _ = DATASETS[name]
             self.log(f"1С: {name}")
-            raw = self._load(ds, date_from, date_to)
+            source_from = supplier_date_from(con, date_from) if name == "supplier_orders" and ds.get("source") == "supply_requests" else date_from
+            raw = self._load(ds, source_from, date_to)
             cols = set(table_columns(con, table))
             rows = []
             for i, r in enumerate(raw):

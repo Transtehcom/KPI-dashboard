@@ -21,6 +21,7 @@
   workload.help_tags; родительская задача с подзадачами и отклонённые задачи (7) в суммы не входят.
 """
 import datetime as dt
+from .crm_links import object_url
 import json
 import math
 
@@ -134,7 +135,7 @@ def analyze(t, now, block_tags=(), help_tags=()):
         "id": t["id"], "uid": uid, "title": t["title"], "status": status,
         "status_label": "На доработке" if status in WORKING and returns and (not submits or returns[-1] > submits[-1])
         else STATUS.get(status, status),
-        "priority": t["priority"], "project": t["project"], "tags": tags, "creator": t["creator"],
+        "priority": t["priority"], "project": t["project"], "project_id": t.get("project_id"), "tags": tags, "creator": t["creator"],
         "mode": "check" if check else "simple", "created": t["created"], "transferred": transfers[-1] if transfers else None,
         "deadline_orig": orig, "deadline": agreed, "deadline_b24": t["deadline"], "closed": closed,
         "exec_at": exec_at, "accepted": closed if checked else None, "checked": checked,
@@ -166,11 +167,16 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     parents = {r["parent"] for r in rows if r["parent"]}
     tasks = [analyze(r, now, st["block_tags"], st["help_tags"]) for r in rows
              if r["status"] != "7" and r["id"] not in parents and r["uid"] in shown]
+    link_config = config if config.get("bitrix24") else {"webhook": "https://" + portal} if portal else {}
     for t in tasks:
         t["creator_name"] = names.get(t["creator"]) or (f"ID {t['creator']}" if t["creator"] else None)
+        t["url"] = object_url(link_config,"task",t["id"],t["uid"])
+        t["creator_url"] = object_url(link_config,"user",t["creator"])
+        t["project_url"] = object_url(link_config,"group",t["project_id"])
     tasks.sort(key=lambda t: t["created"] or "", reverse=True)
     dept_titles = dept_titles or {}
     return {"generated": now, "portal": portal, "has_data": bool(rows), "director": director,
             "people": [{"uid": p["uid"], "name": p["name"], "position": p["title"],
+                        "url": object_url(link_config,"user",p["uid"]),
                         "dept": dept_titles.get(p["department"], p["department"]) or "Без отдела"} for p in people],
             "tasks": tasks}

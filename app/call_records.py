@@ -15,6 +15,7 @@ import urllib.request
 from .anonymize import restore
 from .call_analysis import secretary_marks
 from .common import ROOT, db_lock
+from .crm_links import record_url, client_url, employee_url
 
 # dir — папка записей (относительно папки дашборда или абсолютный путь, в т.ч. сетевой);
 # срок хранения аудио и расшифровок: keep_months — сколько прошлых месяцев хранить кроме текущего, а самый старый
@@ -23,7 +24,7 @@ from .common import ROOT, db_lock
 # download_days — за сколько последних дней скачивать (0 — за весь период синхронизации); max_per_run — файлов за проход
 DEFAULTS = {"dir": "data/records", "keep_months": None, "purge_day": 1, "keep_days": 0, "download_days": 0,
             "max_per_run": 300}
-META = ["call_id", "emp", "dt", "direction", "duration", "phone", "crm_entity", "client", "crm_activity_id",
+META = ["call_id", "emp", "dt", "direction", "duration", "phone", "crm_entity", "client", "client_ref", "crm_activity_id",
         "record_file_id", "record_url"]
 TYPE_NAMES = {1: "LEAD", 2: "DEAL", 3: "CONTACT", 4: "COMPANY"}
 RECHECK_DAYS = 3  # привязки свежих звонков перепроверяются: сделку по клиенту могут завести после звонка
@@ -123,7 +124,7 @@ def log_listen(con, login, row, ip, result="ok"):
     return True
 
 
-def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, with_listens=False):
+def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, with_listens=False, feedback_pending=False):
     """Звонки с записью для раздела «Звонки»: сотрудников emps (None — всех) за период или по сделке (deal — ID сделки Б24)."""
     q, args = "SELECT * FROM call_records WHERE 1=1", []
     if emps is not None:
@@ -138,6 +139,9 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
     if date_to:
         q += " AND dt <= ?"
         args.append(str(date_to) + "T23:59:59")
+    if feedback_pending:
+        q += (" AND EXISTS (SELECT 1 FROM call_feedback f WHERE f.record=call_records.id "
+              "AND f.rating<5 AND f.resolved_at IS NULL)")
     rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT 5000", args)]
     tr = {}
     if rows:
@@ -147,7 +151,7 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
             for t in con.execute(f"SELECT id, error, attempts, segments IS NOT NULL ready FROM call_transcripts "
                                  f"WHERE id IN ({','.join('?' * len(chunk))})", chunk):
                 tr[t["id"]] = "ready" if t["ready"] else "error" if t["attempts"] >= 3 else "pending"
-    an = {}  # разбор Claude: тип, предложение, договорённость, суть (имена подставляются из таблицы замен)
+    an = {}  # разбор Codex: тип, предложение, договорённость, суть (имена подставляются из таблицы замен)
     if rows:
         ids = [r["id"] for r in rows]
         for i in range(0, len(ids), 500):
@@ -157,7 +161,7 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
                 summary = json.loads(a["result"]).get("summary")
                 an[a["id"]] = {"call_type": a["call_type"], "offer": bool(a["offer"]), "agreement": bool(a["agreement"]),
                                "summary": restore(summary, json.loads(a["pii"]) if a["pii"] else None)}
-        # отметка «секретарь»: руководитель важнее разбора Claude
+        # отметка «секретарь»: руководитель важнее разбора Codex
         for rid, m in secretary_marks(con, ids).items():
             if rid in an and (m["manual"] is not None or m["ai"] is not None):
                 an[rid]["secretary"] = m["manual"] if m["manual"] is not None else m["ai"]
@@ -183,6 +187,7 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
             audio = "pending"
         item = {k: r[k] for k in ("id", "emp", "dt", "direction", "duration", "phone", "client")}
         item.update(audio=audio, deals=deals_of(r),
+                    url=record_url(config,"call_records",r), client_url=client_url(config,r), emp_url=employee_url(config,r["emp"]),
                     transcript=tr.get(r["id"]) or ("pending" if audio == "ready" else None),
                     analysis=an.get(r["id"]))
         if with_listens:
@@ -191,15 +196,20 @@ def listing(con, config, emps=None, deal=None, date_from=None, date_to=None, wit
     return out
 
 
-def listen_journal(con, date_from, date_to, login=None, limit=2000):
+def listen_journal(con, date_from, date_to, login=None, limit=2000, config=None):
     """Журнал прослушиваний за период (новые первыми) со сведениями о звонке."""
-    q = ("SELECT l.ts, l.login, l.record, l.emp, l.ip, l.result, c.dt AS call_dt, c.client, c.direction, c.duration "
+    q = ("SELECT l.ts, l.login, l.record, l.emp, l.ip, l.result, c.dt AS call_dt, c.client, c.direction, c.duration, "
+         "c.crm_entity,c.crm_activity_id,c.client_ref "
          "FROM listen_log l LEFT JOIN call_records c ON c.id = l.record WHERE l.ts >= ? AND l.ts <= ?")
     args = [str(date_from), str(date_to) + "T23:59:59"]
     if login:
         q += " AND l.login=?"
         args.append(login)
-    return [dict(r) for r in con.execute(q + " ORDER BY l.ts DESC LIMIT ?", args + [limit])]
+    rows = [dict(r) for r in con.execute(q + " ORDER BY l.ts DESC LIMIT ?", args + [limit])]
+    for row in rows:
+        row["url"] = record_url(config or {},"call_records",row)
+        row["client_url"] = client_url(config or {},row)
+    return rows
 
 
 def resolve_bindings(con, b24):

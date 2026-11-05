@@ -121,7 +121,8 @@ def listing(con, rules):
     return {
         "employees": rows,
         "departments": [{"key": d, "title": rules.get("departments", {}).get(d, d)} for d in departments],
-        "positions": [{"key": k, "title": p["title"], "department": p["department"], "doc": p.get("doc")}
+        "positions": [{"key": k, "title": p["title"], "department": p["department"], "doc": p.get("doc"),
+                       "draft": bool(p.get("draft"))}
                       for k, p in rules["positions"].items()],
         "absence_kinds": [{"key": k, "title": t} for k, t in ABSENCE_KINDS.items()],
     }
