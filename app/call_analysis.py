@@ -220,7 +220,7 @@ def _execute_cli(cmd, input, timeout, capture_output=True, **kwargs):
                 stream.close()
 
 
-def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
+def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None):
     work = os.path.join(ROOT, "data", "nlp-work")
     os.makedirs(work, exist_ok=True)
     user_profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
@@ -232,7 +232,7 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
         schema_path = os.path.join(run_dir, "schema.json")
         answer_path = os.path.join(run_dir, "answer.json")
         with open(schema_path, "w", encoding="utf-8") as f:
-            json.dump(ANALYSIS_SCHEMA, f, ensure_ascii=False, indent=2)
+            json.dump(schema or ANALYSIS_SCHEMA, f, ensure_ascii=False, indent=2)
         cmd = [codex_path(config), "exec", "--model", model, "--sandbox", "read-only", "--ephemeral",
                "--ignore-user-config", "--ignore-rules", "--disable", "shell_tool", "--skip-git-repo-check",
                "--output-schema", schema_path, "--output-last-message", answer_path,
@@ -250,13 +250,13 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
             raise RuntimeError(f"Codex CLI не сохранил ответ: {e}") from e
 
 
-def run_codex(prompt, config, attempts=2, model=MODEL, effort=EFFORT):
+def run_codex(prompt, config, attempts=2, model=MODEL, effort=EFFORT, schema=None):
     """Ответ Codex и сведения о вызове ({"result": dict, …}). Если CLI не вернул корректный JSON,
     тогда запрос повторяется (attempts раз всего); исключение — если CLI так и не ответил разборным JSON."""
     text = ""
     for n in range(attempts):
         retry_note = "\n\nВажно: ответ должен быть строго корректным JSON."
-        text = _call_cli(prompt if not n else prompt + retry_note, config, model, effort)
+        text = _call_cli(prompt if not n else prompt + retry_note, config, model, effort, schema)
         m = re.search(r"\{.*\}", text, re.S)  # на случай обёртки ```json … ```
         try:
             result = json.loads(m.group()) if m else None
@@ -318,7 +318,7 @@ def settings(config):
     return {**DEFAULTS, **(config.get("call_records") or {})}
 
 
-def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None):
+def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, spent=None, commit=True):
     now = dt.datetime.now().isoformat(timespec="seconds")
     with db_lock():
         if error:
@@ -336,7 +336,8 @@ def save(con, rid, res=None, roles=None, mapping=None, call=None, error=None, sp
                          roles, json.dumps(mapping or {}, ensure_ascii=False), call.get("model"), call.get("tokens_in"),
                           call.get("tokens_out"), call.get("cost_usd"), spent, now, int(call.get("attempts") or 0),
                          None if not isinstance(secr, bool) else int(secr)))
-        con.commit()
+        if commit:
+            con.commit()
 
 
 def secretary_marks(con, ids):

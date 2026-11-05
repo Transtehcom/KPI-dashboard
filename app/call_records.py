@@ -323,6 +323,7 @@ def purge_old(con, config):
         with db_lock():
             con.execute("UPDATE call_records SET file=NULL, purged=? WHERE id=?", (_now(), r["id"]))
             con.execute("DELETE FROM call_transcripts WHERE id=?", (r["id"],))
+            con.execute("DELETE FROM call_feedback_rechecks WHERE record=?", (r["id"],))
             con.execute("UPDATE call_analysis SET pii=NULL WHERE id=?", (r["id"],))  # отметки для отчётов остаются
             con.commit()
     return len(rows)

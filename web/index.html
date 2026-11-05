@@ -1622,6 +1622,16 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     return `${scores ? `<div class="small ${pending ? "err" : "muted"}">${esc(scores)}</div>` : ""}
       ${call.can_rate || feedback.length ? `<button class="btn ghost" type="button" data-feedback="${esc(call.id)}" aria-expanded="false">${isMgr && pending ? "Посмотреть замечания" : label}</button>` : `<span class="muted">—</span>`}`;
   }
+  function callRechecksHtml(rechecks, revision, labels) {
+    const states = { queued: "В очереди", running: "Проверяется", completed: "Проверка завершена", failed: "Ошибка", blocked: "Лимит подписки", cancelled: "Отменена", interrupted: "Прервана перезапуском" };
+    const verdicts = { confirmed: "Замечание подтверждено", not_confirmed: "Замечание не подтверждено", insufficient_data: "Недостаточно данных" };
+    return (rechecks || []).map((r) => `<details class="more" ${r.status === "completed" ? "open" : ""}><summary>Ответ модели · ${esc(states[r.status] || r.status)} · ${esc(r.model || "")} · ${esc(dtLabel(r.created))}</summary><div class="more-b">
+      ${r.revision !== revision ? `<p class="small err">Проверялась предыдущая версия замечания (${r.revision}). Текущая версия — ${revision}.</p>` : ""}
+      <p class="small muted">Замечание при запуске: ${esc(r.source_comment || "")}</p>
+      ${(r.findings || []).map((f) => `<div><b>${esc(labels[f.criterion] || "Комментарий")}: ${esc(verdicts[f.verdict] || f.verdict)}</b><p>${esc(f.explanation)}</p>${(f.evidence || []).map((e) => `<p class="small">[${Math.floor(e.at_seconds / 60)}:${String(Math.floor(e.at_seconds % 60)).padStart(2, "0")}] «${esc(e.quote)}»</p>`).join("")}</div>`).join("")}
+      ${r.status === "completed" ? `<p class="small">Изменено относительно независимого разбора: ${(r.changed_fields || []).map((key) => esc(labels[key === "turns" ? "roles" : key] || key)).join(", ") || "ничего"}. Закрытие замечания — после проверки администратором.</p>` : ""}
+      ${r.error ? `<p class="err">${esc(r.error)}</p>` : ""}</div></details>`).join("");
+  }
   function callFeedbackHtml(call, criteria, isMgr) {
     const feedback = call.feedback || [], saved = feedback[0];
     const labels = Object.fromEntries(criteria.map((c) => [c.key, c.label]));
@@ -1631,7 +1641,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       ${f.comment ? `<p>${esc(f.comment)}</p>` : ""}
       ${f.criteria.length ? `<p class="small">Ошибки в критериях — ${f.criteria.map((key) => esc(labels[key] || key)).join(", ")}</p>` : ""}
       ${f.resolved_at ? `<p class="small muted">Проверено администратором ${esc(dtLabel(f.resolved_at))}${f.resolution ? ` · ${esc(f.resolution)}` : ""}</p>` : ""}
-      ${isMgr && f.status === "pending" ? `<form data-feedback-review data-author="${esc(f.author)}" data-revision="${f.revision}">
+      ${callRechecksHtml(f.rechecks, f.revision, labels)}
+      ${isMgr && f.status === "pending" ? `<p><button class="btn" type="button" data-feedback-reprocess data-author="${esc(f.author)}" data-revision="${f.revision}">Повторный разбор с замечаниями</button></p><p class="small muted">Два прохода: независимый разбор и проверка замечаний по цитатам. Используются выбранные выше модель, усилие и время запуска. Оценка сотрудника не закрывается автоматически.</p><form data-feedback-review data-author="${esc(f.author)}" data-revision="${f.revision}">
         <label>Результат ручной проверки<textarea name="note" maxlength="2000" placeholder="Что проверили и исправили"></textarea></label>
         <div class="err" role="alert" data-feedback-error></div>
         <button class="btn" type="submit">Отметить решённым</button>
@@ -2006,6 +2017,17 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
               criteria: rating === 5 ? [] : [...form.querySelectorAll("input[name=criteria]:checked")].map((input) => input.value) });
           });
         }
+        row.querySelectorAll("[data-feedback-reprocess]").forEach((reprocess) => reprocess.addEventListener("click", async () => {
+          if (!confirm("Создать повторную проверку? Сначала модель разберёт звонок без замечаний, затем проверит их по расшифровке. Это два обращения к модели и расход лимита подписки." + (state.cRunAt ? ` Запуск: ${dtLabel(state.cRunAt)} (время сервиса).` : ""))) return;
+          reprocess.disabled = true;
+          try {
+            const result = await api("/api/call-feedback-reprocess", { id: call.id, author: reprocess.dataset.author,
+              revision: Number(reprocess.dataset.revision), model: pick("callModelV2", MODELS, "gpt-5.6-terra"),
+              effort: pick("callEffortV2", EFFORTS, "high"), run_at: state.cRunAt || null });
+            toast(result.message); await watchJob();
+          } catch (e) { if (e.message !== "auth") toast(e.message); }
+          finally { reprocess.disabled = false; }
+        }));
         row.querySelectorAll("[data-feedback-review]").forEach((form) => form.addEventListener("submit", (event) => {
           event.preventDefault();
           saveFeedback(form, "/api/call-feedback-review", { author: form.dataset.author,

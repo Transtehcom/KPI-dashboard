@@ -114,6 +114,32 @@ class ListenTest(unittest.TestCase):
         self.assertEqual((code,response["job"]["status"]),(200,"cancelled"))
         self.assertEqual(post("boss","/api/calls-job-cancel",{"id":"missing"})[0],400)
 
+    def test_feedback_recheck_admin_revision_schedule_and_privacy(self):
+        from app import call_feedback
+        with db_lock():
+            feedback=call_feedback.save(self.con,"call1","pm",{"rating":4,"comment":"Есть согласие на встречу","criteria":["agreement"]})
+        def post(login,body):
+            req=urllib.request.Request(self.base+"/api/call-feedback-reprocess",data=json.dumps(body).encode(),
+                headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
+            try:
+                with urllib.request.urlopen(req) as response:return response.status,json.load(response)
+            except urllib.error.HTTPError as exc:
+                with exc:return exc.code,json.load(exc)
+        body={"id":"call1","author":"pm","revision":feedback["revision"]}
+        self.assertEqual(post("pm",body)[0],403)
+        self.assertEqual(post("boss",{**body,"revision":feedback["revision"]+1})[0],409)
+        self.assertEqual(post("boss",{**body,"revision":True})[0],400)
+        code,response=post("boss",body)
+        self.assertEqual(code,200)
+        self.assertTrue(response["job"]["feedback_recheck"])
+        self.assertEqual(call_feedback.get(self.con,"call1","pm")["status"],"pending")
+        own=json.loads(self.get("pm","/api/calls?month=2026-10")[2])["calls"]
+        row=next(r for r in own if r["id"]=="call1")
+        self.assertTrue(next(f for f in row["feedback"] if f["author"]=="pm")["rechecks"])
+        self.app.processing_jobs().cancel(response["job"]["id"])
+        status=self.con.execute("SELECT status FROM call_feedback_rechecks WHERE id=?",(response["job"]["id"],)).fetchone()[0]
+        self.assertEqual(status,"cancelled")
+
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
         self.app.config['employees'].append(employee)

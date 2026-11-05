@@ -18,7 +18,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from .crm_links import employee_url, portal_origin
-from . import call_feedback
+from . import call_feedback, call_recheck
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -248,6 +248,7 @@ class App:
                                     with_listens=is_mgr, feedback_pending=is_mgr and q.get("feedback") == "pending")
         names = {e["login"]: e["name"] for e in self.config["employees"]}
         feedback = call_feedback.listing(self.con, [r["id"] for r in rows], author=None if is_mgr else me["login"])
+        rechecks = call_recheck.listing(self.con, [r["id"] for r in rows], author=None if is_mgr else me["login"])
         for r in rows:
             r["emp_name"] = names.get(r["emp"], r["emp"])
             r["can_listen"] = call_records.can_listen(self.config, me, r)
@@ -255,6 +256,7 @@ class App:
             r["feedback"] = feedback.get(r["id"], [])
             for item in r["feedback"]:
                 item["author_name"] = names.get(item["author"], item["author"])
+                item["rechecks"] = [review for review in rechecks.get(r["id"], []) if review["author"] == item["author"]]
         # кого можно выбрать в фильтре: администратору — сотрудников с ID в Б24 (их звонки выгружаются), руководителю отдела — свой отдел
         choices = [e for e in self.config["employees"] if (e.get("b24_user_id") if allowed is None else e["login"] in allowed)]
         return {"calls": rows, "login": login, "deal": deal, "date_from": date_from, "date_to": date_to,
@@ -737,6 +739,26 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError as e:
                         raise BadRequest(str(e))
                     return JsonResponse({"ok":True})
+                if path == "/api/call-feedback-reprocess" and method == "POST":
+                    record = str(b.get("id") or "")
+                    if not call_records.get(app.con, record):
+                        return JsonResponse({"error": "Звонок не найден"}, 404)
+                    if type(b.get("revision")) is not int:
+                        raise BadRequest("Укажите версию замечания")
+                    feedback = call_feedback.get(app.con, record, str(b.get("author") or ""))
+                    if not feedback:
+                        return JsonResponse({"error": "Замечание не найдено"}, 404)
+                    if feedback["revision"] != b["revision"]:
+                        return JsonResponse({"error": "Сотрудник изменил замечание; обновите список"}, 409)
+                    try:
+                        job = app.processing_jobs().create([record], force=True, feedback=feedback, author=me["login"],
+                            model=b.get("model") or call_analysis.MODEL, effort=b.get("effort") or call_analysis.EFFORT,
+                            run_at=b.get("run_at"))
+                    except call_feedback.FeedbackConflict as exc:
+                        return JsonResponse({"error": str(exc)}, 409)
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True, "job": job, "message": "Создана двухэтапная проверка замечания"})
                 if path == "/api/call-feedback-review" and method == "POST":
                     try:
                         result = call_feedback.resolve(app.con, str(b.get("id") or ""), str(b.get("author") or ""),

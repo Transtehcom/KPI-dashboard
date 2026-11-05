@@ -34,3 +34,12 @@ for (const rating of ['1', '2', '3', '4']) {
   assert.equal(form.elements.comment.required, true);
 }
 console.log('Call feedback forms, permissions and rating requirements: OK');
+
+const rechecked = {...reviewed, feedback: [{...feedback, revision: 2, rechecks: [{status:'completed',revision:1,model:'test',source_comment:'<bad>',findings:[{criterion:'agreement',verdict:'not_confirmed',explanation:'<script>no</script>',evidence:[{at_seconds:65,quote:'Не договорились'}]}],changed_fields:[]}]}]};
+const response = context.callFeedbackHtml(rechecked,criteria,true);
+assert.match(response,/Повторный разбор с замечаниями/);
+assert.match(response,/Замечание не подтверждено/);
+assert.match(response,/предыдущая версия/);
+assert.match(response,/1:05/);
+assert.ok(!response.includes('<script>'));
+assert.doesNotMatch(context.callFeedbackHtml(rechecked,criteria,false),/data-feedback-reprocess/);

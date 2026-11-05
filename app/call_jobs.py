@@ -36,6 +36,9 @@ class JobQueue:
                         "message='Прервано перезапуском сервиса; создайте новую задачу для продолжения' "
                         "WHERE status IN ('running','cancelling')", (timestamp(),))
             con.commit()
+            con.execute("UPDATE call_feedback_rechecks SET status='interrupted',finished=? WHERE status IN ('queued','running') "
+                        "AND id IN (SELECT id FROM call_processing_jobs WHERE status='interrupted')", (timestamp(),))
+            con.commit()
             self.recover_errors()
 
     def recover_errors(self):
@@ -69,6 +72,7 @@ class JobQueue:
             result = dict(row)
             result.pop("ids", None)
             result["errors"] = json.loads(result.get("errors") or "[]")
+            result["feedback_recheck"] = bool(self.con.execute("SELECT 1 FROM call_feedback_rechecks WHERE id=?", (jid,)).fetchone())
             return result
 
     def listing(self):
@@ -84,7 +88,7 @@ class JobQueue:
                 "timezone": dt.datetime.now().astimezone().strftime("UTC%z")}
 
     def create(self, ids, force=False, model=call_analysis.MODEL, effort=call_analysis.EFFORT,
-               run_at=None, author=""):
+               run_at=None, author="", feedback=None):
         if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
             raise ValueError("Неизвестная модель или уровень усилий")
         if not isinstance(ids, (list, tuple)) or not ids or len(ids) > 10000:
@@ -102,6 +106,16 @@ class JobQueue:
                 raise ValueError("Укажите будущие дату и время запуска по времени сервиса") from None
         now, jid = timestamp(), uuid.uuid4().hex
         with db_lock():
+            if feedback is not None:
+                from . import call_feedback
+                if len(ids) != 1 or feedback.get("record") != ids[0]:
+                    raise ValueError("Выберите один звонок для повторной проверки замечания")
+                current = call_feedback.get(self.con, ids[0], feedback.get("author"))
+                if not current or current["revision"] != feedback.get("revision"):
+                    raise call_feedback.FeedbackConflict("Оценка изменилась; обновите замечание")
+                if current["status"] != "pending":
+                    raise ValueError("Нет незакрытого замечания для повторной проверки")
+                feedback, force = current, True
             if not force:
                 ids = list(call_analysis.todo(self.con, ids))
             if not ids:
@@ -116,6 +130,9 @@ class JobQueue:
                              (jid, json.dumps(ids), int(force), model, effort, author, now,
                               scheduled.isoformat(timespec="seconds") if scheduled else now,
                               "queued", len(ids), "Ожидает указанного времени" if scheduled else "В очереди"))
+            if feedback is not None:
+                from . import call_recheck
+                call_recheck.enqueue(self.con, jid, ids[0], feedback, author, now)
             self.con.commit()
         self.wake.set()
         return self.get(jid)
@@ -137,6 +154,8 @@ class JobQueue:
                 self.update(jid, status="cancelling", message="Отмена: текущий звонок завершится, следующие не начнутся")
             else:
                 self.update(jid, status="cancelled", finished=timestamp(), message="Отменено")
+                self.con.execute("UPDATE call_feedback_rechecks SET status='cancelled',finished=? WHERE id=? AND status='queued'", (timestamp(), jid))
+                self.con.commit()
         self.wake.set()
         return self.get(jid)
 
@@ -214,8 +233,16 @@ class JobQueue:
         if cancel.is_set():
             return "cancelled"
         titles = {e["login"]: e.get("title") for e in self.config.get("employees", [])}
-        result = call_analysis.analyze_row(self.con, self.config, dict(row), titles,
-                                          model=self.current.model, effort=self.current.effort)
+        from . import call_recheck
+        with db_lock():
+            review = self.con.execute("SELECT 1 FROM call_feedback_rechecks WHERE id=? AND record=?",
+                                      (self.current.job_id, rid)).fetchone()
+        if review:
+            result = call_recheck.analyze_row(self.con, self.config, dict(row), titles, self.current.job_id,
+                                              model=self.current.model, effort=self.current.effort, cancel=cancel)
+        else:
+            result = call_analysis.analyze_row(self.con, self.config, dict(row), titles,
+                                              model=self.current.model, effort=self.current.effort)
         if result == "failed":
             with db_lock():
                 error = self.con.execute("SELECT error FROM call_analysis WHERE id=?", (rid,)).fetchone()
@@ -227,7 +254,7 @@ class JobQueue:
         state, message = "completed", "Готово"
         errors = []
         try:
-            self.current.model, self.current.effort = job["model"], job["effort"]
+            self.current.model, self.current.effort, self.current.job_id = job["model"], job["effort"], jid
             for index, rid in enumerate(json.loads(job["ids"]), 1):
                 if cancel.is_set():
                     break
@@ -270,6 +297,9 @@ class JobQueue:
                     state = "completed_with_errors" if done or skipped else "failed"
                     message = f"Обработано {done}, ошибок {failed}"
                 self.update(jid, status=state, message=message, current=None, finished=timestamp())
+                self.con.execute("UPDATE call_feedback_rechecks SET status=?,error=?,finished=? WHERE id=? AND status IN ('queued','running')",
+                                 (state, message, timestamp(), jid))
+                self.con.commit()
                 self.active.pop(jid, None)
                 if not self.active:
                     self.call_locks.clear()
