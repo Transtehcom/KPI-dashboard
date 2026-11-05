@@ -132,16 +132,10 @@ class Bitrix24:
         return str(a.get("ID")) != str(call_activity_id) and followup_activity(a)
 
     def next_step_index(self, activities, calls):
-        """Read explicit card bindings for non-call activities created after a loaded call."""
-        starts = [activity_datetime(c.get("CALL_START_DATE")) for c in calls if call_binding(c)]
-        earliest = min((s for s in starts if s), default=None)
-        candidates = {}
-        for activity in activities:
-            if not followup_activity(activity):
-                continue
-            created = activity_datetime(activity.get("CREATED"))
-            if created and earliest and created > earliest:
-                candidates[str(activity["ID"])] = activity
+        """Read explicit bindings for open dated non-call plans, including old plans."""
+        candidates = {str(a["ID"]): a for a in activities
+                      if followup_activity(a) and str(a.get("COMPLETED") or "").upper() == "N"
+                      and activity_deadline(a)}
         if not candidates:
             return {}
         bindings, errors = self.batch({"binding" + aid: ("crm.activity.binding.list", {"activityId": aid})
@@ -230,14 +224,19 @@ class Bitrix24:
                        "END_TIME", "COMPLETED", "SUBJECT", "DESCRIPTION", "RESPONSIBLE_ID", "STORAGE_ELEMENT_IDS", "FILES",
                        "LAST_UPDATED"],
             "order": {"ID": "ASC"}})
-        # звонки (телефония): исходящие и входящие; в KPI идут только исходящие (direction = out)
+        # звонки (телефония): исходящие и входящие; в KPI учитываются оба направления
         self.log("Б24: звонки")
         calls = self.list_all("voximplant.statistic.get", {
             "FILTER": {">=CALL_START_DATE": df, "PORTAL_USER_ID": sorted(set(uids) | {int(u) for u in record_employees})},
             "SORT": "CALL_START_DATE", "ORDER": "ASC"})
-        by_owner = self.next_step_index(acts, calls)
+        # Open plans can predate the synchronization window and the call itself.
+        open_acts = self.list_all("crm.activity.list", {
+            "filter": {"COMPLETED": "N"},
+            "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "SUBJECT",
+                       "COMPLETED", "DEADLINE", "START_TIME"], "order": {"ID": "ASC"}})
+        by_owner = self.next_step_index(open_acts, calls)
         # к чему привязаны звонки и встречи: контакт, компания или лид
-        bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set()}
+        bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set(), "DEAL": set()}
         for c in calls:
             if c.get("CRM_ENTITY_TYPE") in bound and c.get("CRM_ENTITY_ID"):
                 bound[c["CRM_ENTITY_TYPE"]].add(str(c["CRM_ENTITY_ID"]))
@@ -258,9 +257,11 @@ class Bitrix24:
         contacts = self.by_ids("crm.contact.list", bound["CONTACT"], contact_select)
         leads_of_calls = self.by_ids("crm.lead.list", bound["LEAD"],
                                      ["ID", "TITLE", "COMPANY_ID"] + ([lead_lpr_field] if lead_lpr_field else []))
+        deals_of_calls = self.by_ids("crm.deal.list", bound["DEAL"], ["ID", "TITLE", "COMPANY_ID"])
         companies_of_calls = self.by_ids("crm.company.list",
                                          bound["COMPANY"] | {str(c["COMPANY_ID"]) for c in contacts.values() if c.get("COMPANY_ID")} |
-                                         ({str(l["COMPANY_ID"]) for l in leads_of_calls.values() if l.get("COMPANY_ID")} if company_lpr_field else set()),
+                                         {str(l["COMPANY_ID"]) for l in leads_of_calls.values() if l.get("COMPANY_ID")} |
+                                         {str(d["COMPANY_ID"]) for d in deals_of_calls.values() if d.get("COMPANY_ID")},
                                          ["ID", "TITLE"] + ([company_lpr_field] if company_lpr_field else []))
         secr = [s.lower() for s in self.cfg.get("secretary_posts", [])]
         company_has_lpr = set()
@@ -337,11 +338,17 @@ class Bitrix24:
                                 "record_url": c.get("CALL_RECORD_URL") or None})
             if not login:  # звонки сотрудника без KPI — только записи, в KPI не идут
                 continue
-            nxt = int(any(is_next_step_for_call(a, c) for a in by_owner.get(call_binding(c), [])))
+            etype, eid = c.get("CRM_ENTITY_TYPE"), str(c.get("CRM_ENTITY_ID") or "")
+            related = {"CONTACT": contacts, "LEAD": leads_of_calls, "DEAL": deals_of_calls}
+            company_id = eid if etype == "COMPANY" else str(related.get(etype, {}).get(eid, {}).get("COMPANY_ID") or "")
+            company_call = {**c, "CRM_ENTITY_TYPE": "COMPANY", "CRM_ENTITY_ID": company_id}
+            steps = [a for a in by_owner.get((4, company_id), []) if is_next_step_for_call(a, company_call)]
+            step_deadline = max((activity_deadline(a) for a in steps), default=None)
+            nxt = int(bool(step_deadline))
             # с кем разговор (contact): сущность CRM, а если звонок не привязан — номер телефона
             rows.append({"id": "call" + str(c["ID"]), "emp": login, "dt": start, "kind": "call", "direction": direction,
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
-                         "next_step": nxt, "status": "done", "subject": "", "client": client, "contact": contact,
+                         "next_step": nxt, "next_step_deadline": step_deadline.isoformat() if step_deadline else None, "status": "done", "subject": "", "client": client, "contact": contact,
                          "client_ref": client_reference(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID")),
                          "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None})
         out["call_records"] = records

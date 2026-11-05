@@ -70,12 +70,14 @@ def followup_activity(activity):
                 and "CALL" not in provider and not callback)
 
 
-def is_next_step_for_call(activity, call):
-    """A later non-call activity explicitly bound to the call's CRM card."""
+def is_next_step_for_call(activity, call, now=None):
+    """An open, dated, non-call plan in the company associated with the call."""
     if not followup_activity(activity) or str(activity["ID"]) == str(call.get("CRM_ACTIVITY_ID")):
         return False
-    if call_binding(call) not in activity_bindings(activity):
+    if str(activity.get("COMPLETED") or "").upper() != "N":
         return False
-    start = activity_datetime(call.get("CALL_START_DATE"))
-    created = activity_datetime(activity.get("CREATED"))
-    return bool(start and created and created > start)
+    binding = call_binding(call)
+    if not binding or binding[0] != 4 or binding not in activity_bindings(activity):
+        return False
+    deadline = activity_deadline(activity)
+    return bool(deadline and deadline >= (now or dt.datetime.now()))

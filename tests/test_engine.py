@@ -102,14 +102,14 @@ class EngineTest(unittest.TestCase):
                     b24 = Bitrix24({"webhook": "https://crm.example.test/rest/1/test/",
                                     "fields": {"lead_lpr": "LPR"}}, log=lambda *a: None)
                     def rest_list(method, params, key=None):
-                        if method == "crm.activity.list" and ">=CREATED" in params["filter"]:
+                        if method == "crm.activity.list":
                             self.assertIn("DEADLINE", params["select"])
                             self.assertNotIn("RESPONSIBLE_ID", params["filter"])
-                            return [activity(DEADLINE="2026-11-11T16:00:00+05:00" if dated else None)]
+                            return [activity(OWNER_TYPE_ID="4", OWNER_ID="42", DEADLINE="2099-11-11T16:00:00+05:00" if dated else None)]
                         if method == "voximplant.statistic.get":
                             return [crm_call(CALL_TYPE="1", CALL_DURATION="180")]
                         if method == "crm.lead.list" and "ID" in params["filter"]:
-                            return [{"ID": "2414", "TITLE": "Клиент", "LPR": "Да"}]
+                            return [{"ID": "2414", "TITLE": "Клиент", "COMPANY_ID":"42", "LPR": "Да"}]
                         return []
                     b24.list_all = rest_list
                     b24.batch = mock.Mock(return_value=({"binding201": [{"entityTypeId": 1, "entityId": 2414}]}, {}))
@@ -120,13 +120,13 @@ class EngineTest(unittest.TestCase):
                     b24.lead_statuses = mock.Mock(return_value={})
                     rows = b24.fetch({56: login}, dt.date(2026, 11, 1))["activities"]
                     self.assertEqual(rows[0]["crm_activity_id"], "100")  # Also retained without a recording.
-                    self.assertEqual(rows[0]["next_step"], 1)
+                    self.assertEqual(rows[0]["next_step"], int(dated))
                     self.con.execute("DELETE FROM activities")
                     insert(self.con, "activities", rows)
                     funnel = self.engine.call_funnel(login, dt.date(2026, 11, 1), dt.date(2026, 11, 30))
-                    self.assertEqual(funnel["result"], 1)
+                    self.assertEqual(funnel["result"], int(dated))
                     self.assertTrue(funnel["kpi"].startswith(f"KPI {number}."))
-                    self.assertEqual(self.calc(login, code, "2026-11")["components"][0]["fact"], 1)
+                    self.assertEqual(self.calc(login, code, "2026-11")["components"][0]["fact"], int(dated))
 
     def test_pm_calls_do_not_require_lpr_but_tender_calls_do(self):
         insert(self.con, "activities", [call(1, "pm", "2026-09-10", lpr=0), call(2, "pm", "2026-09-11", lpr=1),
@@ -174,11 +174,11 @@ class EngineTest(unittest.TestCase):
                                         call(7, "lead", "2026-10-06", lpr=0)])
         d1, d2 = dt.date(2026, 10, 1), dt.date(2026, 10, 19)
         pm = self.engine.call_funnel("pm", d1, d2)
-        self.assertEqual(pm["steps"], [("Исходящие звонки", 2), ("От 2 мин", 1), ("Не секретарь", 1),
+        self.assertEqual(pm["steps"], [("Входящие и исходящие звонки", 2), ("От 2 мин", 1), ("Не секретарь", 1),
                                        ("Зафиксирован след. шаг", 1)])  # ЛПР не нужен; звонок 20-го вне периода
         self.assertTrue(pm["kpi"].startswith("KPI "))
         tender = self.engine.call_funnel("tender", d1, d2)
-        self.assertEqual(tender["steps"][0], ("Исходящие звонки", 2))  # два звонка контакту 7 в один день — один
+        self.assertEqual(tender["steps"][0], ("Входящие и исходящие звонки", 2))  # два звонка контакту 7 в один день — один
         self.assertEqual(tender["steps"][-2:], [("Есть информация о ЛПР", 1), ("Зафиксирован след. шаг", 1)])
         lead = self.engine.call_funnel("lead", d1, d2)
         self.assertIsNone(lead["kpi"])  # у ведущего звонков в KPI нет — для справки, без требования ЛПР
@@ -252,10 +252,17 @@ class EngineTest(unittest.TestCase):
             ex = {x["label"]: x["value"] for x in it["extra"]}
             self.assertEqual((ex["КП за период"], ex["Тендеры за период"], ex["Заказы клиента «В закуп»"]), (3, 4, 3))
 
-    def test_incoming_calls_do_not_count(self):
+    def test_incoming_calls_count(self):
         insert(self.con, "activities", [call(1, "tender", "2026-09-10"), {**call(2, "tender", "2026-09-11"), "direction": "in"}])
         r = self.calc("tender", "base_development", "2026-09")
-        self.assertEqual(r["components"][0]["fact"], 1)  # входящий звонок в KPI не идёт
+        self.assertEqual(r["components"][0]["fact"], 2)  # оба направления учитываются
+
+    def test_next_step_expires_between_syncs(self):
+        insert(self.con, "activities", [
+            {**call(1, "tender", "2026-11-01"), "next_step_deadline":"2020-01-01T10:00:00"},
+            {**call(2, "tender", "2026-11-01"), "direction":"in", "next_step_deadline":"2099-01-01T10:00:00"}])
+        r = self.calc("tender", "base_development", "2026-11")
+        self.assertEqual(r["components"][0]["fact"], 1)
 
     def test_calls_norm_is_monthly_not_every_day(self):
         sup = next(e for e in CONFIG["employees"] if e["login"] == "tender")

@@ -220,14 +220,18 @@ class Engine:
                     seen.add(key)
                     out_.append(r)
             return out_
-        out = [r for r in rows if r["direction"] == "out"]
+        out = [r for r in rows if r["direction"] in ("out", "in")]
+        now = dt.datetime.now().isoformat()
+        for r in rows:
+            if r.get("next_step_deadline"):
+                r["next_step"] = int(r["next_step_deadline"] >= now)
         long_ = [r for r in out if (r["duration"] or 0) >= self.min_call]
         self._mark_secretary(long_)
         not_secr = [r for r in long_ if not r["secretary"]]
         lpr = [r for r in not_secr if r["is_lpr"]] if require_lpr else not_secr
         result = [r for r in lpr if r["next_step"]]
         out, long_, not_secr, lpr, result = map(uniq, (out, long_, not_secr, lpr, result))
-        funnel = [("Исходящие звонки", len(out)), (f"От {self.min_call // 60} мин", len(long_)),
+        funnel = [("Входящие и исходящие звонки", len(out)), (f"От {self.min_call // 60} мин", len(long_)),
                   ("Не секретарь", len(not_secr))]
         if require_lpr:
             funnel.append(("Есть информация о ЛПР", len(lpr)))
@@ -697,10 +701,10 @@ class Engine:
         wd = len(self._work_dates(e, ctx))  # рабочие дни месяца без дней уважительного отсутствия
         if "result_calls_per_day" in p:
             calls_target = p["result_calls_per_day"] * wd
-            calls_name = f"Результативные исходящие звонки ({p['result_calls_per_day']} в день × {wd} раб. дн.)"
+            calls_name = f"Результативные звонки ({p['result_calls_per_day']} в день × {wd} раб. дн.)"
         else:
             calls_target = p["result_calls_month"]
-            calls_name = "Результативные исходящие звонки"
+            calls_name = "Результативные звонки"
 
         kp_all = self.q("SELECT * FROM kp WHERE emp=? AND dt>=? AND dt<=?", emp, first, last)
         kp_target = p["kp_per_day"] * wd

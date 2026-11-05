@@ -45,12 +45,12 @@ class KPIActivityAuditTest(unittest.TestCase):
         self.put("activities", rows)
         r = self.audit("calls")
         self.assertEqual(len(r["records"]), 7)
-        self.assertEqual(r["fact"], 1)
+        self.assertEqual(r["fact"], 2)
         self.assertEqual(sum(x["counted"] is True for x in r["records"]), r["fact"])
         self.assertFalse(self.row(r, "ctender0")["counted"])
         self.assertTrue(self.row(r, "ctender1")["counted"])
         self.assertTrue(self.row(r, "ctender2")["duplicate"])
-        self.assertEqual(self.states(self.row(r, "ctender3"))["outgoing"], "fail")
+        self.assertEqual(self.states(self.row(r, "ctender3"))["outgoing"], "pass")
         self.assertEqual(self.states(self.row(r, "ctender4"))["duration"], "fail")
         self.assertEqual(self.states(self.row(r, "ctender5"))["not_secretary"], "fail")
         self.assertEqual(self.states(self.row(r, "ctender6"))["next_step"], "fail")
@@ -71,7 +71,7 @@ class KPIActivityAuditTest(unittest.TestCase):
         with mock.patch("app.kpi_activity_audit._now", return_value=__import__('datetime').datetime(2026, 11, 3)):
             r = self.audit("calls")
         text = " ".join(self.row(r, "ctender1")["actions"]).lower()
-        self.assertIn("после звонка", text)
+        self.assertIn("связанной компании", text)
         self.assertIn("кроме повторного звонка", text)
         self.assertNotIn("в течение 24 часов", " ".join(r["rules"]))
 
