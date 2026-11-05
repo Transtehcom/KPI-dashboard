@@ -337,6 +337,7 @@ ADDED_COLUMNS["task_ledger"] = [("project_id", "TEXT")]
 ADDED_COLUMNS["clients"] = [("strategy_count", "INTEGER"), ("strategy_date_count", "INTEGER")]
 ADDED_COLUMNS["activities"].append(("crm_activity_id", "TEXT"))
 ADDED_COLUMNS["activities"].append(("next_step_deadline", "TEXT"))
+ADDED_COLUMNS["call_processing_jobs"] = [("errors", "TEXT")]
 ADDED_COLUMNS["supplier_orders"] = [("customer_order_key", "TEXT"), ("customer_order_date", "TEXT"),
                                      ("customer_actual_date", "TEXT"), ("defect_fixed_date", "TEXT"),
                                      ("author_key", "TEXT")]

@@ -83,7 +83,7 @@ class CallJobsTest(unittest.TestCase):
         self.assertEqual(count[1],1)
 
     def test_limit_and_exception_end_job(self):
-        for result,status in (("limit","blocked"),("failed","completed")):
+        for result,status in (("limit","blocked"),("failed","failed")):
             self.queue.process_call=lambda *args:result
             j=self.queue.create(["a"],force=True);self.queue.tick()
             row=self.wait_status(j["id"],{status})
@@ -140,3 +140,35 @@ class CallJobsTest(unittest.TestCase):
             self.queue.tick()
             for j in jobs:self.wait_status(j["id"],{"completed"})
         self.assertEqual(count[1],1)
+
+    def test_failed_call_stores_reason_and_is_not_reported_successful(self):
+        def fail(*args):
+            self.queue.current.error="Превышено время ожидания разбора: 900 секунд"
+            return "failed"
+        self.queue.process_call=fail
+        job=self.queue.create(["a"],force=True);self.queue.tick()
+        row=self.wait_status(job["id"],{"failed"})
+        self.assertEqual(row["errors"][0]["id"],"a")
+        self.assertIn("900",row["errors"][0]["message"])
+        self.assertNotEqual(row["message"],"Готово")
+
+    def test_partial_success_has_distinct_status(self):
+        self.queue.process_call=lambda rid,*args:"ok" if rid=="a" else "failed"
+        job=self.queue.create(["a","b"],force=True);self.queue.tick()
+        row=self.wait_status(job["id"],{"completed_with_errors"})
+        self.assertEqual((row["done"],row["failed"]),(1,1))
+
+    def test_legacy_timeout_job_is_migrated_with_readable_error_snapshot(self):
+        job=self.queue.create(["a"],force=True)
+        self.queue.update(job["id"],status="completed",done=0,failed=1,errors=None,
+                          started="2026-11-05T16:00:00",finished="2026-11-05T16:10:00")
+        self.con.execute("INSERT INTO call_analysis (id,error,created) VALUES (?,?,?)",
+                         ("a","TimeoutExpired: Command ['codex'] timed out after 300 seconds","2026-11-05T16:05:00"))
+        self.con.commit()
+        restarted=JobQueue(self.con,{})
+        row=restarted.get(job["id"])
+        self.assertEqual(row["status"],"failed")
+        self.assertIn("300 секунд",row["errors"][0]["message"])
+        self.assertNotIn("Command",row["errors"][0]["message"])
+        self.con.execute("UPDATE call_analysis SET error=NULL WHERE id='a'");self.con.commit()
+        self.assertIn("300 секунд",restarted.get(job["id"])["errors"][0]["message"])

@@ -68,7 +68,7 @@ class AnalyzeTest(unittest.TestCase):
             answer_path.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
             return SimpleNamespace(stdout="", stderr="", returncode=0)
         segs = [[0.5, 3.0, "Добрый день, Транстехком, Мария Мельникова."], [3.5, 6.0, "Слушаю вас. Вышлите КП до пятницы."]]
-        with mock.patch.object(call_analysis.subprocess, "run", fake_run):
+        with mock.patch.object(call_analysis, "_execute_cli", fake_run):
             res = call_analysis.analyze(segs, {"direction": "out", "duration": 65}, {})
         return res, sent
 
@@ -103,7 +103,7 @@ class AnalyzeTest(unittest.TestCase):
         def fake_run(cmd, input, **kw):
             pathlib.Path(cmd[cmd.index("--output-last-message") + 1]).write_text(next(answers), encoding="utf-8")
             return SimpleNamespace(stdout="", stderr="", returncode=0)
-        with mock.patch.object(call_analysis.subprocess, "run", fake_run):
+        with mock.patch.object(call_analysis, "_execute_cli", fake_run):
             call = call_analysis.run_codex("текст", {})
         self.assertEqual((call["attempts"], call["result"]["call_type"], call["tokens_out"]), (2, "продажа", None))
 
@@ -146,7 +146,7 @@ class QueueTest(unittest.TestCase):
             pathlib.Path(cmd[cmd.index("--output-last-message") + 1]).write_text(
                 json.dumps(answer or ANSWER, ensure_ascii=False), encoding="utf-8")
             return SimpleNamespace(stdout="", stderr="", returncode=0)
-        return mock.patch.object(call_analysis.subprocess, "run", run)
+        return mock.patch.object(call_analysis, "_execute_cli", run)
 
     def analyze_current(self):
         """Разобрать все звонки с текущей расшифровкой без разбора (как ручная обработка): (разобрано, ошибок, лимит)."""
@@ -243,3 +243,29 @@ class QueueTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CLITimeoutTest(unittest.TestCase):
+    def test_timeout_depends_on_effort_and_can_be_configured(self):
+        self.assertEqual(call_analysis.analysis_timeout({},"max"),900)
+        self.assertEqual(call_analysis.analysis_timeout({},"high"),600)
+        self.assertEqual(call_analysis.analysis_timeout({},"low"),300)
+        self.assertEqual(call_analysis.analysis_timeout({"call_records":{"analysis_timeout_seconds":1200}},"max"),1200)
+
+    def test_cli_timeout_terminates_its_process_tree_and_reports_clean_error(self):
+        process=mock.Mock()
+        process.communicate.side_effect=call_analysis.subprocess.TimeoutExpired(["codex"],900)
+        with mock.patch.object(call_analysis.subprocess,"Popen",return_value=process),mock.patch.object(call_analysis,"_kill_cli_tree") as kill:
+            with self.assertRaisesRegex(RuntimeError,"900"):
+                call_analysis._execute_cli(["codex"],input="masked",timeout=900,text=True)
+        kill.assert_called_once_with(process)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+
+    def test_cli_io_failure_also_terminates_process_tree(self):
+        process=mock.Mock()
+        process.communicate.side_effect=OSError("broken pipe")
+        with mock.patch.object(call_analysis.subprocess,"Popen",return_value=process),mock.patch.object(call_analysis,"_kill_cli_tree") as kill:
+            with self.assertRaisesRegex(OSError,"broken pipe"):
+                call_analysis._execute_cli(["codex"],input="masked",timeout=900,text=True)
+        kill.assert_called_once_with(process)

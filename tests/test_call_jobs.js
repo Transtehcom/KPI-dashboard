@@ -31,6 +31,12 @@ vm.runInContext(html.slice(start,end)+'\nthis.watch=watchJob; this.startProc=sta
  await context.watch();
  assert.doesNotMatch(nodes.cJobsList.innerHTML,/data-cancel-job/);
  assert.ok(toasts.some(s=>s.includes('завершилась')));
+ response={...response,jobs:[{...response.jobs[0],status:'failed',failed:1,errors:[{id:'call15966',message:'Timeout <script>'}]}]};
+ await context.watch();
+ assert.match(nodes.cJobsList.innerHTML,/call15966/);
+ assert.match(nodes.cJobsList.innerHTML,/Timeout &lt;script>/);
+ assert.match(nodes.cJobsList.innerHTML,/Причины ошибок/);
+ assert.ok(!nodes.cJobsList.innerHTML.includes('<script>'));
  context.state.view='team';const before=calls.length;await context.watch();assert.equal(calls.length,before);
  console.log('Call job scheduling, progress, cancel controls and preserved launch time: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});

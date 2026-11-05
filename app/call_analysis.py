@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -174,6 +175,51 @@ def codex_path(config):
     return shutil.which(name) or name
 
 
+def analysis_timeout(config, effort=EFFORT):
+    default = 900 if effort in ("xhigh", "max") else 600 if effort == "high" else TIMEOUT
+    configured = (config.get("call_records") or {}).get("analysis_timeout_seconds")
+    value = default if configured is None else int(configured)
+    if not 30 <= value <= 3600:
+        raise ValueError("analysis_timeout_seconds должен быть от 30 до 3600 секунд")
+    return value
+
+
+def _kill_cli_tree(process):
+    """Terminate only the CLI process tree created for this call, including the Windows .cmd wrapper."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, timeout=10, creationflags=0x08000000)
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _execute_cli(cmd, input, timeout, capture_output=True, **kwargs):
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=os.name != "nt", **kwargs)
+    try:
+        stdout, stderr = process.communicate(input=input, timeout=timeout)
+        return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        _kill_cli_tree(process)
+        raise RuntimeError(f"Превышено время ожидания разбора: {timeout} секунд. Задачу можно повторить.") from None
+    except BaseException:
+        _kill_cli_tree(process)
+        raise
+    finally:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream:
+                stream.close()
+
+
 def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
     work = os.path.join(ROOT, "data", "nlp-work")
     os.makedirs(work, exist_ok=True)
@@ -191,8 +237,8 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT):
                "--ignore-user-config", "--ignore-rules", "--disable", "shell_tool", "--skip-git-repo-check",
                "--output-schema", schema_path, "--output-last-message", answer_path,
                "-c", f"model_reasoning_effort={effort}", "-"]
-        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=run_dir,
-                           timeout=TIMEOUT, env=env,
+        p = _execute_cli(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=run_dir,
+                           timeout=analysis_timeout(config, effort), env=env,
                            creationflags=0x08000000 if os.name == "nt" else 0)  # CREATE_NO_WINDOW
         if p.returncode:
             detail = (p.stderr or p.stdout or "").strip()

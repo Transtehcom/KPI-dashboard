@@ -1,6 +1,7 @@
 """Persistent, bounded manual call jobs. Cancellation finishes the current call."""
 import datetime as dt
 import json
+import re
 import threading
 import uuid
 
@@ -8,7 +9,15 @@ from .common import db_lock
 from . import call_analysis, call_records, transcripts
 
 
-TERMINAL = {"completed", "cancelled", "failed", "blocked", "interrupted"}
+TERMINAL = {"completed", "completed_with_errors", "cancelled", "failed", "blocked", "interrupted"}
+
+
+def error_message(error):
+    text = str(error or "Не удалось обработать звонок; причина не сохранена")
+    timeout = re.search(r"timed out after ([\d.]+) seconds", text)
+    if "TimeoutExpired" in text and timeout:
+        return f"Превышено время ожидания разбора: {timeout[1]} секунд. Задачу можно повторить."
+    return text[:1000]
 
 
 def timestamp():
@@ -27,6 +36,30 @@ class JobQueue:
                         "message='Прервано перезапуском сервиса; создайте новую задачу для продолжения' "
                         "WHERE status IN ('running','cancelling')", (timestamp(),))
             con.commit()
+            self.recover_errors()
+
+    def recover_errors(self):
+        """Snapshot still-available errors from jobs created before per-job diagnostics existed."""
+        rows = self.con.execute("SELECT * FROM call_processing_jobs WHERE errors IS NULL AND failed>0").fetchall()
+        for job in rows:
+            ids, errors, found = json.loads(job["ids"]), [], {}
+            for offset in range(0, len(ids), 500):
+                chunk = ids[offset:offset + 500]
+                ph = ",".join("?" for _ in chunk)
+                for table in ("call_transcripts", "call_analysis"):
+                    for row in self.con.execute(
+                            f"SELECT id,error FROM {table} WHERE id IN ({ph}) AND error IS NOT NULL "
+                            "AND created>=? AND created<=?",
+                            (*chunk, job["started"] or job["created"], job["finished"] or timestamp())):
+                        found[row["id"]] = error_message(row["error"])
+                if len(found) >= 50:
+                    break
+            errors = [{"id": rid, "message": found[rid]} for rid in ids if rid in found][:50]
+            state, message = job["status"], job["message"]
+            if state == "completed":
+                state = "completed_with_errors" if job["done"] or job["skipped"] else "failed"
+                message = f"Обработано {job['done']}, ошибок {job['failed']}"
+            self.update(job["id"], errors=json.dumps(errors, ensure_ascii=False), status=state, message=message)
 
     def get(self, jid):
         with db_lock():
@@ -35,6 +68,7 @@ class JobQueue:
                 raise ValueError("Задача не найдена")
             result = dict(row)
             result.pop("ids", None)
+            result["errors"] = json.loads(result.get("errors") or "[]")
             return result
 
     def listing(self):
@@ -72,13 +106,13 @@ class JobQueue:
                 ids = list(call_analysis.todo(self.con, ids))
             if not ids:
                 raise ValueError("Все выбранные звонки уже обработаны")
-            count = self.con.execute("SELECT COUNT(*) FROM call_processing_jobs WHERE status NOT IN "
-                                     "('completed','cancelled','failed','blocked','interrupted')").fetchone()[0]
+            count = self.con.execute("SELECT COUNT(*) FROM call_processing_jobs WHERE status IN "
+                                     "('queued','running','cancelling')").fetchone()[0]
             if count >= 100:
                 raise ValueError("В очереди уже 100 задач; дождитесь завершения или отмените ненужные")
             self.con.execute("INSERT INTO call_processing_jobs "
-                             "(id,ids,force,model,effort,author,created,run_at,status,total,message) "
-                             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                             "(id,ids,force,model,effort,author,created,run_at,status,total,message,errors) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,'[]')",
                              (jid, json.dumps(ids), int(force), model, effort, author, now,
                               scheduled.isoformat(timespec="seconds") if scheduled else now,
                               "queued", len(ids), "Ожидает указанного времени" if scheduled else "В очереди"))
@@ -173,16 +207,25 @@ class JobQueue:
             row = self.con.execute("SELECT c.*,t.segments,t.text FROM call_records c JOIN call_transcripts t ON t.id=c.id "
                                    "WHERE c.id=? AND t.engine=? AND t.segments IS NOT NULL", (rid, transcripts.ENGINE)).fetchone()
         if not row:
+            with db_lock():
+                transcript = self.con.execute("SELECT error FROM call_transcripts WHERE id=?", (rid,)).fetchone()
+            self.current.error = "Расшифровка: " + error_message(transcript["error"] if transcript else "Нет расшифровки текущей модели")
             return "failed"
         if cancel.is_set():
             return "cancelled"
         titles = {e["login"]: e.get("title") for e in self.config.get("employees", [])}
-        return call_analysis.analyze_row(self.con, self.config, dict(row), titles,
-                                         model=self.current.model, effort=self.current.effort)
+        result = call_analysis.analyze_row(self.con, self.config, dict(row), titles,
+                                          model=self.current.model, effort=self.current.effort)
+        if result == "failed":
+            with db_lock():
+                error = self.con.execute("SELECT error FROM call_analysis WHERE id=?", (rid,)).fetchone()
+            self.current.error = error_message(error["error"] if error else None)
+        return result
 
     def work(self, job, cancel):
         jid, done, failed, skipped = job["id"], 0, 0, 0
         state, message = "completed", "Готово"
+        errors = []
         try:
             self.current.model, self.current.effort = job["model"], job["effort"]
             for index, rid in enumerate(json.loads(job["ids"]), 1):
@@ -199,6 +242,7 @@ class JobQueue:
                             break
                     if cancel.is_set():
                         break
+                    self.current.error = None
                     result = self.process_call(rid, bool(job["force"]), cancel)
                     if result == "limit":
                         state, message = "blocked", "Лимит подписки Codex; создайте новую задачу позже"
@@ -206,7 +250,10 @@ class JobQueue:
                     done += result == "ok"
                     failed += result == "failed"
                     skipped += result == "skipped"
-                    self.update(jid, done=done, failed=failed, skipped=skipped)
+                    if result == "failed" and len(errors) < 50:
+                        errors.append({"id": rid, "message": error_message(self.current.error)})
+                    self.update(jid, done=done, failed=failed, skipped=skipped,
+                                errors=json.dumps(errors, ensure_ascii=False))
                 finally:
                     if acquired:
                         lock.release()
@@ -219,6 +266,9 @@ class JobQueue:
                 # Cancel may arrive after the last loop check but before final state is saved.
                 if cancel.is_set():
                     state, message = "cancelled", "Отменено; результаты завершённых звонков сохранены"
+                elif state == "completed" and failed:
+                    state = "completed_with_errors" if done or skipped else "failed"
+                    message = f"Обработано {done}, ошибок {failed}"
                 self.update(jid, status=state, message=message, current=None, finished=timestamp())
                 self.active.pop(jid, None)
                 if not self.active:
