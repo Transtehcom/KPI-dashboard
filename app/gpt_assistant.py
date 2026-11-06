@@ -76,6 +76,10 @@ document_edit: query={"id":"id документа","changes":[{"unit":"id бло
 Актуальные сведения сообщай только при наличии свежего источника. Сейчас среди инструментов нет погоды, городских новостей или интернет-поиска.
 Если свежих данных нет, прямо сообщи об этом, не придумывай температуру, пробки или события.
 Бытовые инструкции вне рабочих задач (рецепты, готовка, уборка, домашние советы), развлечения и прочие посторонние темы не раскрывай.
+Школьная/студенческая домашка, решение учебных задач, контрольных, ЕГЭ/ОГЭ, написание курсовых и рефератов вне работы также запрещены.
+На просьбы «Поможешь решить домашку?», «Можно помочь с уроками?» отказывай сразу. Не соглашайся и не предлагай прислать задание.
+Для школьной домашки используй kind=refusal и answer="решать домашние задания".
+Рабочие расчёты, обучение по своей должности и задания корпоративного курса относятся к рабочей помощи.
 Для них верни kind=refusal, answer — только краткое действие пользователя в инфинитиве после слов «не знаю как».
 Пример: «Как сварить борщ?» -> kind=refusal, answer="варить борщ". Рецепт не добавляй.
 Политические вопросы, обсуждение политиков, выборов, партий, идеологий и политические оценки не раскрывай: kind=politics_refusal, answer="".
@@ -140,6 +144,12 @@ onec_card: {"entity":"метка типа","id":"метка id","fields":["ме�
 
 def now():
     return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def homework_request(text):
+    academic = re.search(r"\b(?:домашк\w*|домашн\w*\s+задан\w*|школьн\w*\s+(?:задан|задач|урок)\w*)\b", text, re.I)
+    work = re.search(r"\b(?:рабоч\w*\s+задан\w*|корпоративн\w*\s+курс\w*|обучени\w*\s+по\s+должности|для\s+работы)\b", text, re.I)
+    return bool(academic and not work)
 
 
 class GPTAssistant:
@@ -279,6 +289,16 @@ class GPTAssistant:
                 row = dict(self.con.execute("SELECT * FROM gpt_messages WHERE id=?", (mid,)).fetchone())
                 history = [dict(r) for r in self.con.execute("SELECT id,role,content,masked_content,status FROM gpt_messages "
                                                            "WHERE chat_id=? AND id<? ORDER BY id DESC LIMIT 16", (jid, mid))][::-1]
+            if event.is_set():
+                raise ValueError("Ответ остановлен пользователем")
+            question = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
+            if homework_request(question):
+                answer = "Я всего лишь ассистент-помощник и не знаю как решать домашние задания."
+                with db_lock():
+                    self.check_chat(saved["owner"], jid)
+                    self.con.execute("UPDATE gpt_messages SET status='completed',content=?,masked_content=?,sources='[]',finished=? WHERE id=?", (answer, answer, now(), mid))
+                    self.con.commit()
+                return
             call_config = {**self.config, "codex_fast": bool(row["fast"]) and access.admin}
             privacy = PrivacyContext(json.loads(saved[0] or "{}"), documents_only=True)
             data_tools = self.data if access.admin else DataTools(self.con, self.config, self.data.engine.rules, access=access)

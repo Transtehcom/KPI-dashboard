@@ -133,6 +133,22 @@ class GPTTest(unittest.TestCase):
         self.assertEqual(out["total_items"],0)
         with self.assertRaises(ValueError):self.service.tools("calendar",'{"date":"bad","user_id":"456"}',"","",gpt_privacy.PrivacyContext())
 
+    def test_homework_variants_and_work_training_boundary(self):
+        for text in ("Реши домашку", "Помоги с домашним заданием", "Разбери школьную задачу"):
+            self.assertTrue(gpt_assistant.homework_request(text))
+        for text in ("Проверь рабочее задание", "Домашнее задание корпоративного курса по продажам", "Какая погода сегодня?"):
+            self.assertFalse(gpt_assistant.homework_request(text))
+
+    def test_homework_request_is_refused_before_model_call(self):
+        chat=self.service.create_chat("boss")
+        with mock.patch.object(gpt_assistant.call_analysis,"run_codex") as model:
+            job=self.service.submit("boss",chat["id"],"Поможешь решить домашку?",launch=False)
+            self.service.work(chat["id"],job["id"])
+        result=self.service.chat("boss",chat["id"])["messages"][-1]
+        self.assertEqual(result["status"],"completed")
+        self.assertEqual(result["content"],"Я всего лишь ассистент-помощник и не знаю как решать домашние задания.")
+        model.assert_not_called()
+
     def test_off_topic_reply_uses_requested_phrase_without_sources(self):
         chat=self.service.create_chat("boss")
         response={"kind":"refusal","tool":"","query":"","employee":"","month":"","answer":"варить борщ","sources":["source_1"]}
