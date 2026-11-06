@@ -97,7 +97,7 @@ class DocumentTest(unittest.TestCase):
             sheet.append(row)
         raw = io.BytesIO()
         book.save(raw)
-        service = GPTAssistant(self.con, {"employees": []}, load_rules())
+        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
         doc = service.document_upload("boss", "chat", "Договор.xlsx", base64.b64encode(raw.getvalue()).decode())
         prompts = []
         def model(prompt, *args, **kwargs):
@@ -200,7 +200,7 @@ class DocumentTest(unittest.TestCase):
         from unittest.mock import patch
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": []}, load_rules())
+        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
         document = service.document_upload("boss", "chat", "Договор.txt", base64.b64encode("Стоимость 100 рублей\nИНН 7701234567".encode()).decode())
         with self.assertRaises(ValueError):
             service.document_download("other", "chat", document["id"])

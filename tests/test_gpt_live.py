@@ -106,6 +106,7 @@ class LiveTest(unittest.TestCase):
 
     def test_chat_normal_entrypoint_passes_authorized_ordinary_live_data(self):
         from app.gpt_assistant import GPTAssistant
+        self.tools.config["employees"]=[{"login":"boss","name":"Администратор","role":"manager"}]
         service=GPTAssistant(self.con,self.tools.config,load_rules())
         service.data.live.b24=mock.Mock()
         service.data.live.b24.call.return_value={"result":[{"ID":"888","TITLE":"acme-private-482","PHONE":[{"VALUE":"89991112233"}]}],"total":1}

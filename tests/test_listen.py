@@ -150,13 +150,15 @@ class ListenTest(unittest.TestCase):
                 with urllib.request.urlopen(req) as r:return r.status,json.load(r)
             except urllib.error.HTTPError as e:
                 with e:return e.code,json.load(e)
-        self.assertEqual(self.get("pm","/api/gpt-chats")[0],403)
-        self.assertEqual(post("pm","/api/gpt-new",{})[0],403)
+        self.assertEqual(self.get("pm","/api/gpt-chats")[0],200)
+        self.assertEqual(post("pm","/api/gpt-new",{})[0],200)
         code,chat=post("boss","/api/gpt-new",{})
         self.assertEqual(code,200)
+        self.app.config["employees"].append({"login":"other","name":"Другой администратор","role":"manager"})
+        self.addCleanup(lambda:self.app.config["employees"].pop())
         other=self.app.gpt_service().create_chat("other")
         self.assertEqual(self.get("boss","/api/gpt-chat?id="+other["id"])[0],400)
-        self.assertEqual(self.get("pm","/api/gpt-preview?id="+chat["id"]+"&message=1")[0],403)
+        self.assertEqual(self.get("pm","/api/gpt-preview?id="+chat["id"]+"&message=1")[0],400)
         self.assertEqual(post("boss","/api/gpt-send",{"id":chat["id"],"text":"x","model":"invalid"})[0],400)
         response={"result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Здравствуйте","sources":[]}}
         with patch.object(gpt_assistant.call_analysis,"run_codex",return_value=response):
@@ -175,6 +177,8 @@ class ListenTest(unittest.TestCase):
         import base64
         service=self.app.gpt_service()
         chat=service.create_chat("boss")
+        self.app.config["employees"].append({"login":"other","name":"Другой администратор","role":"manager"})
+        self.addCleanup(lambda:self.app.config["employees"].pop())
         other=service.create_chat("other")
         def upload(login,identity):
             req=urllib.request.Request(self.base+"/api/gpt-upload",data=json.dumps({"id":identity,"name":"notes.txt","content":base64.b64encode(b"hello").decode()}).encode(),headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
@@ -182,12 +186,12 @@ class ListenTest(unittest.TestCase):
                 with urllib.request.urlopen(req) as response:return response.status,json.load(response)
             except urllib.error.HTTPError as error:
                 with error:return error.code,json.load(error)
-        self.assertEqual(upload("pm",chat["id"])[0],403)
+        self.assertEqual(upload("pm",chat["id"])[0],400)
         self.assertEqual(upload("boss",other["id"])[0],400)
         code,document=upload("boss",chat["id"])
         self.assertEqual(code,200)
         path=f"/api/gpt-document?id={chat['id']}&document={document['id']}"
-        self.assertEqual(self.get("pm",path)[0],403)
+        self.assertEqual(self.get("pm",path)[0],400)
         code,_headers,raw=self.get("boss",path)
         self.assertEqual(code,200)
         self.assertEqual(base64.b64decode(json.loads(raw)["content"]),b"hello")

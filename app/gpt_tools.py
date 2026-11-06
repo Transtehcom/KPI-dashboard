@@ -3,7 +3,7 @@ import datetime as dt
 import json
 import re
 
-from . import b24_calendar, call_analysis, money, sync
+from . import b24_calendar, call_analysis, call_records, money, sync
 from .common import current_month, db_lock, month_bounds
 from .crm_links import record_url
 from .engine import Engine
@@ -17,14 +17,22 @@ SEARCH = {
     "conversion_orders": ("id,doc,client,emp,dt,status,amount,role", ["doc", "client"], "doc"),
     "supplier_orders": ("id,doc,supplier,emp,dt,amount_novat,planned_date,actual_date,customer_order", ["doc", "supplier", "customer_order"], "doc"),
     "receivables": ("id,doc,client,emp,amount,due_date,paid_date,order_date", ["doc", "client"], "doc"),
+    "supply_funnel": ("id,emp,doc,dt,customer_order,client,status,stage,suppliers", ["doc", "customer_order", "client"], "doc"),
+    "supply_contracts": ("id,emp,doc,dt,supplier,contract_name,has_contract", ["doc", "supplier", "contract_name"], "doc"),
+    "transport_requests": ("id,emp,doc,dt,status,route,carrier,cost,due_at", ["doc", "route", "carrier"], "doc"),
+    "forwarder_orders": ("id,emp,doc,dt,status,route,carrier,ship_date,delivery_date,plan_sum,fact_sum", ["doc", "route", "carrier"], "doc"),
 }
 
 
 class DataTools:
-    def __init__(self, con, config, rules):
+    def __init__(self, con, config, rules, access=None):
+        self.access = access if access and not access.admin else None
+        if self.access:
+            config = {**config, "employees": [self.access.employee]}
         self.con, self.config, self.engine = con, config, Engine(con, rules, config)
-        self.live = LiveSources(config)
-        con.create_function("gpt_casefold",1,lambda value:str(value or "").casefold())
+        self.live = LiveSources(config, access=self.access)
+        with db_lock():
+            con.create_function("gpt_casefold",1,lambda value:str(value or "").casefold())
 
     def seed(self, privacy):
         privacy.config_secrets(self.config)
@@ -41,7 +49,11 @@ class DataTools:
         with db_lock():
             for table, field in (("clients", "name"), ("crm_deals", "client"), ("conversion_orders", "client"),
                                  ("supplier_orders", "supplier"), ("receivables", "client")):
-                for row in self.con.execute(f"SELECT DISTINCT {field} FROM {table} WHERE {field} IS NOT NULL"):
+                if self.access and table not in self.access.tables:
+                    continue
+                where = " AND emp=?" if self.access else ""
+                args = (self.access.login,) if self.access else ()
+                for row in self.con.execute(f"SELECT DISTINCT {field} FROM {table} WHERE {field} IS NOT NULL" + where, args):
                     names.append(row[0])
         for name in names:
             privacy.register("КОМПАНИЯ", name)
@@ -68,7 +80,13 @@ class DataTools:
         except (TypeError, ValueError):
             raise ValueError("Укажите query с date в формате ГГГГ-ММ-ДД и employee либо user_id") from None
         uid = str(params.get("user_id") or "")
+        if self.access:
+            if uid and uid != self.access.uid():
+                raise ValueError("Доступен только ваш собственный календарь")
+            uid = self.access.uid()
         name = "Сотрудник Б24"
+        if self.access:
+            name = self.access.employee["name"]
         if not uid:
             value = privacy.restore(employee or "").strip().casefold()
             people = self.config.get("employees", [])
@@ -109,6 +127,11 @@ class DataTools:
     def execute(self, tool, query, employee, month, privacy):
         if tool not in TOOLS:
             raise ValueError("Неизвестный инструмент; произвольный SQL и изменение данных недоступны")
+        if self.access:
+            self.access.check_tool(tool)
+            self.access.check_employee(privacy.restore(employee or ""))
+            if tool in ("calendar", "kpi", "calls", "call_detail"):
+                employee = self.access.login
         if tool == "calendar":
             return self.calendar(query or "", employee, privacy)
         if tool in LIVE_TOOLS:
@@ -147,10 +170,16 @@ class DataTools:
                     raise ValueError("Укажите имя, компанию или номер документа (до 300 символов)")
                 rows, totals = [], {}
                 for table, (columns, fields, title) in SEARCH.items():
-                    sql = f"SELECT {columns} FROM {table} WHERE " + " OR ".join(f"gpt_casefold({field}) LIKE ?" for field in fields) + " LIMIT 12"
+                    if self.access and table not in self.access.tables:
+                        continue
+                    where = "(" + " OR ".join(f"gpt_casefold({field}) LIKE ?" for field in fields) + ")"
                     parameters=["%" + query.casefold() + "%"] * len(fields)
+                    if self.access:
+                        where += " AND emp=?"
+                        parameters.append(self.access.login)
+                    sql = f"SELECT {columns} FROM {table} WHERE " + where + " LIMIT 12"
                     found = self.con.execute(sql, parameters).fetchall()
-                    count_sql=f"SELECT COUNT(*) FROM {table} WHERE " + " OR ".join(f"gpt_casefold({field}) LIKE ?" for field in fields)
+                    count_sql=f"SELECT COUNT(*) FROM {table} WHERE " + where
                     totals[table]=self.con.execute(count_sql,parameters).fetchone()[0]
                     for row in found:
                         data = dict(row)
@@ -176,13 +205,18 @@ class DataTools:
                     data = dict(row)
                     rid = data["id"]
                     sid = privacy.source("call:" + rid, "Звонок " + data["dt"], record_url(self.config, "call_records", data), "Битрикс24")
-                    data["analysis"] = call_analysis.get(self.con, rid)
-                    if tool == "call_detail" and not data["purged"]:
+                    readable = not self.access or call_records.can_listen(self.config, self.access.employee, data)
+                    if tool == "call_detail" and not readable:
+                        raise ValueError("Нет прав на эту расшифровку и разбор звонка")
+                    data["analysis"] = call_analysis.get(self.con, rid) if readable else None
+                    if tool == "call_detail" and readable and not data["purged"]:
                         transcript = self.con.execute("SELECT segments FROM call_transcripts WHERE id=?", (rid,)).fetchone()
                         if transcript:
                             lines = call_analysis.sentences(json.loads(transcript["segments"] or "[]"))
                             data["sentences"] = lines[:120]
                             data["total_sentences"] = len(lines)
+                        if self.access:
+                            call_records.log_listen(self.con, self.access.login, data, "GPT", "read")
                     data.pop("crm_activity_id", None)
                     data.pop("client_ref", None)
                     data.update(id=privacy.register("ОБЪЕКТ", rid), source=sid)

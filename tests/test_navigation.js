@@ -28,4 +28,6 @@ assert.ok(renders && loads);
 console.log('Navigation history and Workload access: OK');
 
 location.hash='#gpt';hashChange();assert.equal(state.view,'gpt','manager can open GPT');
-state.boot.me.role='employee';hashChange();assert.equal(state.view,'emp','employee cannot open GPT by URL');
+state.boot.me.role='employee';hashChange();assert.equal(state.view,'gpt','employee can open own GPT by URL');
+
+assert.ok(html.includes('else if (h === "gpt" && !PREVIEW)'),"employee can reload the GPT route");

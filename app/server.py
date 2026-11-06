@@ -570,8 +570,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_call_audio(me, q.get("id") or "")
 
             if path in ("/api/gpt-upload", "/api/gpt-document"):
-                if not is_mgr:
-                    return JsonResponse({"error": "GPT доступен только администратору"}, 403)
                 service = app.gpt_service()
                 try:
                     if path == "/api/gpt-upload" and method == "POST":
@@ -584,8 +582,6 @@ class Handler(BaseHTTPRequestHandler):
 
             with app.lock:
                 if path.startswith("/api/gpt-"):
-                    if not is_mgr:
-                        return JsonResponse({"error":"GPT доступен только администратору"},403)
                     service=app.gpt_service()
                     try:
                         if path == "/api/gpt-chats" and method == "GET":
