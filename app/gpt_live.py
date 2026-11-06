@@ -14,7 +14,7 @@ from .onec import OneC
 from .common import month_add, month_bounds
 from .crm_links import object_url
 
-LIVE_TOOLS = ["b24_search", "b24_card", "b24_fields", "onec_entities", "onec_schema", "onec_search", "onec_card"]
+LIVE_TOOLS = ["b24_search", "b24_card", "b24_fields", "onec_entities", "onec_schema", "onec_search", "onec_card", "onec_count"]
 B24 = {
     "company": ("crm.company", "TITLE"), "contact": ("crm.contact", "LAST_NAME"),
     "lead": ("crm.lead", "TITLE"), "deal": ("crm.deal", "TITLE"),
@@ -292,6 +292,74 @@ class LiveSources:
         self._metadata, self._metadata_at = entities, time.monotonic()
         return entities
 
+    def scan_odata(self, entity, fields, filters):
+        arguments = {"$format": "json", "$select": ",".join(fields), "$orderby": "Ref_Key", "$top": 1000}
+        if filters:
+            arguments["$filter"] = " and ".join(filters)
+        rows, seen = [], set()
+        while len(rows) <= 10000:
+            arguments["$skip"] = len(rows)
+            batch = self.onec._odata(entity, dict(arguments))
+            if not batch:
+                return rows
+            for row in batch:
+                identity = row.get("Ref_Key")
+                if not identity or identity in seen:
+                    raise ValueError("1С вернула повторяющиеся записи. Точный результат не подтверждён")
+                seen.add(identity)
+            rows.extend(batch)
+        raise ValueError("Выборка превышает 10 000 записей. Укажите месяц для точного расчёта")
+
+    def count_odata(self, entity, fields, params, owner_filter, privacy):
+        if "Ref_Key" not in fields:
+            raise ValueError("Подсчёт поддерживается для объектов с Ref_Key")
+        field, text = params.get("field"), params.get("text")
+        if field is not None:
+            if field not in fields or fields[field] not in ("Edm.String", "Edm.Guid", "Edm.Boolean"):
+                raise ValueError("Для подсчёта выберите текстовое поле, ссылку или логический признак из onec_schema")
+            if not isinstance(text, str) or not text or len(text) > 300:
+                raise ValueError("Укажите text длиной до 300 символов")
+            operation = params.get("match", "equals")
+            if operation not in ("equals", "contains") or operation == "contains" and fields[field] != "Edm.String":
+                raise ValueError("Выберите equals или contains для текстового поля")
+            if fields[field] == "Edm.Guid" or field + "_Type" in fields:
+                try:
+                    text = str(uuid.UUID(text))
+                except ValueError:
+                    raise ValueError("Для ссылки используйте id из справочника, например Catalog_Пользователи для автора") from None
+                if operation != "equals":
+                    raise ValueError("Составные ссылки сравниваются через equals")
+            if fields[field] == "Edm.Boolean" and text.lower() not in ("true", "false"):
+                raise ValueError("Для логического поля укажите true или false")
+        filters = [owner_filter] if owner_filter else []
+        if params.get("month"):
+            if "Date" not in fields:
+                raise ValueError("У этого объекта нет поля Date")
+            first, _ = month_bounds(str(params["month"]))
+            next_first, _ = month_bounds(month_add(str(params["month"]), 1))
+            filters += [f"Date ge datetime'{first.isoformat()}T00:00:00'", f"Date lt datetime'{next_first.isoformat()}T00:00:00'"]
+        selected = list(dict.fromkeys(["Ref_Key", *([field] if field else []), *(["DeletionMark"] if "DeletionMark" in fields else [])]))
+        rows = self.scan_odata(entity, selected, filters)
+        if rows != self.scan_odata(entity, selected, filters):
+            raise ValueError("Данные 1С изменились во время подсчёта. Повторите запрос для подтверждения результата")
+        def matches(row):
+            if field is None:
+                return True
+            value = row.get(field)
+            if fields[field] == "Edm.Boolean":
+                return value is (text.lower() == "true")
+            value = str(value or "").casefold()
+            return text.casefold() in value if operation == "contains" else value == text.casefold()
+        matched = sum(matches(row) for row in rows)
+        result = {"total": len(rows), "matched": matched, "percent": matched / len(rows) * 100 if rows else None, "complete": True, "month": params.get("month"), "includes_marked_for_deletion": True}
+        if "DeletionMark" in fields:
+            active = [row for row in rows if not row.get("DeletionMark")]
+            active_matched = sum(matches(row) for row in active)
+            result["excluding_marked_for_deletion"] = {"total": len(active), "matched": active_matched, "percent": active_matched / len(active) * 100 if active else None}
+        sid = privacy.source("live:onec:count:" + entity + ":" + json.dumps(params, sort_keys=True), label(entity) + " — подсчёт", None, "1С — прямой запрос")
+        result["source"] = sid
+        return result
+
     def odata(self, tool, params, privacy):
         metadata = self.metadata()
         offset = self.offset(params)
@@ -308,20 +376,22 @@ class LiveSources:
         if self.access:
             allowed_fields, owner_filter = self.access.onec_scope(entity)
             fields = {name: kind for name, kind in fields.items() if name in allowed_fields}
+        if tool == "onec_count":
+            return self.count_odata(entity, fields, params, owner_filter, privacy)
         if tool == "onec_schema":
             text = str(params.get("text", "")).casefold()
             names = [name for name in fields if text in name.casefold()]
             return {"entity": privacy.register("ТИП", entity), "fields": [
                 {"field": privacy.register("ПОЛЕ", name), "label": privacy.mask(label(name)), "type": fields[name] if fields[name].startswith("Edm.") else "Collection" if fields[name].startswith("Collection(") else "Complex"}
                 for name in names[offset:offset + 40]], "total": len(names), "next_offset": offset + 40 if len(names) > offset + 40 else None}
-        selected = params.get("fields") or [name for name in fields if "Binary" not in fields[name]][:40]
+        selected = params.get("fields") or [name for name in fields if fields[name].startswith("Edm.") and "Binary" not in fields[name]][:40]
         if not isinstance(selected, list) or len(selected) > 40 or any(name not in fields for name in selected):
             raise ValueError("Укажите до 40 полей из onec_schema")
         selected = list(dict.fromkeys([*(name for name in ("Ref_Key", "Description") if name in fields), *selected]))
         arguments = {"$format": "json", "$top": 21, "$skip": offset, "$select": ",".join(selected)}
         if "Ref_Key" in fields:
             arguments["$orderby"] = "Ref_Key"
-        filters = []
+        filters, compound_match = [], None
         if tool == "onec_card":
             try:
                 identity = str(uuid.UUID(str(params.get("id", ""))))
@@ -338,7 +408,15 @@ class LiveSources:
             kind=fields[field]
             operation=params.get("match","contains" if kind=="Edm.String" else "equals")
             operators={"equals":"eq","ge":"ge","gt":"gt","le":"le","lt":"lt"}
-            if kind=="Edm.String":
+            if kind == "Edm.String" and field + "_Type" in fields:
+                if operation != "equals":
+                    raise ValueError("Это составная ссылка 1С. Найдите id в связанном справочнике и используйте match=equals, например Catalog_Пользователи для автора")
+                try:
+                    compound_match = (field, str(uuid.UUID(text)))
+                except ValueError:
+                    raise ValueError("Для составной ссылки укажите id из связанного справочника") from None
+                expression = None
+            elif kind=="Edm.String":
                 if operation not in ("contains","equals"):
                     raise ValueError("Для текста поддерживаются contains и equals")
                 escaped=text.replace("'","''")
@@ -368,7 +446,8 @@ class LiveSources:
                 else:
                     raise ValueError("Для этого типа поля поиск пока недоступен")
                 expression=field+" "+operators[operation]+" "+literal
-            filters.append(expression)
+            if expression:
+                filters.append(expression)
             if params.get("month"):
                 month = str(params["month"])
                 first, _last = month_bounds(month)
@@ -378,8 +457,14 @@ class LiveSources:
                 filters += [f"Date ge datetime'{first.isoformat()}T00:00:00'", f"Date lt datetime'{next_first.isoformat()}T00:00:00'"]
         if owner_filter:
             filters.append(owner_filter)
-        arguments["$filter"] = " and ".join(filters)
-        records = self.onec._odata(entity, arguments)
+        if compound_match:
+            field, identity = compound_match
+            scan_fields = list(dict.fromkeys([*selected, field]))
+            records = [row for row in self.scan_odata(entity, scan_fields, filters) if str(row.get(field) or "").lower() == identity][offset:offset + 21]
+        else:
+            if filters:
+                arguments["$filter"] = " and ".join(filters)
+            records = self.onec._odata(entity, arguments)
         rows = []
         for row in records[:20]:
             identity = str(row.get("Ref_Key", ""))
