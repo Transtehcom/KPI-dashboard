@@ -14,6 +14,8 @@ from .gpt_documents import Documents, TOOLS as DOCUMENT_TOOLS
 from .gpt_access import Access
 from .gpt_sessions import Sessions
 
+MAX_STEPS = 100
+
 RESPONSE_SCHEMA = call_analysis._object_schema({
     "kind": {"type": "string", "enum": ["tool", "answer", "refusal", "politics_refusal"]},
     "tool": {"type": "string", "enum": ["", *TOOLS, *DOCUMENT_TOOLS]},
@@ -412,7 +414,7 @@ class GPTAssistant:
             documents = self.documents.tool("document_list", jid, {}, privacy)
             if documents["documents"]:
                 data.append({"tool": "document_list", "result": documents})
-            for step in range(10):
+            for step in range(MAX_STEPS):
                 self.check_chat(saved["owner"], jid)
                 if event.is_set():
                     raise ValueError("Ответ остановлен пользователем")
@@ -421,7 +423,7 @@ class GPTAssistant:
                 delta = {**common, "history": history_after(cursor), "tool_results": data if step == 0 else [data[-1]]}
                 bootstrap = {**common, "history": history_after(0), "tool_results": data}
                 with db_lock():
-                    self.con.execute("UPDATE gpt_messages SET content=? WHERE id=?", (f"Codex: шаг {step + 1} из 10…", mid))
+                    self.con.execute("UPDATE gpt_messages SET content=? WHERE id=?", (f"Codex: шаг {step + 1} из {MAX_STEPS}…", mid))
                     self.con.execute("UPDATE gpt_chats SET privacy=? WHERE id=?", (json.dumps(privacy.dump(), ensure_ascii=False), jid))
                     self.con.commit()
                 result = self.sessions.call(jid, master, delta, bootstrap, call_config, row["model"], row["effort"], RESPONSE_SCHEMA, mid - 1)
@@ -474,7 +476,7 @@ class GPTAssistant:
                     output = {"error": "Выборка слишком велика. Уточните сотрудника или документ"}
                 used_sources.update(sid for sid in re.findall(r'"source"\s*:\s*"([^"]+)"',json.dumps(output)) if sid in privacy.sources)
                 data.append({"tool": result.get("tool"), "result": output})
-            raise ValueError("Достигнут предел десяти шагов. Уточните вопрос")
+            raise ValueError(f"Достигнут предел {MAX_STEPS} шагов. Разделите запрос на несколько частей")
         except Exception as exc:
             # Errors stay local and are never fed to the next model turn as business facts.
             with db_lock():

@@ -191,6 +191,31 @@ class GPTTest(unittest.TestCase):
         chat=self.service.create_chat("boss")
         with self.assertRaises(ValueError):self.service.chat("other",chat["id"])
 
+    def test_request_can_continue_beyond_ten_steps(self):
+        chat = self.service.create_chat("boss")["id"]
+        message = self.service.submit("boss", chat, "Проверь данные", launch=False)
+        tool = {"kind":"tool", "tool":"sync_status", "query":"", "employee":"", "month":"2026-11", "answer":"", "sources":[]}
+        results = [{"thread_id":"11111111-1111-4111-8111-111111111111", "result":dict(tool)} for _ in range(11)]
+        results.append({"thread_id":"11111111-1111-4111-8111-111111111111", "result":{**tool,"kind":"answer","answer":"Проверено"}})
+        with mock.patch("app.call_analysis.run_codex", side_effect=results) as model:
+            self.service.work(chat, message["id"])
+        reply = self.service.chat("boss", chat)["messages"][-1]
+        self.assertEqual(reply["status"], "completed")
+        self.assertEqual(reply["content"], "Проверено")
+        self.assertEqual(model.call_count, 12)
+
+    def test_step_limit_still_ends_a_non_finishing_request(self):
+        chat = self.service.create_chat("boss")["id"]
+        message = self.service.submit("boss", chat, "Проверь данные", launch=False)
+        tool = {"kind":"tool", "tool":"sync_status", "query":"", "employee":"", "month":"2026-11", "answer":"", "sources":[]}
+        with mock.patch("app.gpt_assistant.MAX_STEPS", 3), mock.patch("app.call_analysis.run_codex", return_value={"thread_id":"11111111-1111-4111-8111-111111111111", "result":tool}) as model:
+            self.service.work(chat, message["id"])
+        reply = self.service.chat("boss", chat)["messages"][-1]
+        self.assertEqual(reply["status"], "error")
+        self.assertIn("3 шагов", reply["content"])
+        self.assertEqual(model.call_count, 3)
+        self.assertNotIn(chat, self.service.active)
+
     def test_tool_loop_passes_ordinary_names_and_keeps_secrets_local(self):
         chat=self.service.create_chat("boss")
         step={"kind":"tool","tool":"employees","query":"","employee":"","month":"2026-11","answer":"","sources":[]}
