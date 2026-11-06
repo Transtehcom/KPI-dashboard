@@ -108,7 +108,7 @@ class PrivacyContext:
         for prefix, lengths in ((r"БИК|КПП", (9,)), (r"ИНН", (12,10)), (r"ОГРНИП", (15,)), (r"ОГРН", (13,)),
                                 (r"р/с|к/с|расч[её]тный\s+сч[её]т|корреспондентский\s+сч[её]т", (20,))):
             for length in lengths:
-                pattern = r"(?i)(\b(?:" + prefix + r")\s*[:№=-]?\s*)(\d(?:[ \t-]*\d){" + str(length-1) + r"})(?![ \t-]*\d)"
+                pattern = r"(?i)(\b(?:" + prefix + r"),?\s*[\"']?\s*[:№=,;|\-]?\s*[\"']?\s*)(\d(?:[ \t-]*\d){" + str(length-1) + r"})(?![ \t-]*\d)"
                 text = re.sub(pattern,lambda m:m[1]+self.register("РЕКВИЗИТ",m[2]),text)
         if self.values:
             if self._pattern is None:

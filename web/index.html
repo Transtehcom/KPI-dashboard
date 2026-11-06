@@ -1632,6 +1632,9 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       ${(m.sources || []).length ? `<div class="small gpt-sources">Источники: ${(m.sources || []).map((r) => r.url ? `<a href="${esc(r.url)}" ${r.month ? `data-gpt-month="${esc(r.month)}"` : ""} ${r.url.startsWith("#") ? "" : 'target="_blank" rel="noopener noreferrer"'}>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</a>` : `<span>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</span>`).join(" · ")}</div>` : ""}
       ${m.has_preview ? `<details class="more" data-gpt-preview="${m.id}"><summary>Что отправлено в Codex</summary><pre class="gpt-preview">Загрузка…</pre></details>` : ""}</article>`).join("") : `<div class="empty">Спросите о KPI, клиентах, заказах, звонках или деньгах. Например: «Почему у сотрудника такой KPI за ноябрь?»</div>`;
   }
+  function gptDocumentsHtml(documents) {
+    return documents.length ? `<div class="muted small">Документы чата · оригиналы и версии</div>${documents.map((d) => `<div class="inline-form"><button type="button" class="btn" data-gpt-download="${esc(d.id)}">↓ ${esc(d.name)}</button><span class="muted small">${d.parent_id ? "Исправленная версия · " : ""}${Math.ceil(d.size / 1024)} КБ · ${d.editable ? "чтение и правки" : "только чтение"}</span></div>`).join("")}` : "";
+  }
   async function loadGPT() {
     clearTimeout(state.gptTimer);
     const main = document.getElementById("main"), epoch = state.gptEpoch = (state.gptEpoch || 0) + 1;
@@ -1643,9 +1646,9 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       if (!list.chats.some((c) => c.id === state.gptChat)) state.gptChat = list.chats[0].id;
       const chatId = state.gptChat;
       state.gptDrafts ||= {};
-      main.innerHTML = `<div class="head"><div><div class="eyebrow">Помощник по данным компании</div><h1>GPT</h1><div class="sub">Дашборд · прямые запросы в Битрикс24 и 1С</div></div></div><div class="gpt-layout"><aside class="panel"><div class="panel-b"><button class="btn" id="gptNew">Новый чат</button></div><div class="gpt-chats">${list.chats.map((c) => `<button class="nav-item ${c.id === chatId ? "active" : ""}" data-gpt-chat="${esc(c.id)}">${esc(c.title)}</button>`).join("")}</div></aside><section class="panel"><div class="panel-b"><p class="muted small">Имена, компании и обычные данные передаются Codex без обезличивания. Данные документов с названиями «договор», «счёт», «КП», «накладная», а также личных документов обезличиваются. Точные суммы и даты сохраняются. Пароли и ключи доступа скрываются всегда. Снимок дашборда обновлён ${esc(list.last_sync?.finished ? dtLabel(list.last_sync.finished) : "данных пока нет")} ${esc(list.last_sync?.status || "")}. Карточки Б24 и 1С читаются напрямую по запросу.</p><div class="inline-form"><label>Месяц<input type="month" id="gptMonth" value="${esc(state.gptMonth || state.month)}"></label><label>Модель<select id="gptModel">${Object.entries(list.models).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptModel || list.default_model) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label><label>Усилие<select id="gptEffort">${Object.entries(list.efforts).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptEffort || list.default_effort) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div><div id="gptMessages" class="gpt-messages"><div class="empty">Загрузка чата…</div></div><form id="gptForm"><textarea id="gptText" rows="3" maxlength="6000" placeholder="Ваш вопрос…" required>${esc(state.gptDrafts[chatId] || "")}</textarea><div class="inline-form"><button class="btn primary" id="gptSend">Отправить</button><button class="btn" type="button" id="gptStop" hidden>Остановить</button><span class="muted small">Ctrl+Enter — отправить. Изменения в исходных системах недоступны.</span></div><div class="err" id="gptError"></div></form></div></section></div>`;
+      main.innerHTML = `<div class="head"><div><div class="eyebrow">Помощник по данным компании</div><h1>GPT</h1><div class="sub">Дашборд · прямые запросы в Битрикс24 и 1С</div></div></div><div class="gpt-layout"><aside class="panel"><div class="panel-b"><button class="btn" id="gptNew">Новый чат</button></div><div class="gpt-chats">${list.chats.map((c) => `<button class="nav-item ${c.id === chatId ? "active" : ""}" data-gpt-chat="${esc(c.id)}">${esc(c.title)}</button>`).join("")}</div></aside><section class="panel"><div class="panel-b"><p class="muted small">Имена, компании и обычные данные передаются Codex без обезличивания. Данные документов с названиями «договор», «счёт», «КП», «накладная», а также личных документов обезличиваются. Точные суммы и даты сохраняются. Пароли и ключи доступа скрываются всегда. Снимок дашборда обновлён ${esc(list.last_sync?.finished ? dtLabel(list.last_sync.finished) : "данных пока нет")} ${esc(list.last_sync?.status || "")}. Карточки Б24 и 1С читаются напрямую по запросу.</p><div class="inline-form"><label>Месяц<input type="month" id="gptMonth" value="${esc(state.gptMonth || state.month)}"></label><label>Модель<select id="gptModel">${Object.entries(list.models).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptModel || list.default_model) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label><label>Усилие<select id="gptEffort">${Object.entries(list.efforts).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptEffort || list.default_effort) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div><div id="gptMessages" class="gpt-messages"><div class="empty">Загрузка чата…</div></div><div id="gptDocuments"></div><form id="gptForm"><label class="small">Прикрепить документы<input type="file" id="gptFiles" multiple accept=".docx,.xlsx,.txt,.md,.csv,.pdf"></label><div class="muted small">До 3 МБ на файл. DOCX, XLSX, TXT/MD/CSV — чтение и правки. PDF — чтение текстового слоя. Напишите ниже, что нужно сделать.</div><div id="gptUploadStatus" class="muted small" aria-live="polite"></div><textarea id="gptText" rows="3" maxlength="6000" placeholder="Ваш вопрос…" required>${esc(state.gptDrafts[chatId] || "")}</textarea><div class="inline-form"><button class="btn primary" id="gptSend">Отправить</button><button class="btn" type="button" id="gptStop" hidden>Остановить</button><span class="muted small">Ctrl+Enter — отправить. Изменения в исходных системах недоступны.</span></div><div class="err" id="gptError"></div></form></div></section></div>`;
       const messages = document.getElementById("gptMessages"), text = document.getElementById("gptText");
-      let lastMarkup = "", polling = false;
+      let lastMarkup = "", lastDocuments = "", polling = false, uploading = false;
       const poll = async () => {
         clearTimeout(state.gptTimer);
         if (!current() || polling) return;
@@ -1655,13 +1658,54 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           if (!current()) return;
           const markup = gptMessagesHtml(chat.messages), nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
           if (markup !== lastMarkup) { messages.innerHTML = markup; lastMarkup = markup; if (nearBottom || state.gptJustSent) messages.scrollTop = messages.scrollHeight; state.gptJustSent = false; }
+          const documentsMarkup = gptDocumentsHtml(chat.documents || []);
+          if (documentsMarkup !== lastDocuments) { document.getElementById("gptDocuments").innerHTML = documentsMarkup; lastDocuments = documentsMarkup; }
           const busy = chat.messages.some((m) => m.status === "running");
-          document.getElementById("gptSend").disabled = busy;
+          document.getElementById("gptSend").disabled = busy || uploading;
+          document.getElementById("gptFiles").disabled = busy || uploading;
           document.getElementById("gptStop").hidden = !busy;
           if (busy) state.gptTimer = setTimeout(poll, 2000);
         } catch (e) { if (current() && e.message !== "auth") { document.getElementById("gptError").textContent = e.message; state.gptTimer = setTimeout(poll, 5000); } }
         finally { polling = false; }
       };
+      document.getElementById("gptFiles").addEventListener("change", async (event) => {
+        const files = [...event.target.files], status = document.getElementById("gptUploadStatus");
+        uploading = true;
+        document.getElementById("gptSend").disabled = true;
+        event.target.disabled = true;
+        document.getElementById("gptError").textContent = "";
+        try {
+          for (const file of files) {
+            if (!current()) break;
+            if (file.size > 3 * 1024 * 1024) throw new Error(`Файл «${file.name}» превышает 3 МБ`);
+            status.textContent = `Загрузка ${file.name}…`;
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            let binary = "";
+            for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+            await api("/api/gpt-upload", { id:chatId, name:file.name, content:btoa(binary) });
+          }
+          if (current()) status.textContent = "Документы прикреплены. Напишите, что нужно прочитать или изменить.";
+        } catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; }
+        finally {
+          uploading = false;
+          if (current()) { event.target.value = ""; event.target.disabled = false; await poll(); state.gptTimer = setTimeout(poll, 300); }
+        }
+      });
+      document.getElementById("gptDocuments").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-gpt-download]");
+        if (!button || button.disabled) return;
+        button.disabled = true;
+        try {
+          const file = await api(`/api/gpt-document?id=${encodeURIComponent(chatId)}&document=${encodeURIComponent(button.dataset.gptDownload)}`);
+          if (!current()) return;
+          const binary = atob(file.content), bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes], {type:"application/octet-stream"}));
+          const link = document.createElement("a"); link.href = url; link.download = file.name;
+          document.body.appendChild(link); link.click(); link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        } catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; }
+        finally { if (button.isConnected) button.disabled = false; }
+      });
       messages.addEventListener("toggle", async (event) => {
         const details = event.target.closest("[data-gpt-preview]");
         if (!details || !details.open || details.dataset.loaded) return;

@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS gpt_messages (
  content TEXT, masked_content TEXT, sources TEXT, outbound TEXT, created TEXT, finished TEXT, model TEXT, effort TEXT, month TEXT);
 CREATE INDEX IF NOT EXISTS ix_gpt_chat_messages ON gpt_messages(chat_id,id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_gpt_one_turn ON gpt_messages(chat_id) WHERE role='assistant' AND status='running';
+CREATE TABLE IF NOT EXISTS gpt_documents (
+ id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, content BLOB NOT NULL,
+ created TEXT NOT NULL, parent_id TEXT, unit_count INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_gpt_documents_chat ON gpt_documents(chat_id,created);
 
 CREATE TABLE IF NOT EXISTS call_processing_jobs (
  id TEXT PRIMARY KEY, ids TEXT NOT NULL, force INTEGER NOT NULL DEFAULT 0,

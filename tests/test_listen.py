@@ -171,6 +171,28 @@ class ListenTest(unittest.TestCase):
         preview=json.loads(self.get("boss",f"/api/gpt-preview?id={chat['id']}&message={job['id']}")[2])
         self.assertIn("ДАННЫЕ",preview["outbound"])
 
+    def test_gpt_document_upload_download_and_owner_access(self):
+        import base64
+        service=self.app.gpt_service()
+        chat=service.create_chat("boss")
+        other=service.create_chat("other")
+        def upload(login,identity):
+            req=urllib.request.Request(self.base+"/api/gpt-upload",data=json.dumps({"id":identity,"name":"notes.txt","content":base64.b64encode(b"hello").decode()}).encode(),headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
+            try:
+                with urllib.request.urlopen(req) as response:return response.status,json.load(response)
+            except urllib.error.HTTPError as error:
+                with error:return error.code,json.load(error)
+        self.assertEqual(upload("pm",chat["id"])[0],403)
+        self.assertEqual(upload("boss",other["id"])[0],400)
+        code,document=upload("boss",chat["id"])
+        self.assertEqual(code,200)
+        path=f"/api/gpt-document?id={chat['id']}&document={document['id']}"
+        self.assertEqual(self.get("pm",path)[0],403)
+        code,_headers,raw=self.get("boss",path)
+        self.assertEqual(code,200)
+        self.assertEqual(base64.b64decode(json.loads(raw)["content"]),b"hello")
+        self.assertEqual(self.get("boss",f"/api/gpt-document?id={other['id']}&document={document['id']}")[0],400)
+
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
         self.app.config['employees'].append(employee)

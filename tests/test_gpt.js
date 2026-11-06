@@ -12,3 +12,10 @@ assert.match(ctx.gptMessagesHtml([]),/Спросите/);
 assert.ok(html.includes('state.gptEpoch === epoch'),'late chat requests must be ignored');
 assert.ok(html.includes('state.gptDrafts[chatId]'),'polling keeps typed drafts');
 console.log('GPT messages, safe rendering, sources, preview and navigation guards: OK');
+
+const files=ctx.gptDocumentsHtml([{id:'doc1',name:'<script>.docx',size:1000,editable:true,parent_id:'original'}]);
+assert.ok(!files.includes('<script>'));
+assert.match(files,/data-gpt-download="doc1"/);
+assert.ok(html.includes('id="gptFiles"'));
+assert.ok(html.includes('/api/gpt-upload'));
+assert.ok(html.includes('link.download = file.name'));
