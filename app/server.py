@@ -449,8 +449,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
-        if self.path.split("?", 1)[0] == "/api/gpt-upload" and not 0 < n <= 4300000:
-            raise BadRequest("Размер запроса загрузки превышает лимит 3 МБ на файл")
+        if self.path.split("?", 1)[0] == "/api/gpt-upload" and not 0 < n <= 14000000:
+            raise BadRequest("Размер запроса загрузки превышает лимит 10 МБ для изображения")
         if not n:
             return {}
         if "application/json" not in (self.headers.get("Content-Type") or ""):
@@ -570,11 +570,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/call-audio":  # аудио отдаётся долго — без общей блокировки базы
                 return self.send_call_audio(me, q.get("id") or "")
 
-            if path in ("/api/gpt-upload", "/api/gpt-document", "/api/gpt-document-delete"):
+            if path in ("/api/gpt-upload", "/api/gpt-document", "/api/gpt-document-delete", "/api/gpt-document-protection"):
                 service = app.gpt_service()
                 try:
                     if path == "/api/gpt-upload" and method == "POST":
-                        return JsonResponse(service.document_upload(me["login"], str(b.get("id") or ""), b.get("name"), b.get("content")))
+                        return JsonResponse(service.document_upload(me["login"], str(b.get("id") or ""), b.get("name"), b.get("content"), protected=b.get("protected", False)))
+                    if path == "/api/gpt-document-protection" and method == "POST":
+                        return JsonResponse(service.document_protection(me["login"], str(b.get("id") or ""), str(b.get("document") or ""), b.get("protected")))
                     if path == "/api/gpt-document" and method == "GET":
                         return JsonResponse(service.document_download(me["login"], q.get("id") or "", q.get("document") or ""))
                     if path == "/api/gpt-document-delete" and method == "POST":

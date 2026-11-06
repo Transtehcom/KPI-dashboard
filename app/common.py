@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS gpt_documents (
  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, content BLOB NOT NULL,
  created TEXT NOT NULL, parent_id TEXT, unit_count INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_gpt_documents_chat ON gpt_documents(chat_id,created);
+CREATE TABLE IF NOT EXISTS gpt_image_metadata (
+ document_id TEXT PRIMARY KEY REFERENCES gpt_documents(id) ON DELETE CASCADE,
+ mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, protected INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER IF NOT EXISTS delete_gpt_image_metadata AFTER DELETE ON gpt_documents
+ BEGIN DELETE FROM gpt_image_metadata WHERE document_id=OLD.id; END;
 CREATE TABLE IF NOT EXISTS gpt_document_deletions (
  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, created TEXT,
  parent_id TEXT, size INTEGER, deleted TEXT NOT NULL);

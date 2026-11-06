@@ -92,6 +92,7 @@ class GPTTest(unittest.TestCase):
     def setUp(self):
         self.con=connect(":memory:");self.addCleanup(self.con.close)
         self.config=copy.deepcopy(CONFIG)
+        self.config["ttkgpt_runtime"] = "legacy"
         self.config["employees"][2]["name"]="Анна Мерзлякова"
         self.config["bitrix24"]={"webhook":"https://crm.example.test/rest/1/SECRET_HOOK/"}
         self.service=gpt_assistant.GPTAssistant(self.con,self.config,load_rules())

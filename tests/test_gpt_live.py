@@ -11,7 +11,7 @@ META=b'''<edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx"><
 class LiveTest(unittest.TestCase):
     def setUp(self):
         self.con=connect(":memory:");self.addCleanup(self.con.close)
-        self.tools=DataTools(self.con,{"employees":[],"bitrix24":{"webhook":"https://crm.example.test/rest/1/secret/"},"onec":{"base_url":"https://onec.example.test/"}},load_rules())
+        self.tools=DataTools(self.con,{"ttkgpt_runtime":"legacy","employees":[],"bitrix24":{"webhook":"https://crm.example.test/rest/1/secret/"},"onec":{"base_url":"https://onec.example.test/"}},load_rules())
         self.p=PrivacyContext()
 
     def test_b24_direct_company_search_masks_new_company_and_returns_fresh_source(self):

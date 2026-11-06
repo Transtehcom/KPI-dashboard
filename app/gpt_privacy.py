@@ -45,6 +45,8 @@ class PrivacyContext:
         value = str(value or "").strip()
         if not value:
             return ""
+        if LABEL.fullmatch(value):
+            return value
         if self.documents_only and not self._document_depth:
             return self.redact_secrets(value)
         existing = self._reverse.get((kind,value.casefold()))
@@ -105,10 +107,22 @@ class PrivacyContext:
         amount = r"[+-]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d{1,2})?"
         text = re.sub(r"(?i)(?<!\w)" + amount + r"(?=\s*(?:руб(?:лей|ля|ль|\.)?\b|₽|USD\b|EUR\b|доллар[а-яё]*\b|евро\b))", lambda m: keep_literal(m[0]), text)
         text = re.sub(r"(?i)(\b(?:сумма|стоимость|цена)\s*[:=]?\s*)(" + amount + r")(?![\d.,])", lambda m: m[1] + keep_literal(m[2]), text)
+        digit_separator = r"[ \t\u00a0\u202f\u2009‐‑–—-]*"
+        # Passport series and number can appear as a pair without the word passport.
+        passport_pair = (r"(?i)(\bсерия\s*[:№=-]?\s*)(\d(?:" + digit_separator + r"\d){3})"
+                         r"([\s,;]*(?:и\s+)?номер\s*[:№=-]?\s*)(\d(?:" + digit_separator + r"\d){5})"
+                         r"(?!" + digit_separator + r"\d)")
+        text = re.sub(passport_pair, lambda m: m[1] + self.register("РЕКВИЗИТ", m[2]) + m[3] + self.register("РЕКВИЗИТ", m[4]), text)
+        bare_passport = r"(?<!\w)(\d{2}[ \t\u00a0\u202f]*\d{2}[\s‐‑–—-]+\d{6})(?!\w)"
+        text = re.sub(bare_passport, lambda m: self.register("РЕКВИЗИТ", m[1]), text)
         for prefix, lengths in ((r"БИК|КПП", (9,)), (r"ИНН", (12,10)), (r"ОГРНИП", (15,)), (r"ОГРН", (13,)),
-                                (r"р/с|к/с|расч[её]тный\s+сч[её]т|корреспондентский\s+сч[её]т", (20,))):
+                                (r"р/с|к/с|расч[её]тный\s+сч[её]т|корреспондентский\s+сч[её]т", (20,)),
+                                (r"СНИЛС", (11,)),
+                                (r"(?:номер|серия)\s+паспорта|паспорт(?:а)?(?:\s+РФ)?", (10,6,4)),
+                                (r"серия", (4,)), (r"номер", (6,)),
+                                (r"водительск(?:ое|ого)\s+удостоверени(?:е|я)(?:\s+номер)?", (10,))):
             for length in lengths:
-                pattern = r"(?i)(\b(?:" + prefix + r"),?\s*[\"']?\s*[:№=,;|\-]?\s*[\"']?\s*)(\d(?:[ \t-]*\d){" + str(length-1) + r"})(?![ \t-]*\d)"
+                pattern = r"(?i)(\b(?:" + prefix + r"),?\s*[\"']?\s*[:№=,;|\-]?\s*[\"']?\s*)(\d(?:" + digit_separator + r"\d){" + str(length-1) + r"})(?!" + digit_separator + r"\d)"
                 text = re.sub(pattern,lambda m:m[1]+self.register("РЕКВИЗИТ",m[2]),text)
         if self.values:
             if self._pattern is None:

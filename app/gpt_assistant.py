@@ -276,12 +276,27 @@ class GPTAssistant:
             self.con.commit()
         return {"ok": True}
 
-    def document_upload(self, owner, jid, name, encoded):
+    def document_upload(self, owner, jid, name, encoded, protected=False):
         self.check_chat(owner, jid)
         with db_lock():
             if not self.con.execute("SELECT 1 FROM gpt_chats WHERE id=? AND owner=?", (jid, owner)).fetchone():
                 raise ValueError("Чат не найден")
-        return self.documents.upload(jid, name, encoded)
+            if jid in self.active or self.con.execute("SELECT 1 FROM gpt_messages WHERE chat_id=? AND status IN ('running','cancelling')", (jid,)).fetchone():
+                raise ValueError("Дождитесь завершения ответа перед добавлением вложений")
+            if type(protected) is not bool:
+                raise ValueError("Признак документа должен быть Да или Нет")
+            return self.documents.upload(jid, name, encoded, protected=protected)
+
+    def document_protection(self, owner, jid, identity, protected):
+        with db_lock():
+            self.check_chat(owner, jid)
+            if jid in self.active or self.con.execute("SELECT 1 FROM gpt_messages WHERE chat_id=? AND status IN ('running','cancelling')", (jid,)).fetchone():
+                raise ValueError("Дождитесь завершения ответа перед изменением защиты вложения")
+            if type(protected) is not bool:
+                raise ValueError("Признак документа должен быть Да или Нет")
+            result = self.documents.set_protection(jid, identity, protected)
+            self.sessions.invalidate(jid)
+            return result
 
     def document_delete(self, owner, jid, identity):
         with db_lock():
@@ -316,7 +331,7 @@ class GPTAssistant:
             raise ValueError("Укажите месяц ГГГГ-ММ")
         with db_lock():
             self.chat(owner, jid)
-            if self.con.execute("SELECT COUNT(*) FROM gpt_messages WHERE chat_id=?",(jid,)).fetchone()[0] >= 80:
+            if self.config.get("ttkgpt_runtime", "appserver") != "appserver" and self.con.execute("SELECT COUNT(*) FROM gpt_messages WHERE chat_id=?",(jid,)).fetchone()[0] >= 80:
                 raise ValueError("В этом чате уже 40 вопросов. Создайте новый чат")
             if len(self.active) >= 2:
                 raise ValueError("Уже выполняются два GPT-запроса; дождитесь ответа")
@@ -349,6 +364,9 @@ class GPTAssistant:
         return self.data.execute(tool, query, employee, month, privacy)
 
     def work(self, jid, mid):
+        if self.config.get("ttkgpt_runtime", "appserver") == "appserver":
+            from .gpt_agent import run
+            return run(self, jid, mid)
         event = self.active[jid]
         session_started, session_answered = False, False
         try:

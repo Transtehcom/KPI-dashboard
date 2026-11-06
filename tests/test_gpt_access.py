@@ -13,6 +13,7 @@ from tests.test_engine import CONFIG
 class AccessTest(unittest.TestCase):
     def setUp(self):
         self.config = copy.deepcopy(CONFIG)
+        self.config["ttkgpt_runtime"] = "legacy"
         self.config["bitrix24"] = {"webhook": "https://crm.example.test/rest/1/secret/"}
         self.config["employees"] += [{"login": "logist", "name": "Логист", "role": "employee", "position": "logistics", "b24_user_id": 88}]
         for employee in self.config["employees"]:

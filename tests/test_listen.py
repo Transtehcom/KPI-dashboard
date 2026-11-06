@@ -42,6 +42,7 @@ class ListenTest(unittest.TestCase):
                                  "department": "ОС", "listen_dept": True}]}
         con = connect(":memory:")
         app = App.__new__(App)  # без рабочей базы и config.json
+        config["ttkgpt_runtime"] = "legacy"
         app.config, app.rules, app.con = config, load_rules(), con
         app.engine, app.lock, app.login_fails = Engine(con, app.rules, config), db_lock(), {}
         for e in config["employees"]:

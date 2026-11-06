@@ -10,7 +10,7 @@ from .engine import Engine
 from .anonymize import GENERIC
 from .gpt_live import LiveSources, LIVE_TOOLS
 
-TOOLS = ["weather", "calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
+TOOLS = ["weather", "calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", "python_calculate", *LIVE_TOOLS]
 SEARCH = {
     "clients": ("id,name,emp,need,strategy,updated", ["name"], "name"),
     "crm_deals": ("id,entity,title,client,emp,stage,amount,created,stage_since,client_ref", ["title", "client"], "title"),
@@ -134,6 +134,9 @@ class DataTools:
             self.access.check_employee(privacy.restore(employee or ""))
             if tool in ("calendar", "kpi", "calls", "call_detail"):
                 employee = self.access.login
+        if tool == "python_calculate":
+            from .gpt_calculate import calculate
+            return calculate(query)
         if tool == "calendar":
             return self.calendar(query or "", employee, privacy)
         if tool in LIVE_TOOLS:

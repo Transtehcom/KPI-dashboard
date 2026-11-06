@@ -101,7 +101,7 @@ class SessionTest(unittest.TestCase):
     def test_chat_second_message_sends_only_new_user_message(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
         chat = service.create_chat("boss")
         calls = []
         def model(prompt, config, **kwargs):
@@ -120,7 +120,7 @@ class SessionTest(unittest.TestCase):
     def test_tool_continuation_sends_only_latest_result(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
         chat = service.create_chat("boss")
         packets = []
         def model(prompt, config, **kwargs):
@@ -142,7 +142,7 @@ class SessionTest(unittest.TestCase):
     def test_denied_access_turn_persists_alias_map_before_codex_call(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": [{"login": "pm", "name": "Менеджер", "role": "employee", "position": "pm"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login": "pm", "name": "Менеджер", "role": "employee", "position": "pm"}]}, load_rules())
         chat = service.create_chat("pm")
         seen = []
         def model(prompt, config, **kwargs):

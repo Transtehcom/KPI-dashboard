@@ -82,7 +82,7 @@ class DocumentTest(unittest.TestCase):
     def test_service_delete_checks_owner_and_running_response(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}, {"login":"other","role":"manager"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login":"boss","name":"Администратор","role":"manager"}, {"login":"other","role":"manager"}]}, load_rules())
         document = self.upload("wrong.txt", b"wrong")
         with self.assertRaises(ValueError):
             service.document_delete("other", "chat", document["id"])
@@ -124,7 +124,7 @@ class DocumentTest(unittest.TestCase):
             sheet.append(row)
         raw = io.BytesIO()
         book.save(raw)
-        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
         doc = service.document_upload("boss", "chat", "Договор.xlsx", base64.b64encode(raw.getvalue()).decode())
         prompts = []
         def model(prompt, *args, **kwargs):
@@ -227,7 +227,7 @@ class DocumentTest(unittest.TestCase):
         from unittest.mock import patch
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
-        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
+        service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login":"boss","name":"Администратор","role":"manager"}]}, load_rules())
         document = service.document_upload("boss", "chat", "Договор.txt", base64.b64encode("Стоимость 100 рублей\nИНН 7701234567".encode()).decode())
         with self.assertRaises(ValueError):
             service.document_download("other", "chat", document["id"])

@@ -15,7 +15,7 @@ function fixture(source,view) {
     esc:x=>{throw new Error('unexpected loader error: '+x);},
     renderEmp:d=>painted.push(d),renderFunnel:d=>painted.push(d),renderCalls:d=>painted.push(d),
     renderSide:d=>sides.push(d),
-    clearTimeout:()=>{},moneyTimer:null,setTimeout:()=>0,renderMoney:d=>painted.push(d),loadError:e=>e.message,viewRequestSource,
+    clearTimeout:()=>{},moneyTimer:null,setTimeout:()=>0,renderMoney:d=>painted.push(d),loadError:e=>e.message,viewRequestSource,gptReleasePreviews:()=>{},
     periodRange:()=>['2026-11-01','2026-11-30'],funnelPeriod:()=>['',''],
     encodeURIComponent,loadCalls:()=>{},loadWorkload:()=>{},loadMoney:()=>{},loadSuppliers:()=>{},loadMetrics:()=>{}};
   vm.runInNewContext(viewRequestSource+source+'\nthis.run='+(source===callsSource?'loadCalls':source===moneySource?'loadMoney':'load')+';',context);
