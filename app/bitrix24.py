@@ -55,19 +55,24 @@ class Bitrix24:
         data = json.dumps(params or {}).encode("utf-8")
         req = urllib.request.Request(self.url + method + ".json", data=data,
                                      headers={"Content-Type": "application/json"})
-        for attempt in range(5):
+        attempts = max(1, min(5, int(self.cfg.get("request_attempts", 5))))
+        for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    res = json.loads(r.read().decode("utf-8"))
+                with urllib.request.urlopen(req, timeout=self.cfg.get("request_timeout_seconds",60)) as r:
+                    limit=self.cfg.get("response_limit_bytes")
+                    body=r.read(limit+1) if limit is not None else r.read()
+                    if limit is not None and len(body)>limit:
+                        raise B24Error("Ответ Б24 превышает допустимый размер")
+                    res = json.loads(body.decode("utf-8"))
                 break
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", "ignore")
-                if "QUERY_LIMIT_EXCEEDED" in body and attempt < 4:
+                if "QUERY_LIMIT_EXCEEDED" in body and attempt < attempts - 1:
                     time.sleep(2 + attempt * 2)
                     continue
                 raise B24Error(f"{method}: HTTP {e.code} {body[:300]}")
             except OSError as e:  # таймаут SSL-рукопожатия, обрыв соединения: портал иногда отвечает не с первого раза
-                if attempt < 4:
+                if attempt < attempts - 1:
                     time.sleep(5 + attempt * 5)
                     continue
                 raise B24Error(f"{method}: нет связи с порталом ({e})")

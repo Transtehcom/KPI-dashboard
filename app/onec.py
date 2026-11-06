@@ -86,13 +86,22 @@ class OneC:
         self.log = log
         self.ctx = None if cfg.get("verify_ssl", True) else ssl._create_unverified_context()
 
-    def _get(self, url):
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    def _read(self, url, accept="application/json", limit=None):
+        req = urllib.request.Request(url, headers={"Accept": accept})
         if self.cfg.get("user"):
             tok = base64.b64encode(f"{self.cfg['user']}:{self.cfg.get('password', '')}".encode("utf-8")).decode()
             req.add_header("Authorization", "Basic " + tok)
-        with urllib.request.urlopen(req, timeout=120, context=self.ctx) as r:
-            return json.loads(r.read().decode("utf-8-sig"))
+        with urllib.request.urlopen(req, timeout=self.cfg.get("request_timeout_seconds",120), context=self.ctx) as r:
+            data = r.read(limit + 1) if limit is not None else r.read()
+        if limit is not None and len(data) > limit:
+            raise ValueError("Ответ 1С превышает допустимый размер")
+        return data
+
+    def _get(self, url):
+        return json.loads(self._read(url,limit=self.cfg.get("response_limit_bytes")).decode("utf-8-sig"))
+
+    def metadata(self):
+        return self._read(self.base + "odata/standard.odata/$metadata", "application/xml", 24 * 1024 * 1024)
 
     def _odata(self, entity, params):
         url = self.base + "odata/standard.odata/" + urllib.parse.quote(entity) + "?" + \

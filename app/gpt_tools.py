@@ -8,8 +8,9 @@ from .common import current_month, db_lock, month_bounds
 from .crm_links import record_url
 from .engine import Engine
 from .anonymize import GENERIC
+from .gpt_live import LiveSources, LIVE_TOOLS
 
-TOOLS = ["employees", "kpi", "search", "calls", "call_detail", "money", "sync_status"]
+TOOLS = ["employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
 SEARCH = {
     "clients": ("id,name,emp,need,strategy,updated", ["name"], "name"),
     "crm_deals": ("id,entity,title,client,emp,stage,amount,created,stage_since,client_ref", ["title", "client"], "title"),
@@ -22,6 +23,7 @@ SEARCH = {
 class DataTools:
     def __init__(self, con, config, rules):
         self.con, self.config, self.engine = con, config, Engine(con, rules, config)
+        self.live = LiveSources(config)
         con.create_function("gpt_casefold",1,lambda value:str(value or "").casefold())
 
     def seed(self, privacy):
@@ -59,6 +61,8 @@ class DataTools:
     def execute(self, tool, query, employee, month, privacy):
         if tool not in TOOLS:
             raise ValueError("Неизвестный инструмент; произвольный SQL и изменение данных недоступны")
+        if tool in LIVE_TOOLS:
+            return self.live.execute(tool, query, privacy)
         query, employee = privacy.restore(query or ""), privacy.restore(employee or "")
         month = month or current_month()
         if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
@@ -70,7 +74,7 @@ class DataTools:
                 for e in self.config.get("employees", []):
                     sid = privacy.source("employee:" + e["login"], e["name"], "#emp-" + e["login"])
                     aliases = [privacy.register("СОТРУДНИК", word) for word in re.findall(r"[А-Яа-яЁёA-Za-z-]{3,}", e["name"])]
-                    rows.append({"employee": e["name"], "aliases":list(dict.fromkeys(aliases)), "position": e.get("position"), "department": e.get("department"), "source": sid})
+                    rows.append({"employee": e["name"], "aliases":list(dict.fromkeys(aliases)), "position": e.get("position"), "department": e.get("department"), "b24_id":privacy.register("ОБЪЕКТ",e["b24_user_id"]) if e.get("b24_user_id") else None, "source": sid})
                 result = {"employees": rows}
             elif tool == "kpi":
                 e = self.employee(employee or query)
