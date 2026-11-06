@@ -1,0 +1,47 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const html = fs.readFileSync('web/index.html', 'utf8');
+const source = html.slice(html.indexOf('  async function api('), html.indexOf('  function previewApi('));
+function fixture(fetch) {
+  const timers = new Map();
+  let identity = 0;
+  const ctx = {PREVIEW:null, fetch, AbortController, setTimeout:(fn, ms) => {timers.set(++identity, {fn,ms});return identity;}, clearTimeout:id => timers.delete(id), renderLogin:()=>{}, esc:String};
+  vm.runInNewContext(source, ctx);
+  return {ctx,timers};
+}
+const ok = {ok:true,status:200,json:async()=>({ok:true})};
+(async () => {
+  let attempts = 0;
+  const flaky = fixture(async () => { if (++attempts === 1) throw new TypeError('Failed to fetch'); return ok; });
+  assert.equal((await flaky.ctx.api('/api/employee')).ok, true);
+  assert.equal(attempts, 2, 'read-only requests recover from one network failure');
+  attempts = 0;
+  const mutation = fixture(async () => { attempts++; throw new TypeError('Failed to fetch'); });
+  await assert.rejects(mutation.ctx.api('/api/gpt-send', {text:'hello'}));
+  assert.equal(attempts, 1, 'mutations must never be repeated automatically');
+  attempts = 0;
+  const proxy = fixture(async () => ++attempts === 1 ? {ok:false,status:502} : ok);
+  assert.equal((await proxy.ctx.api('/api/employee')).ok, true);
+  assert.equal(attempts, 2, 'temporary proxy failure gets one read-only retry');
+  attempts = 0;
+  const auth = fixture(async () => { attempts++; return {ok:false,status:401}; });
+  await assert.rejects(auth.ctx.api('/api/employee'), /auth/);
+  assert.equal(attempts, 1, 'expired sessions require login without retrying');
+  const hung = fixture((_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('timeout'), {name:'AbortError'})))));
+  const pending = hung.ctx.api('/api/employee');
+  assert.equal(hung.timers.size, 1, 'requests have a deadline');
+  [...hung.timers.values()][0].fn();
+  await new Promise(resolve => setImmediate(resolve));
+  [...hung.timers.values()][0].fn();
+  await assert.rejects(pending, /сервер|связ|ответ/i);
+  assert.equal(hung.timers.size, 0, 'timeout timers are released');
+  let finishBody;
+  const body = fixture(async()=>({...ok,json:()=>new Promise(resolve=>finishBody=resolve)}));
+  const reading = body.ctx.api('/api/employee');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(body.timers.size,1,'deadline includes response body download');
+  finishBody({ok:true}); await reading;
+  assert.equal(body.timers.size,0);
+  console.log('Network recovery and bounded waits: OK');
+})().catch(error=>{console.error(error);process.exitCode=1;});

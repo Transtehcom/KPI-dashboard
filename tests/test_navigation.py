@@ -35,3 +35,6 @@ class NavigationTest(unittest.TestCase):
 
     def test_gpt_chat_rendering(self):
         self.run_script("test_gpt.js")
+
+    def test_network_failure_recovery(self):
+        self.run_script("test_api_recovery.js")

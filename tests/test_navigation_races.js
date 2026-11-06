@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const html = fs.readFileSync('web/index.html','utf8');
 const kpiSource = html.slice(html.indexOf('  async function load() {'),html.indexOf('  // ---------- графики'));
+const viewRequestSource = html.slice(html.indexOf('  function viewRequest()'),html.indexOf('  async function load() {'));
+const moneySource = html.slice(html.indexOf('  async function loadMoney()'),html.indexOf('  function renderMoney('));
 const callsSource = html.slice(html.indexOf('  async function loadCalls() {'),html.indexOf('  function renderCalls('));
 function fixture(source,view) {
   const pending=[], painted=[], sides=[];
@@ -13,13 +15,14 @@ function fixture(source,view) {
     esc:x=>{throw new Error('unexpected loader error: '+x);},
     renderEmp:d=>painted.push(d),renderFunnel:d=>painted.push(d),renderCalls:d=>painted.push(d),
     renderSide:d=>sides.push(d),
+    clearTimeout:()=>{},moneyTimer:null,setTimeout:()=>0,renderMoney:d=>painted.push(d),loadError:e=>e.message,viewRequestSource,
     periodRange:()=>['2026-11-01','2026-11-30'],funnelPeriod:()=>['',''],
     encodeURIComponent,loadCalls:()=>{},loadWorkload:()=>{},loadMoney:()=>{},loadSuppliers:()=>{},loadMetrics:()=>{}};
-  vm.runInNewContext(source+'\nthis.run='+(source===callsSource?'loadCalls':'load')+';',context);
+  vm.runInNewContext(viewRequestSource+source+'\nthis.run='+(source===callsSource?'loadCalls':source===moneySource?'loadMoney':'load')+';',context);
   return {state,pending,painted,sides,run:context.run};
 }
 (async()=>{
-  for (const [source,view] of [[kpiSource,'emp'],[kpiSource,'funnel'],[callsSource,'calls']]) {
+  for (const [source,view] of [[kpiSource,'emp'],[kpiSource,'funnel'],[callsSource,'calls'],[moneySource,'money']]) {
     const f=fixture(source,view), request=f.run();
     f.state.view=view==='calls'?'emp':'calls';
     f.pending.forEach(p=>p.resolve({old:true}));await request;
@@ -31,6 +34,10 @@ function fixture(source,view) {
   f.pending[0].resolve({old:true});await old;
   assert.equal(f.painted.length,1,'older call filters cannot overwrite newer results');
   assert.equal(f.painted[0].latest,true);
+  const saved=fixture(moneySource,'money');
+  saved.state.view='calls';
+  await saved.run();
+  assert.equal(saved.pending.length,0,'a completed Money save cannot reload Money over another tab');
   const manager=fixture(kpiSource,'emp');
   manager.state.boot.me.role='manager';
   const card=manager.run();

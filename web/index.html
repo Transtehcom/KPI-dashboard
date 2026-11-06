@@ -875,11 +875,28 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   // ---------- API
   async function api(path, body) {
     if (PREVIEW) return previewApi(path, body);
-    const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
-    const j = await r.json().catch(() => ({ error: "Сервер вернул некорректный ответ" }));
-    if (r.status === 401 && path !== "/api/login") { renderLogin(); throw new Error("auth"); }
-    if (!r.ok) throw new Error(j.error || "Ошибка " + r.status);
-    return j;
+    const attempts = body ? 1 : 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), body || path.startsWith("/api/calendar") ? 90000 : 30000);
+      try {
+        const r = await fetch(path, { signal: controller.signal, cache: "no-store", ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
+        if (r.status === 401 && path !== "/api/login") { renderLogin(); throw new Error("auth"); }
+        if (!body && [502, 503, 504].includes(r.status) && attempt + 1 < attempts) continue;
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "Ошибка " + r.status);
+        return j;
+      } catch (e) {
+        const network = e.name === "AbortError" || e.name === "TypeError";
+        if (network && attempt + 1 < attempts) continue;
+        if (network) throw new Error(body ? "Связь с сервером прервалась. Действие могло выполниться — проверьте результат перед повтором." : "Сервер не ответил или связь прервалась. Повторите загрузку раздела.");
+        if (e.name === "SyntaxError") throw new Error("Сервер вернул некорректный ответ. Повторите загрузку раздела.");
+        throw e;
+      } finally { clearTimeout(timer); }
+    }
+  }
+  function loadError(error) {
+    return `<div class="empty" role="alert">${esc(error.message)}<div><button type="button" class="btn" data-retry-view>Повторить загрузку</button></div></div>`;
   }
   function previewApi(path, body) {
     const u = new URL(path, "http://x");
@@ -935,7 +952,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 
   // ---------- каркас
   async function start() {
-    try { state.boot = await api("/api/bootstrap"); } catch (e) { if (e.message !== "auth") root.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    try { state.boot = await api("/api/bootstrap"); } catch (e) { if (e.message !== "auth") root.innerHTML = loadError(e); return; }
     const b = state.boot;
     const months = PREVIEW ? PREVIEW.months : b.months;
     if (!state.month || !months.includes(state.month)) state.month = PREVIEW ? PREVIEW.default_month : b.current_month;
@@ -1107,6 +1124,11 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   const isFunnelHash = (h) => h === "funnel" || h === "funnel-fact";
   let sideCache = {};
   let loadGeneration = 0;
+  function viewRequest() {
+    const request = state.viewRequest = (state.viewRequest || 0) + 1;
+    const generation = loadGeneration, view = state.view, main = document.getElementById("main");
+    return { main, current: () => request === state.viewRequest && generation === loadGeneration && state.view === view && document.getElementById("main") === main };
+  }
   async function load() {
     const main = document.getElementById("main");
     const generation = ++loadGeneration, view = state.view, month = state.month, login = state.login;
@@ -1115,7 +1137,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "staff") {
       try { const data = await api("/api/staff"); if (current()) renderStaff(data); }
-      catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
       return;
     }
     if (state.view === "calls") { loadCalls(); return; }
@@ -1136,7 +1158,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         if (!current()) return;
         renderFunnel({ leads, deals, calls });
       }
-      catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
       return;
     }
     try {
@@ -1159,7 +1181,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         }).catch((e) => { if (current() && e.message !== "auth") toast("Не удалось загрузить сводку команды: " + e.message); });
       }
     } catch (e) {
-      if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      if (current() && e.message !== "auth") main.innerHTML = loadError(e);
     }
   }
 
@@ -1810,7 +1832,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       main.querySelectorAll("[data-gpt-chat]").forEach((button) => button.addEventListener("click", () => { state.gptChat = button.dataset.gptChat; loadGPT(); }));
       document.getElementById("gptNew").addEventListener("click", async () => { try { const chat = await api("/api/gpt-new",{}); if (current()) { state.gptChat = chat.id; loadGPT(); } } catch (e) { if (e.message !== "auth") toast(e.message); } });
       await poll();
-    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
 
   // ---------- оценки разбора звонков
@@ -1940,7 +1962,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
       if (!current()) return;
       renderCalls(d, log);
-    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderCalls(d, log) {
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
@@ -2282,19 +2304,22 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 
   // ---------- метрики отделов: где сейчас находится работа (макет Dashboard_TTK.xlsx)
   async function loadMetrics() {
-    const main = document.getElementById("main"), m = METRICS[state.view];
+    if (!METRICS[state.view]) return;
+    const { main, current } = viewRequest(), m = METRICS[state.view];
     try {
-      if (m.kind === "sales") { await loadSales(); return; }
+      if (m.kind === "sales") { await loadSales(current); return; }
       if (m.kind === "logistics") {
         if (!state.lPer) state.lPer = { mode: "month", month: state.boot.current_month };
         const [a, b] = periodRange(state.lPer);
-        renderLogistics(await api(`/api/metrics?kind=logistics&date_from=${a || "2000-01-01"}&date_to=${b}`));
+        const data = await api(`/api/metrics?kind=logistics&date_from=${a || "2000-01-01"}&date_to=${b}`);
+        if (current()) renderLogistics(data);
         return;
       }
       if (!state.mPer) state.mPer = { mode: "month", month: state.boot.current_month };
       const [a, b] = periodRange(state.mPer);
-      renderSupply(await api(`/api/metrics?kind=supply&date_from=${a || "2000-01-01"}&date_to=${b}`));
-    } catch (e) { if (e.message !== "auth") main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      const data = await api(`/api/metrics?kind=supply&date_from=${a || "2000-01-01"}&date_to=${b}`);
+      if (current()) renderSupply(data);
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   const ruMoment = (v) => (v ? ruDay(v.slice(0, 10)) + (v.length > 10 ? " " + v.slice(11, 16) : "") : "—");
   // даты поручения экспедитору: ДОП/ДОФ/просрочка отгрузки и ДПП/ДФП/просрочка поставки (план − факт, «−1» — позже плана)
@@ -2359,13 +2384,16 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     return p;
   }
   async function loadSuppliers(refresh) {
+    if (state.view !== "suppliers") return;
+    const { main, current } = viewRequest();
     clearTimeout(supTimer);
     const p = supParams(refresh);
     try {
       const d = await api("/api/suppliers?" + p);
+      if (!current()) return;
       renderSuppliers(d);
       if (d.refreshing) supTimer = setTimeout(() => { if (state.view === "suppliers") loadSuppliers(); }, 4000);  // идёт загрузка из 1С
-    } catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderSuppliers(d) {
     const s = state.sup, M = d.meta || {}, T = d.tiles, pr = (v) => (v == null ? "—" : nf(v, 2) + " ₽");
@@ -2546,8 +2574,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   }
   // ---------- «Загрузка»: загрузка сотрудников по задачам Битрикс24 (расчёт — app/workload.py)
   async function loadWorkload() {
-    try { renderWorkload(await api("/api/workload")); }
-    catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    if (state.view !== "workload") return;
+    const { main, current } = viewRequest();
+    try { const data = await api("/api/workload"); if (current()) renderWorkload(data); }
+    catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderWorkload(d) {
     const t0 = new Date(), mon = new Date(t0); mon.setDate(t0.getDate() - ((t0.getDay() + 6) % 7));
@@ -2670,14 +2700,17 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   const m2 = (v) => nf(v, 2) + " ₽";
   let moneyTimer = null;
   async function loadMoney() {
+    if (state.view !== "money") return;
+    const { main, current } = viewRequest();
     clearTimeout(moneyTimer);
     try {
       if (!state.mPer) state.mPer = {mode: "month", month: state.boot.current_month};
       const [dateFrom, dateTo] = periodRange(state.mPer);
       const d = await api(`/api/money?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
+      if (!current()) return;
       renderMoney(d);
       if (d.refreshing) moneyTimer = setTimeout(() => { if (state.view === "money") loadMoney(); }, 4000);  // идёт загрузка из 1С
-    } catch (e) { if (e.message !== "auth") document.getElementById("main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderMoney(d) {
     const T = d.tiles, O = d.options, neg = (v) => (v < 0 ? ' style="color:var(--bad);font-weight:600"' : "");
@@ -2790,9 +2823,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 
   // ---------- «Метрики → Отдел продаж»: панель, реестр и действия по макету «Метрики ОП.xlsx»
   const SP_CH = [["Все", "Всё"], ["Прямые", "Прямые продажи"], ["Тендеры", "Тендеры"]];
-  async function loadSales() {
+  async function loadSales(current) {
     const s = state.sp = state.sp || { tab: "panel", channel: "Все", emp: "Все", drill: null };
-    renderSales(await api(`/api/metrics?kind=sales&channel=${encodeURIComponent(s.channel)}&emp=${encodeURIComponent(s.emp)}`));
+    const data = await api(`/api/metrics?kind=sales&channel=${encodeURIComponent(s.channel)}&emp=${encodeURIComponent(s.emp)}`);
+    if (current()) renderSales(data);
   }
   function renderSales(d) {
     const s = state.sp, P = d.panel;
@@ -2906,7 +2940,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   }
   function bindSales(d) {
     const s = state.sp, main = document.getElementById("main");
-    const again = () => { sideCache = {}; loadMetrics(); };
+    const salesView = state.view;
+    const again = () => { sideCache = {}; if (state.view === salesView) loadMetrics(); };
     main.querySelectorAll("[data-sptab]").forEach((b) => b.addEventListener("click", () => { s.tab = b.dataset.sptab; renderSales(d); }));
     main.querySelectorAll("[data-spch]").forEach((b) => b.addEventListener("click", () => { s.channel = b.dataset.spch; s.drill = null; again(); }));
     const cl = document.getElementById("spClosed");
@@ -3484,6 +3519,14 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   async function refreshBoot() {  // обновить список сотрудников в меню и кэш KPI команды
     try { state.boot = await api("/api/bootstrap"); sideCache = {}; } catch (e) { /* покажется при следующей загрузке */ }
   }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-retry-view]");
+    if (!button) return;
+    button.disabled = true;
+    if (document.getElementById("main") && state.boot) load();
+    else start();
+  });
 
   window.addEventListener("hashchange", () => {
     if (!state.boot) return;
