@@ -35,6 +35,45 @@ class PrivacyTest(unittest.TestCase):
             self.assertNotIn(value,out)
         self.assertIn("257020,16",out);self.assertIn("05.11.2026",out)
 
+class DocumentPrivacyTest(unittest.TestCase):
+    def test_ordinary_context_keeps_names_companies_and_identifiers(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        p.register("СОТРУДНИК","Анна Мерзлякова")
+        self.assertEqual(p.mask("Анна Мерзлякова работает в ТрансТехКом"),"Анна Мерзлякова работает в ТрансТехКом")
+        self.assertEqual(p.register("ОБЪЕКТ","123"),"123")
+        p.add_secret("SECRET_HOOK")
+        self.assertNotIn("SECRET_HOOK",p.mask("token=SECRET_HOOK"))
+
+    def test_named_document_masks_content_and_scope_does_not_escape(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        for title in ("Договор поставки.pdf","Счет на оплату.pdf","КП.docx","Коммерческое предложение.xlsx","Накладная.pdf","Паспорт.jpg","В_У.jpg","Военный билет.pdf","СНИЛС.pdf","ИНН.pdf"):
+            with self.subTest(title=title),p.document(title):
+                p.register("ИМЯ","Анна Мерзлякова")
+                out=p.mask("Анна Мерзлякова ИНН 7701234567 05.11.2026 257020,16 руб.")
+                self.assertNotIn("Мерзлякова",out)
+                self.assertNotIn("7701234567",out)
+                self.assertIn("257020,16",out)
+                self.assertIn("05.11.2026",out)
+        self.assertEqual(p.mask("Анна Мерзлякова"),"Анна Мерзлякова")
+
+    def test_document_classifier_avoids_ordinary_job_titles(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        for title in ("Руководитель компании","Счетчик звонков","Заказ клиента 00ЦБ-000148"):
+            with p.document(title):
+                self.assertEqual(p.register("ИМЯ","Анна Мерзлякова"),"Анна Мерзлякова")
+
+
+    def test_document_heading_after_intro_and_single_line_are_protected(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        for text in ("Проверь, пожалуйста\nДоговор поставки №123\nИНН 7701234567", "Договор поставки №123 ИНН 7701234567", "# Договор поставки\nИНН 7701234567", "1. **Договор поставки**\nИНН 7701234567"):
+            self.assertNotIn("7701234567",p.mask(text))
+
+    def test_document_keeps_long_explicit_amounts(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        with p.document("Договор"):
+            for text in ("Сумма 1234567890 рублей", "Цена: 1234567890", "1 234 567 890,12 ₽"):
+                self.assertEqual(p.mask(text),text)
+
 class GPTTest(unittest.TestCase):
     def setUp(self):
         self.con=connect(":memory:");self.addCleanup(self.con.close)
@@ -43,11 +82,19 @@ class GPTTest(unittest.TestCase):
         self.config["bitrix24"]={"webhook":"https://crm.example.test/rest/1/SECRET_HOOK/"}
         self.service=gpt_assistant.GPTAssistant(self.con,self.config,load_rules())
 
+    def test_local_document_titles_scope_requisites(self):
+        p=gpt_privacy.PrivacyContext(documents_only=True)
+        for key in ("doc","basis"):
+            out=self.service.data.protect({key:"Договор поставки","inn":"7701234567","client":"Секретный клиент"},p)
+            self.assertNotIn("7701234567",json.dumps(out))
+            self.assertNotIn("Секретный клиент",json.dumps(out,ensure_ascii=False))
+        self.assertEqual(p.mask("Секретный клиент"),"Секретный клиент")
+
     def test_chat_ownership(self):
         chat=self.service.create_chat("boss")
         with self.assertRaises(ValueError):self.service.chat("other",chat["id"])
 
-    def test_tool_loop_is_masked_and_restores_sources_locally(self):
+    def test_tool_loop_passes_ordinary_names_and_keeps_secrets_local(self):
         chat=self.service.create_chat("boss")
         step={"kind":"tool","tool":"employees","query":"","employee":"","month":"2026-11","answer":"","sources":[]}
         calls=[]
@@ -61,7 +108,7 @@ class GPTTest(unittest.TestCase):
         result=self.service.chat("boss",chat["id"])
         self.assertEqual(result["messages"][-1]["status"],"completed")
         for prompt in calls:
-            self.assertNotIn("Мерзлякова",prompt)
+            self.assertIn("Мерзлякова",prompt)
             self.assertNotIn("SECRET_HOOK",prompt)
         self.assertTrue(result["messages"][-1]["sources"])
 
@@ -129,12 +176,12 @@ class GPTTest(unittest.TestCase):
         self.assertNotIn("987654",json.dumps(safe))
         self.assertEqual(safe["amount"],257020.16)
 
-    def test_raw_question_requisites_are_absent_from_actual_prompt(self):
+    def test_pasted_document_requisites_are_absent_from_actual_prompt(self):
         chat=self.service.create_chat("boss");captured=[]
         response={"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Нужны данные","sources":[]}
         def model(prompt,*args,**kwargs):captured.append(prompt);return {"result":response}
         with mock.patch.object(gpt_assistant.call_analysis,"run_codex",side_effect=model):
-            mid=self.service.submit("boss",chat["id"],"Заказ №000123; БИК 044525225, КПП 770101001. Сумма 257020,16 на 05.11.2026",launch=False)
+            mid=self.service.submit("boss",chat["id"],"Договор поставки\nЗаказ №000123; БИК 044525225, КПП 770101001. Сумма 257020,16 на 05.11.2026",launch=False)
             self.service.work(chat["id"],mid["id"])
         for value in ("000123","044525225","770101001"):
             self.assertNotIn(value,captured[0])

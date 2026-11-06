@@ -151,6 +151,11 @@ class DataTools:
         return self.protect(result, privacy)
 
     def protect(self, value, privacy):
+        title = " ".join(str(value.get(key) or "") for key in ("title", "name", "filename", "file_name", "doc", "basis", "entity", "type")) if isinstance(value, dict) else ""
+        with privacy.document(title):
+            return self._protect(value, privacy)
+
+    def _protect(self, value, privacy):
         if isinstance(value, dict):
             out = {}
             for key, item in value.items():

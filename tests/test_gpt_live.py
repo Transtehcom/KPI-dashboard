@@ -104,7 +104,7 @@ class LiveTest(unittest.TestCase):
         response.read.assert_called_once_with(5)
         self.assertTrue(request.call_args.args[0].has_header('Authorization'))
 
-    def test_chat_normal_entrypoint_uses_live_source_and_masks_before_next_model_call(self):
+    def test_chat_normal_entrypoint_passes_authorized_ordinary_live_data(self):
         from app.gpt_assistant import GPTAssistant
         service=GPTAssistant(self.con,self.tools.config,load_rules())
         service.data.live.b24=mock.Mock()
@@ -121,4 +121,48 @@ class LiveTest(unittest.TestCase):
         result=service.chat("boss",chat["id"])["messages"][-1]
         self.assertEqual(result["status"],"completed")
         self.assertIn("прямой запрос",result["sources"][0]["system"])
-        self.assertNotIn("acme-private-482",prompts[1]);self.assertNotIn("89991112233",prompts[1])
+        self.assertIn("acme-private-482",prompts[1]);self.assertIn("89991112233",prompts[1])
+
+
+    def test_named_live_document_masks_its_fields_only(self):
+        self.p=PrivacyContext(documents_only=True)
+        self.tools.live.b24=mock.Mock()
+        self.tools.live.b24.call.return_value={"result":[
+            {"ID":"101","TITLE":"Договор поставки.pdf","DESCRIPTION":"Анна Мерзлякова","PHONE":"89991112233"},
+            {"ID":"102","TITLE":"Обычная карточка","DESCRIPTION":"Анна Мерзлякова","PHONE":"89991112233"}
+        ],"total":2}
+        out=self.tools.execute("b24_search",'{"entity":"company"}',"","2026-11",self.p)
+        private=json.dumps(out["rows"][0],ensure_ascii=False)
+        plain=json.dumps(out["rows"][1],ensure_ascii=False)
+        self.assertNotIn("Мерзлякова",private)
+        self.assertNotIn("89991112233",private)
+        self.assertIn("Мерзлякова",plain)
+        self.assertIn("89991112233",plain)
+
+
+    def test_selecting_fields_cannot_remove_document_privacy(self):
+        self.p=PrivacyContext(documents_only=True)
+        self.tools.live.b24=mock.Mock()
+        self.tools.live.b24.call.side_effect=[
+            {"result":{"ID":"101","TITLE":"Паспорт.jpg","PHONE":"89991112233"}},
+            {"result":{}}
+        ]
+        out=self.tools.execute("b24_card",'{"entity":"company","id":"101","fields":["PHONE"]}',"","2026-11",self.p)
+        self.assertNotIn("89991112233",json.dumps(out))
+
+
+    def test_source_password_fields_are_hidden_in_ordinary_context(self):
+        p=PrivacyContext(documents_only=True)
+        for field in ("PASSWORD","ACCESS_TOKEN","Пароль"):
+            self.assertEqual(self.tools.live.value(field,"unconfigured-secret",p),"[СКРЫТО]")
+
+
+    def test_selected_task_description_keeps_document_scope(self):
+        self.p=PrivacyContext(documents_only=True)
+        self.tools.live.b24=mock.Mock()
+        self.tools.live.b24.call.side_effect=[
+            {"result":{"task":{"id":"101","title":"Договор поставки","description":"ИНН 7701234567"}}},
+            {"result":{"fields":{}}}
+        ]
+        out=self.tools.execute("b24_card",'{"entity":"task","id":"101","fields":["description"]}',"","2026-11",self.p)
+        self.assertNotIn("7701234567",json.dumps(out))

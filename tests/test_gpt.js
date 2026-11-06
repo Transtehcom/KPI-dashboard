@@ -7,7 +7,7 @@ const output=ctx.gptMessagesHtml([{id:1,role:'assistant',status:'completed',cont
 assert.ok(!output.includes('<script>'));
 assert.match(output,/data-gpt-preview="1"/);
 assert.match(output,/data-gpt-month="2026-10"/);
-assert.match(output,/Имена|обезличенный/);
+assert.match(output,/Что отправлено в Codex/);
 assert.match(ctx.gptMessagesHtml([]),/Спросите/);
 assert.ok(html.includes('state.gptEpoch === epoch'),'late chat requests must be ignored');
 assert.ok(html.includes('state.gptDrafts[chatId]'),'polling keeps typed drafts');

@@ -77,6 +77,8 @@ class LiveSources:
                 "fetched_at": dt.datetime.now().isoformat(timespec="seconds"), **result}
 
     def value(self, field, value, privacy, entity="", type_hint="", depth=0):
+        if re.search(r"password|passwd|secret|token|api[_ ]?key|webhook|парол|секрет|ключ.*доступ", field, re.I):
+            return "[СКРЫТО]"
         if depth > 4:
             return "Вложенность ограничена"
         if "Binary" in type_hint or re.search(r"binary|двоичные|file_content", field, re.I):
@@ -159,6 +161,7 @@ class LiveSources:
             arguments = {"taskId": identity} if entity == "task" else {"ID": identity} if entity == "user" else {"id": identity}
             data = self.b24.call(method, arguments).get("result", {})
             data = data.get("task", data) if isinstance(data, dict) else next(iter(data), {})
+            document_title = str(data.get("TITLE") or data.get("title") or data.get("SUBJECT") or data.get("subject") or "")
             selected = params.get("fields")
             if selected is not None:
                 if not isinstance(selected, list) or len(selected) > 40 or any(not isinstance(v, str) or v not in data for v in selected):
@@ -167,7 +170,8 @@ class LiveSources:
             if entity not in self._b24_fields:
                 metadata_response=self.b24.call(prefix + (".getFields" if entity == "task" else ".fields")).get("result",{})
                 self._b24_fields[entity]=metadata_response.get("fields",metadata_response) if isinstance(metadata_response,dict) else {}
-            rows = [self.b24_row(entity, data, privacy, identity, offset)]
+            with privacy.document(document_title):
+                rows = [self.b24_row(entity, data, privacy, identity, offset)]
             return {"rows": rows}
         filters = {}
         text = str(params.get("text", ""))
@@ -206,35 +210,36 @@ class LiveSources:
     def b24_row(self, entity, row, privacy, identity=None, offset=0):
         identity = str(identity or row.get("ID") or row.get("id") or "")
         title = str(row.get("TITLE") or row.get("title") or row.get("SUBJECT") or " ".join(str(row.get(k) or "") for k in ("NAME", "LAST_NAME")).strip() or f"{entity} {identity}")
-        sid = privacy.source("live:b24:" + entity + ":" + identity, title, object_url(self.config, entity if entity != "task" else "task", identity, row.get("responsibleId") or row.get("RESPONSIBLE_ID") or 0), "Б24 — прямой запрос")
-        privacy.sources[sid].update(title=title,fetched_at=dt.datetime.now().isoformat(timespec="seconds"))
-        # Register the full fresh identity before processing other text fields.
-        if entity in ("company", "contact", "user"):
-            privacy.register("КОМПАНИЯ" if entity == "company" else "ИМЯ", title)
-        fields, refs = [], []
-        for name, value in list(row.items())[offset:offset + 60]:
-            meta=self._b24_fields.get(entity,{}).get(name,{})
-            title=next((meta[k] for k in ("formLabel","listLabel","title") if isinstance(meta.get(k),str) and meta[k]),label(name))
-            hint=str(meta.get("USER_TYPE_ID") or meta.get("type") or "")
-            sensitive_name=name+" "+title
-            if name.startswith("UF_") and hint in ("employee","crm","file","iblock_element"):
-                protected=privacy.register("ОБЪЕКТ",str(value)) if value is not None else None
-            elif name.startswith("UF_") and re.search(r"фио|фамили|имя|отчеств",title,re.I) and value:
-                protected=privacy.register("ИМЯ",str(value))
-            else:
-                protected=self.value(sensitive_name if re.search(r"phone|email|address|inn|kpp|bik|account|телефон|почт|адрес|инн|кпп|бик|огрн|счет|счёт",sensitive_name,re.I) else name,value,privacy,entity,"Edm.DateTime" if hint in ("date","datetime") else hint)
-                if name in ("ID","NAME","LAST_NAME","SECOND_NAME","TITLE"):
-                    protected=self.value(name,value,privacy,entity,hint)
-            fields.append({"field": privacy.register("ПОЛЕ", name), "label": privacy.mask(title), "value": protected})
-            if name in RELATIONS and str(value or "").isdigit() and int(value):
-                refs.append({"entity": RELATIONS[name], "id": privacy.register("ОБЪЕКТ", str(value))})
-        for id_field,type_field in (("OWNER_ID","OWNER_TYPE_ID"),("ENTITY_ID","ENTITY_TYPE_ID")):
-            related_type={"1":"lead","2":"deal","3":"contact","4":"company"}.get(str(row.get(type_field)))
-            related_id=str(row.get(id_field) or "")
-            if related_type and related_id.isdigit() and int(related_id):
-                refs.append({"entity":related_type,"id":privacy.register("ОБЪЕКТ",related_id)})
-        return {"entity": entity, "id": privacy.register("ОБЪЕКТ", identity), "source": sid, "fields": fields,
-                "references": refs, "total_fields": len(row), "next_field_offset": offset + 60 if len(row) > offset + 60 else None}
+        with privacy.document(title):
+            sid = privacy.source("live:b24:" + entity + ":" + identity, title, object_url(self.config, entity if entity != "task" else "task", identity, row.get("responsibleId") or row.get("RESPONSIBLE_ID") or 0), "Б24 — прямой запрос")
+            privacy.sources[sid].update(title=title,fetched_at=dt.datetime.now().isoformat(timespec="seconds"))
+            # Register the full fresh identity before processing other text fields.
+            if entity in ("company", "contact", "user"):
+                privacy.register("КОМПАНИЯ" if entity == "company" else "ИМЯ", title)
+            fields, refs = [], []
+            for name, value in list(row.items())[offset:offset + 60]:
+                meta=self._b24_fields.get(entity,{}).get(name,{})
+                title=next((meta[k] for k in ("formLabel","listLabel","title") if isinstance(meta.get(k),str) and meta[k]),label(name))
+                hint=str(meta.get("USER_TYPE_ID") or meta.get("type") or "")
+                sensitive_name=name+" "+title
+                if name.startswith("UF_") and hint in ("employee","crm","file","iblock_element"):
+                    protected=privacy.register("ОБЪЕКТ",str(value)) if value is not None else None
+                elif name.startswith("UF_") and re.search(r"фио|фамили|имя|отчеств",title,re.I) and value:
+                    protected=privacy.register("ИМЯ",str(value))
+                else:
+                    protected=self.value(sensitive_name if re.search(r"phone|email|address|inn|kpp|bik|account|телефон|почт|адрес|инн|кпп|бик|огрн|счет|счёт",sensitive_name,re.I) else name,value,privacy,entity,"Edm.DateTime" if hint in ("date","datetime") else hint)
+                    if name in ("ID","NAME","LAST_NAME","SECOND_NAME","TITLE"):
+                        protected=self.value(name,value,privacy,entity,hint)
+                fields.append({"field": privacy.register("ПОЛЕ", name), "label": privacy.mask(title), "value": protected})
+                if name in RELATIONS and str(value or "").isdigit() and int(value):
+                    refs.append({"entity": RELATIONS[name], "id": privacy.register("ОБЪЕКТ", str(value))})
+            for id_field,type_field in (("OWNER_ID","OWNER_TYPE_ID"),("ENTITY_ID","ENTITY_TYPE_ID")):
+                related_type={"1":"lead","2":"deal","3":"contact","4":"company"}.get(str(row.get(type_field)))
+                related_id=str(row.get(id_field) or "")
+                if related_type and related_id.isdigit() and int(related_id):
+                    refs.append({"entity":related_type,"id":privacy.register("ОБЪЕКТ",related_id)})
+            return {"entity": entity, "id": privacy.register("ОБЪЕКТ", identity), "source": sid, "fields": fields,
+                    "references": refs, "total_fields": len(row), "next_field_offset": offset + 60 if len(row) > offset + 60 else None}
 
     def offset(self, params):
         offset = params.get("offset", 0)
@@ -293,7 +298,7 @@ class LiveSources:
         selected = params.get("fields") or [name for name in fields if "Binary" not in fields[name]][:40]
         if not isinstance(selected, list) or len(selected) > 40 or any(name not in fields for name in selected):
             raise ValueError("Укажите до 40 полей из onec_schema")
-        selected = list(dict.fromkeys(["Ref_Key", *selected])) if "Ref_Key" in fields else selected
+        selected = list(dict.fromkeys([*(name for name in ("Ref_Key", "Description") if name in fields), *selected]))
         arguments = {"$format": "json", "$top": 21, "$skip": offset, "$select": ",".join(selected)}
         if "Ref_Key" in fields:
             arguments["$orderby"] = "Ref_Key"
@@ -358,15 +363,16 @@ class LiveSources:
         for row in records[:20]:
             identity = str(row.get("Ref_Key", ""))
             title = str(row.get("Number") or row.get("Description") or label(entity))
-            sid = privacy.source("live:onec:" + entity + ":" + identity, title, None, "1С — прямой запрос")
-            privacy.sources[sid].update(title=title,fetched_at=dt.datetime.now().isoformat(timespec="seconds"))
-            values, refs = [], []
-            for name, value in row.items():
-                if name not in fields:
-                    continue
-                values.append({"field": privacy.register("ПОЛЕ", name), "label": privacy.mask(label(name)), "value": self.value(name, value, privacy, entity, fields[name])})
-                target = metadata[entity]["references"].get(name)
-                if target and value and str(value) != "00000000-0000-0000-0000-000000000000":
-                    refs.append({"entity": privacy.register("ТИП", target), "id": privacy.register("ОБЪЕКТ", str(value))})
-            rows.append({"entity": privacy.register("ТИП", entity), "id": privacy.register("ОБЪЕКТ", identity), "source": sid, "fields": values, "references": refs})
+            with privacy.document(label(entity) + " " + title):
+                sid = privacy.source("live:onec:" + entity + ":" + identity, title, None, "1С — прямой запрос")
+                privacy.sources[sid].update(title=title,fetched_at=dt.datetime.now().isoformat(timespec="seconds"))
+                values, refs = [], []
+                for name, value in row.items():
+                    if name not in fields:
+                        continue
+                    values.append({"field": privacy.register("ПОЛЕ", name), "label": privacy.mask(label(name)), "value": self.value(name, value, privacy, entity, fields[name])})
+                    target = metadata[entity]["references"].get(name)
+                    if target and value and str(value) != "00000000-0000-0000-0000-000000000000":
+                        refs.append({"entity": privacy.register("ТИП", target), "id": privacy.register("ОБЪЕКТ", str(value))})
+                rows.append({"entity": privacy.register("ТИП", entity), "id": privacy.register("ОБЪЕКТ", identity), "source": sid, "fields": values, "references": refs})
         return {"rows": rows, "has_more": len(records) > 20, "next_offset": offset + 20 if len(records) > 20 else None}

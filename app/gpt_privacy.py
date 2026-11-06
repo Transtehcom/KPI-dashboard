@@ -1,14 +1,19 @@
-"""Local reversible aliases; only masked messages and tool results reach Codex."""
+"""Local aliases and scoped document privacy for Codex context."""
 import json
 import re
+from contextlib import contextmanager
 
 from .anonymize import Pseudonymizer, restore
 
 LABEL = re.compile(r"(\[[A-ZА-ЯЁ_]+(?:_\d+)?\])")
 
+DOCUMENT_TITLE = re.compile(r"(?<![а-яёa-z0-9])(?:договор[а-яё]*|дог\.|сч[её]т(?:а|у|ом|е|ы|ов)?|коммерческ[а-яё]*[ _-]+предложени[а-яё]*|кп|накладн[а-яё]*|паспорт[а-яё]*|водительск[а-яё]*[ _-]+удостоверени[а-яё]*|в[/_ -]у|военн[а-яё]*[ _-]+билет[а-яё]*|снилс|инн)(?![а-яёa-z0-9])", re.I)
+
 
 class PrivacyContext:
-    def __init__(self, state=None):
+    def __init__(self, state=None, documents_only=False):
+        self.documents_only = documents_only
+        self._document_depth = 0
         state = state or {}
         self.values = dict(state.get("values", {}))
         self.sources = dict(state.get("sources", {}))
@@ -27,10 +32,21 @@ class PrivacyContext:
         self.ps._keys = {tuple(key): value for key, value in ner.get("keys", [])}
         self.ps._count = dict(ner.get("count", {}))
 
+    @contextmanager
+    def document(self, title, force=False):
+        protected = force or bool(DOCUMENT_TITLE.search(str(title)))
+        self._document_depth += int(protected)
+        try:
+            yield
+        finally:
+            self._document_depth -= int(protected)
+
     def register(self, kind, value):
         value = str(value or "").strip()
         if not value:
             return ""
+        if self.documents_only and not self._document_depth:
+            return self.redact_secrets(value)
         existing = self._reverse.get((kind,value.casefold()))
         if existing:
             return existing
@@ -61,13 +77,34 @@ class PrivacyContext:
             for item in value:
                 self.config_secrets(item)
 
-    def mask(self, text):
+    def redact_secrets(self, text):
         text = str(text or "")
         for secret in sorted(self.secret_values, key=len, reverse=True):
             text = text.replace(secret, "[СКРЫТО]")
         text = re.sub(r"https?://[^\s\"<>]+/rest/\d+/[^\s\"<>]+", "[СКРЫТО]", text, flags=re.I)
         text = re.sub(r"(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|Bearer\s+\S+)", "[СКРЫТО]", text)
         text = re.sub(r"(?i)((?:пароль|password|api_key|token)\s*[:=]\s*)\S+", r"\1[СКРЫТО]", text)
+        return text
+
+    def mask(self, text):
+        text = self.redact_secrets(str(text or ""))
+        if self.documents_only and not self._document_depth:
+            # A pasted document may follow an introductory sentence.
+            for line in text.splitlines():
+                heading = re.sub(r"^[\s#>*_`•\d.)-]+", "", line)
+                if DOCUMENT_TITLE.match(heading):
+                    with self.document(heading):
+                        return self.mask(text)
+            return text
+        literals = {}
+        def keep_literal(value):
+            key = "[РАЗРЕШЕННОЕЗНАЧЕНИЕ_" + str(len(literals) + 1) + "]"
+            literals[key] = value
+            return key
+        text = re.sub(r"\b(?:\d{4}-\d{2}-\d{2}|\d{2}[.-]\d{2}[.-]\d{4})\b", lambda m: keep_literal(m[0]), text)
+        amount = r"[+-]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d{1,2})?"
+        text = re.sub(r"(?i)(?<!\w)" + amount + r"(?=\s*(?:руб(?:лей|ля|ль|\.)?\b|₽|USD\b|EUR\b|доллар[а-яё]*\b|евро\b))", lambda m: keep_literal(m[0]), text)
+        text = re.sub(r"(?i)(\b(?:сумма|стоимость|цена)\s*[:=]?\s*)(" + amount + r")(?![\d.,])", lambda m: m[1] + keep_literal(m[2]), text)
         for prefix, lengths in ((r"БИК|КПП", (9,)), (r"ИНН", (12,10)), (r"ОГРНИП", (15,)), (r"ОГРН", (13,)),
                                 (r"р/с|к/с|расч[её]тный\s+сч[её]т|корреспондентский\s+сч[её]т", (20,))):
             for length in lengths:
@@ -98,6 +135,8 @@ class PrivacyContext:
             canonical=known.get(original.casefold())
             if canonical:
                 masked=masked.replace(label,canonical)
+        for key, value in literals.items():
+            masked = masked.replace(key, value)
         return masked
 
     def sanitize(self, value):

@@ -17,7 +17,16 @@ RESPONSE_SCHEMA = call_analysis._object_schema({
     "answer": {"type": "string"}, "sources": {"type": "array", "items": {"type": "string"}},
 })
 SYSTEM = """Ты помощник администратора корпоративного дашборда. Отвечай по-русски понятно и кратко.
-Имена и реквизиты заменены метками: сохраняй метки как есть, не пытайся их угадать.
+Общайся естественно и по существу запроса, учитывая историю разговора.
+Обычные данные сотрудников, компаний и CRM передаются с настоящими именами.
+Обезличиваются персональные данные и реквизиты только защищаемых документов.
+В таких документах сохраняй метки как есть, не пытайся их угадать.
+Не перечисляй персональные сведения, если они не нужны для ответа на вопрос пользователя.
+При жалобе на работу помощника проверяй причину, не заменяй диагностику ответом на предыдущий вопрос.
+Пустой результат одного поиска не доказывает отсутствие сведений. Проверь другой подходящий источник.
+Должности сотрудников проверяй через b24_search entity=user без text и просматривай все страницы.
+Не ищи должность как фамилию. Руководство отделов проверяется по структуре Б24, если доступна.
+Ошибку прав отличай от отсутствия записей и от отсутствия нужного инструмента.
 Факты о сотрудниках/заказах/звонках/деньгах получай только через предложенные инструменты.
 Локальные инструменты employees/kpi/search/calls/call_detail/money/sync_status читают базу дашборда.
 Инструменты b24_* и onec_* обращаются прямо к Битрикс24 и 1С в момент вопроса.
@@ -153,13 +162,15 @@ class GPTAssistant:
                 row = dict(self.con.execute("SELECT * FROM gpt_messages WHERE id=?", (mid,)).fetchone())
                 history = [dict(r) for r in self.con.execute("SELECT id,role,content,masked_content,status FROM gpt_messages "
                                                            "WHERE chat_id=? AND id<? ORDER BY id DESC LIMIT 16", (jid, mid))][::-1]
-            privacy = PrivacyContext(json.loads(saved[0] or "{}"))
-            self.data.seed(privacy)
+            privacy = PrivacyContext(json.loads(saved[0] or "{}"), documents_only=True)
+            with privacy.document("", force=True):
+                self.data.seed(privacy)
             messages = []
             for item in history:
                 if item["status"] != "completed":
                     continue
-                masked = privacy.mask(item["masked_content"] or item["content"])
+                context = (item["masked_content"] or item["content"]) if item["role"] == "assistant" else item["content"]
+                masked = privacy.mask(context)
                 messages.append({"role": item["role"], "content": masked})
                 if not item["masked_content"]:
                     with db_lock():
@@ -171,6 +182,7 @@ class GPTAssistant:
                 if event.is_set():
                     raise ValueError("Ответ остановлен пользователем")
                 prompt = SYSTEM + "\nСегодня: " + dt.date.today().isoformat() + "\nМесяц по умолчанию: " + row["month"] + "\nДАННЫЕ:\n" + json.dumps({"history": messages, "tool_results": data}, ensure_ascii=False)
+                prompt = privacy.redact_secrets(prompt)
                 if len(prompt) > 110000:
                     raise ValueError("Слишком большой контекст. Уточните вопрос или начните новый чат")
                 with db_lock():
