@@ -123,7 +123,7 @@ class AccessTest(unittest.TestCase):
         from app.gpt_assistant import GPTAssistant
         service = GPTAssistant(self.con, self.config, load_rules())
         chat = service.create_chat("pm")
-        with patch("app.gpt_assistant.call_analysis.run_codex", return_value={"result": {"domains": ["logistics"], "other_people": False}}) as model, patch.object(service.documents, "tool") as documents:
+        with patch("app.gpt_assistant.call_analysis.run_codex", return_value={"thread_id":"11111111-1111-4111-8111-111111111111","result": {"domains": ["logistics"], "other_people": False}}) as model, patch.object(service.documents, "tool") as documents:
             job = service.submit("pm", chat["id"], "Скоро ли приедет машина?", launch=False)
             service.work(chat["id"], job["id"])
         result = service.chat("pm", chat["id"])["messages"][-1]
@@ -143,11 +143,11 @@ class AccessTest(unittest.TestCase):
             prompts.append(prompt)
             self.assertNotIn("FOREIGN_CLIENT", prompt)
             if len(prompts) == 1:
-                return {"result": {"domains": ["sales"], "other_people": False}}
+                return {"thread_id":"11111111-1111-4111-8111-111111111111","result": {"domains": ["sales"], "other_people": False}}
             if len(prompts) == 2:
-                return {"result": base}
+                return {"thread_id":"11111111-1111-4111-8111-111111111111","result": base}
             self.assertIn("OWN_CLIENT", prompt)
-            return {"result": {**base, "kind": "answer", "answer": "Найден ваш клиент", "tool": "", "query": ""}}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result": {**base, "kind": "answer", "answer": "Найден ваш клиент", "tool": "", "query": ""}}
         with patch("app.gpt_assistant.call_analysis.run_codex", side_effect=model):
             job = service.submit("pm", chat["id"], "Найди моих клиентов", launch=False)
             service.work(chat["id"], job["id"])
@@ -161,7 +161,7 @@ class AccessTest(unittest.TestCase):
         def model(*args, **kwargs):
             boss = next(e for e in self.config["employees"] if e["login"] == "boss")
             boss.update(role="employee", position="pm")
-            return {"result": {"kind": "answer", "tool": "", "query": "", "employee": "", "month": "", "answer": "SECRET_ADMIN_RESULT", "sources": []}}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result": {"kind": "answer", "tool": "", "query": "", "employee": "", "month": "", "answer": "SECRET_ADMIN_RESULT", "sources": []}}
         with patch("app.gpt_assistant.call_analysis.run_codex", side_effect=model):
             job = service.submit("boss", chat["id"], "Сводка по компании", launch=False)
             service.work(chat["id"], job["id"])

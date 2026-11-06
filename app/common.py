@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS gpt_documents (
  created TEXT NOT NULL, parent_id TEXT, unit_count INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_gpt_documents_chat ON gpt_documents(chat_id,created);
 CREATE TABLE IF NOT EXISTS gpt_chat_scopes (chat_id TEXT PRIMARY KEY, scope TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS gpt_codex_sessions (
+ chat_id TEXT PRIMARY KEY, thread_id TEXT UNIQUE, master_hash TEXT NOT NULL, scope TEXT NOT NULL,
+ busy INTEGER NOT NULL DEFAULT 0, active_message INTEGER, last_message INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS call_processing_jobs (
  id TEXT PRIMARY KEY, ids TEXT NOT NULL, force INTEGER NOT NULL DEFAULT 0,

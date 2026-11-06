@@ -114,8 +114,8 @@ class LiveTest(unittest.TestCase):
         base={"kind":"tool","tool":"b24_search","query":json.dumps({"entity":"company","text":"test"}),"employee":"","month":"2026-11","answer":"","sources":[]}
         def model(prompt,*args,**kwargs):
             prompts.append(prompt)
-            if len(prompts)==1:return {"result":base}
-            return {"result":{**base,"kind":"answer","answer":"Карточка найдена","sources":["source_2"]}}
+            if len(prompts)==1:return {"thread_id":"11111111-1111-4111-8111-111111111111","result":base}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result":{**base,"kind":"answer","answer":"Карточка найдена","sources":["source_2"]}}
         with mock.patch("app.gpt_assistant.call_analysis.run_codex",side_effect=model):
             message=service.submit("boss",chat["id"],"Проверь компанию прямо в Б24",launch=False)
             service.work(chat["id"],message["id"])

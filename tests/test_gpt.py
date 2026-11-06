@@ -152,7 +152,7 @@ class GPTTest(unittest.TestCase):
     def test_off_topic_reply_uses_requested_phrase_without_sources(self):
         chat=self.service.create_chat("boss")
         response={"kind":"refusal","tool":"","query":"","employee":"","month":"","answer":"варить борщ","sources":["source_1"]}
-        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"result":response}):
+        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"thread_id":"11111111-1111-4111-8111-111111111111","result":response}):
             mid=self.service.submit("boss",chat["id"],"Как сварить борщ?",launch=False)
             self.service.work(chat["id"],mid["id"])
         result=self.service.chat("boss",chat["id"])["messages"][-1]
@@ -163,7 +163,7 @@ class GPTTest(unittest.TestCase):
     def test_politics_reply_has_no_substantive_answer_or_sources(self):
         chat=self.service.create_chat("boss")
         response={"kind":"politics_refusal","tool":"","query":"","employee":"","month":"","answer":"Любой текст","sources":["source_1"]}
-        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"result":response}):
+        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"thread_id":"11111111-1111-4111-8111-111111111111","result":response}):
             mid=self.service.submit("boss",chat["id"],"Обсудим политику?",launch=False)
             self.service.work(chat["id"],mid["id"])
         result=self.service.chat("boss",chat["id"])["messages"][-1]
@@ -197,8 +197,8 @@ class GPTTest(unittest.TestCase):
         calls=[]
         def model(prompt,config,**kwargs):
             calls.append(prompt)
-            if len(calls)==1:return {"result":step}
-            return {"result":{**step,"kind":"answer","answer":"Сотрудник [СОТРУДНИК_3] найден.","sources":["source_1"]}}
+            if len(calls)==1:return {"thread_id":"11111111-1111-4111-8111-111111111111","result":step}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result":{**step,"kind":"answer","answer":"Сотрудник [СОТРУДНИК_3] найден.","sources":["source_1"]}}
         with mock.patch.object(gpt_assistant.call_analysis,"run_codex",side_effect=model):
             job=self.service.submit("boss",chat["id"],"Найди Анна Мерзлякова",launch=False)
             self.service.work(chat["id"],job["id"])
@@ -239,7 +239,7 @@ class GPTTest(unittest.TestCase):
         import threading,time
         from app.common import db_lock
         ready=threading.Event();release=threading.Event()
-        answer={"result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Готово","sources":[]}}
+        answer={"thread_id":"11111111-1111-4111-8111-111111111111","result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Готово","sources":[]}}
         def model(*args,**kwargs):ready.set();release.wait(2);return answer
         chat=self.service.create_chat("boss")
         try:
@@ -276,7 +276,7 @@ class GPTTest(unittest.TestCase):
     def test_pasted_document_requisites_are_absent_from_actual_prompt(self):
         chat=self.service.create_chat("boss");captured=[]
         response={"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Нужны данные","sources":[]}
-        def model(prompt,*args,**kwargs):captured.append(prompt);return {"result":response}
+        def model(prompt,*args,**kwargs):captured.append(prompt);return {"thread_id":"11111111-1111-4111-8111-111111111111","result":response}
         with mock.patch.object(gpt_assistant.call_analysis,"run_codex",side_effect=model):
             mid=self.service.submit("boss",chat["id"],"Договор поставки\nЗаказ №000123; БИК 044525225, КПП 770101001. Сумма 257020,16 на 05.11.2026",launch=False)
             self.service.work(chat["id"],mid["id"])

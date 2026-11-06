@@ -13,6 +13,7 @@ import signal
 import subprocess
 import tempfile
 import time
+import uuid
 
 from .anonymize import Pseudonymizer, restore
 from .common import ROOT, db_lock
@@ -245,17 +246,21 @@ def _execute_cli(cmd, input, timeout, capture_output=True, **kwargs):
                 stream.close()
 
 
-def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None):
+def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None, session=None):
     work = os.path.join(ROOT, "data", "nlp-work")
     os.makedirs(work, exist_ok=True)
     user_profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
     user_codex_home = os.environ.get("CODEX_HOME") or os.path.join(user_profile, ".codex")
     with tempfile.TemporaryDirectory(prefix="call-", dir=work) as run_dir:
+        output_dir = run_dir
+        if session is not None:
+            run_dir = session["cwd"]
+            os.makedirs(run_dir, exist_ok=True)
         env = os.environ.copy()
         env["HOME"] = user_profile
         env["CODEX_HOME"] = user_codex_home
-        schema_path = os.path.join(run_dir, "schema.json")
-        answer_path = os.path.join(run_dir, "answer.json")
+        schema_path = os.path.join(output_dir, "schema.json")
+        answer_path = os.path.join(output_dir, "answer.json")
         with open(schema_path, "w", encoding="utf-8") as f:
             json.dump(schema or ANALYSIS_SCHEMA, f, ensure_ascii=False, indent=2)
         cmd = [codex_path(config), "exec", "--model", model, "--sandbox", "read-only", "--ephemeral",
@@ -264,12 +269,38 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None):
                "-c", f"model_reasoning_effort={effort}", "-"]
         fast = config.get("codex_fast") is True
         cmd[-1:-1] = ["-c", 'service_tier="fast"' if fast else 'service_tier="default"', "-c", "features.fast_mode=" + ("true" if fast else "false")]
+        if session is not None:
+            cmd.remove("--ephemeral")
+            cmd.insert(2, "--json")
+            cmd[-1:-1] = ["-c", "project_doc_max_bytes=0"]
+            if session.get("id"):
+                # Sandbox is an exec-level option, preceding the resume subcommand.
+                cmd.remove("--sandbox")
+                cmd.remove("read-only")
+                cmd[2:2] = ["--sandbox", "read-only", "resume", str(uuid.UUID(session["id"]))]
+            elif session.get("master"):
+                master_path = os.path.abspath(os.path.join(run_dir, "master.txt"))
+                with open(master_path, "w", encoding="utf-8") as master_file:
+                    master_file.write(session["master"])
+                cmd[-1:-1] = ["-c", "model_instructions_file=" + json.dumps(master_path)]
         p = _execute_cli(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=run_dir,
                            timeout=analysis_timeout(config, effort), env=env,
                            creationflags=0x08000000 if os.name == "nt" else 0)  # CREATE_NO_WINDOW
         if p.returncode:
             detail = (p.stderr or p.stdout or "").strip()
             raise RuntimeError(f"Codex CLI: код {p.returncode}, {detail[:1000]}")
+        if session is not None:
+            started = []
+            for line in p.stdout.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "thread.started":
+                    started.append(str(uuid.UUID(event["thread_id"])))
+            if not started or len(set(started)) != 1 or session.get("id") and started[0] != session["id"]:
+                raise RuntimeError("Codex не подтвердил ID сессии")
+            session["id"] = started[0]
         try:
             with open(answer_path, encoding="utf-8") as f:
                 return f.read()
@@ -277,13 +308,14 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None):
             raise RuntimeError(f"Codex CLI не сохранил ответ: {e}") from e
 
 
-def run_codex(prompt, config, attempts=2, model=MODEL, effort=EFFORT, schema=None):
+def run_codex(prompt, config, attempts=2, model=MODEL, effort=EFFORT, schema=None, session=None):
     """Ответ Codex и сведения о вызове ({"result": dict, …}). Если CLI не вернул корректный JSON,
     тогда запрос повторяется (attempts раз всего); исключение — если CLI так и не ответил разборным JSON."""
     text = ""
     for n in range(attempts):
         retry_note = "\n\nВажно: ответ должен быть строго корректным JSON."
-        text = _call_cli(prompt if not n else prompt + retry_note, config, model, effort, schema)
+        args = (prompt if not n else prompt + retry_note, config, model, effort, schema)
+        text = _call_cli(*args, session=session) if session is not None else _call_cli(*args)
         m = re.search(r"\{.*\}", text, re.S)  # на случай обёртки ```json … ```
         try:
             result = json.loads(m.group()) if m else None
@@ -291,7 +323,7 @@ def run_codex(prompt, config, attempts=2, model=MODEL, effort=EFFORT, schema=Non
             result = None
         if isinstance(result, dict):
             return {"result": result, "cost_usd": None, "tokens_in": None, "tokens_out": None,
-                    "model": model, "attempts": n + 1}
+                    "model": model, "attempts": n + 1, **({"thread_id": session["id"]} if session is not None else {})}
     raise RuntimeError(f"Codex ответил не JSON: {text[:200]}")
 
 

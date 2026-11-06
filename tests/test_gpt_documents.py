@@ -105,7 +105,7 @@ class DocumentTest(unittest.TestCase):
             result = {"kind": "answer", "tool": "", "query": "", "employee": "", "month": "", "answer": "Прочитано", "sources": []}
             if len(prompts) == 1:
                 result.update(kind="tool", tool="document_read", query=json.dumps({"id": doc["id"]}))
-            return {"result": result}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result": result}
         with patch("app.gpt_assistant.call_analysis.run_codex", side_effect=model):
             job = service.submit("boss", "chat", "Прочитай договор", launch=False)
             service.work("chat", job["id"])
@@ -210,12 +210,12 @@ class DocumentTest(unittest.TestCase):
             prompts.append(prompt)
             self.assertNotIn("7701234567", prompt)
             if len(prompts) == 1:
-                return {"result": base}
+                return {"thread_id":"11111111-1111-4111-8111-111111111111","result": base}
             if len(prompts) == 2:
                 data = json.loads(prompt.split("ДАННЫЕ:\n", 1)[1])
                 unit = data["tool_results"][-1]["result"]["units"][0]["id"]
-                return {"result": {**base, "tool": "document_edit", "query": json.dumps({"id": document["id"], "changes": [{"unit": unit, "old": "100", "new": "200"}]})}}
-            return {"result": {**base, "kind": "answer", "tool": "", "query": "", "answer": "Исправленная версия готова"}}
+                return {"thread_id":"11111111-1111-4111-8111-111111111111","result": {**base, "tool": "document_edit", "query": json.dumps({"id": document["id"], "changes": [{"unit": unit, "old": "100", "new": "200"}]})}}
+            return {"thread_id":"11111111-1111-4111-8111-111111111111","result": {**base, "kind": "answer", "tool": "", "query": "", "answer": "Исправленная версия готова"}}
         with patch("app.gpt_assistant.call_analysis.run_codex", side_effect=model):
             job = service.submit("boss", "chat", "Измени стоимость со 100 до 200 рублей в договоре", launch=False)
             service.work("chat", job["id"])

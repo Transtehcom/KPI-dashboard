@@ -160,7 +160,7 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(self.get("boss","/api/gpt-chat?id="+other["id"])[0],400)
         self.assertEqual(self.get("pm","/api/gpt-preview?id="+chat["id"]+"&message=1")[0],400)
         self.assertEqual(post("boss","/api/gpt-send",{"id":chat["id"],"text":"x","model":"invalid"})[0],400)
-        response={"result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Здравствуйте","sources":[]}}
+        response={"thread_id":"11111111-1111-4111-8111-111111111111","result":{"kind":"answer","tool":"","query":"","employee":"","month":"","answer":"Здравствуйте","sources":[]}}
         with patch.object(gpt_assistant.call_analysis,"run_codex",return_value=response):
             code,job=post("boss","/api/gpt-send",{"id":chat["id"],"text":"Привет"})
             self.assertEqual(code,200)
