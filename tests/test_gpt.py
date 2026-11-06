@@ -119,6 +119,28 @@ class GPTTest(unittest.TestCase):
         self.assertEqual(out["total_items"],0)
         with self.assertRaises(ValueError):self.service.tools("calendar",'{"date":"bad","user_id":"456"}',"","",gpt_privacy.PrivacyContext())
 
+    def test_off_topic_reply_uses_requested_phrase_without_sources(self):
+        chat=self.service.create_chat("boss")
+        response={"kind":"refusal","tool":"","query":"","employee":"","month":"","answer":"варить борщ","sources":["source_1"]}
+        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"result":response}):
+            mid=self.service.submit("boss",chat["id"],"Как сварить борщ?",launch=False)
+            self.service.work(chat["id"],mid["id"])
+        result=self.service.chat("boss",chat["id"])["messages"][-1]
+        self.assertEqual(result["status"],"completed")
+        self.assertEqual(result["content"],"Я всего лишь ассистент-помощник и не знаю как варить борщ.")
+        self.assertEqual(result["sources"],[])
+
+    def test_politics_reply_has_no_substantive_answer_or_sources(self):
+        chat=self.service.create_chat("boss")
+        response={"kind":"politics_refusal","tool":"","query":"","employee":"","month":"","answer":"Любой текст","sources":["source_1"]}
+        with mock.patch.object(gpt_assistant.call_analysis,"run_codex",return_value={"result":response}):
+            mid=self.service.submit("boss",chat["id"],"Обсудим политику?",launch=False)
+            self.service.work(chat["id"],mid["id"])
+        result=self.service.chat("boss",chat["id"])["messages"][-1]
+        self.assertEqual(result["status"],"completed")
+        self.assertEqual(result["content"],"Я всего лишь ассистент-помощник и не отвечаю на политические вопросы.")
+        self.assertEqual(result["sources"],[])
+
     def test_chat_ownership(self):
         chat=self.service.create_chat("boss")
         with self.assertRaises(ValueError):self.service.chat("other",chat["id"])
