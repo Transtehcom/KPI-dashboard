@@ -229,6 +229,14 @@ class GPTAssistant:
                 raise ValueError("Чат не найден")
         return self.documents.upload(jid, name, encoded)
 
+    def document_delete(self, owner, jid, identity):
+        with db_lock():
+            self.check_chat(owner, jid)
+            if self.con.execute("SELECT 1 FROM gpt_messages WHERE chat_id=? AND status IN ('running','cancelling')", (jid,)).fetchone():
+                raise ValueError("Дождитесь завершения ответа перед удалением документа")
+            self.documents.delete(jid, identity)
+        return {"ok": True}
+
     def document_download(self, owner, jid, identity):
         self.check_chat(owner, jid)
         with db_lock():

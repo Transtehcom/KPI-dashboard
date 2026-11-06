@@ -16,6 +16,9 @@ console.log('GPT messages, safe rendering, sources, preview and navigation guard
 const files=ctx.gptDocumentsHtml([{id:'doc1',name:'<script>.docx',size:1000,editable:true,parent_id:'original'}]);
 assert.ok(!files.includes('<script>'));
 assert.match(files,/data-gpt-download="doc1"/);
+assert.match(files,/data-gpt-delete="doc1"/);
+assert.match(ctx.gptDocumentsHtml([{id:'doc1',name:'file.txt',size:1}],true),/data-gpt-delete="doc1"[^>]*disabled/);
+assert.ok(html.includes('/api/gpt-document-delete'));
 assert.ok(html.includes('id="gptFiles"'));
 assert.ok(html.includes('/api/gpt-upload'));
 assert.ok(html.includes('link.download = file.name'));

@@ -68,6 +68,33 @@ class DocumentTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.upload(name, raw)
 
+    def test_delete_removes_only_selected_owned_file(self):
+        first = self.upload("wrong.txt", b"wrong")
+        second = self.upload("correct.txt", b"correct")
+        with self.assertRaises(ValueError):
+            self.docs.delete("other", first["id"])
+        self.docs.delete("chat", first["id"])
+        self.assertEqual([d["id"] for d in self.docs.listing("chat")], [second["id"]])
+        with self.assertRaises(ValueError):
+            self.docs.download("chat", first["id"])
+        self.assertEqual(self.docs.download("chat", second["id"])[1], b"correct")
+
+    def test_service_delete_checks_owner_and_running_response(self):
+        from app.common import load_rules
+        from app.gpt_assistant import GPTAssistant
+        service = GPTAssistant(self.con, {"employees": [{"login":"boss","name":"Администратор","role":"manager"}, {"login":"other","role":"manager"}]}, load_rules())
+        document = self.upload("wrong.txt", b"wrong")
+        with self.assertRaises(ValueError):
+            service.document_delete("other", "chat", document["id"])
+        message = service.submit("boss", "chat", "Здравствуйте", launch=False)
+        with self.assertRaises(ValueError):
+            service.document_delete("boss", "chat", document["id"])
+        self.assertEqual(len(self.docs.listing("chat")), 1)
+        self.con.execute("UPDATE gpt_messages SET status='completed' WHERE id=?", (message["id"],))
+        self.con.commit()
+        self.assertEqual(service.document_delete("boss", "chat", document["id"]), {"ok": True})
+        self.assertEqual(self.docs.listing("chat"), [])
+
     def test_read_is_paginated_and_document_limit_is_enforced(self):
         document = self.upload("notes.txt", b"a\nb\nc")
         result = self.docs.tool("document_read", "chat", {"id": document["id"], "offset": 1}, self.privacy)

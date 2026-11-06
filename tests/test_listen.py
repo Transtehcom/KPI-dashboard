@@ -196,6 +196,15 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(code,200)
         self.assertEqual(base64.b64decode(json.loads(raw)["content"]),b"hello")
         self.assertEqual(self.get("boss",f"/api/gpt-document?id={other['id']}&document={document['id']}")[0],400)
+        def delete(login):
+            req=urllib.request.Request(self.base+"/api/gpt-document-delete",data=json.dumps({"id":chat["id"],"document":document["id"]}).encode(),headers={"Cookie":self.tokens[login],"Content-Type":"application/json"},method="POST")
+            try:
+                with urllib.request.urlopen(req) as response:return response.status
+            except urllib.error.HTTPError as error:
+                with error:return error.code
+        self.assertEqual(delete("pm"),400)
+        self.assertEqual(delete("boss"),200)
+        self.assertEqual(self.get("boss",path)[0],400)
 
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}

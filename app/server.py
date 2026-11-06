@@ -570,13 +570,15 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/call-audio":  # аудио отдаётся долго — без общей блокировки базы
                 return self.send_call_audio(me, q.get("id") or "")
 
-            if path in ("/api/gpt-upload", "/api/gpt-document"):
+            if path in ("/api/gpt-upload", "/api/gpt-document", "/api/gpt-document-delete"):
                 service = app.gpt_service()
                 try:
                     if path == "/api/gpt-upload" and method == "POST":
                         return JsonResponse(service.document_upload(me["login"], str(b.get("id") or ""), b.get("name"), b.get("content")))
                     if path == "/api/gpt-document" and method == "GET":
                         return JsonResponse(service.document_download(me["login"], q.get("id") or "", q.get("document") or ""))
+                    if path == "/api/gpt-document-delete" and method == "POST":
+                        return JsonResponse(service.document_delete(me["login"], str(b.get("id") or ""), str(b.get("document") or "")))
                 except ValueError as exc:
                     raise BadRequest(str(exc))
                 return JsonResponse({"error": "Метод недоступен"}, 405)

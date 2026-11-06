@@ -1632,8 +1632,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       ${(m.sources || []).length ? `<div class="small gpt-sources">Источники: ${(m.sources || []).map((r) => r.url ? `<a href="${esc(r.url)}" ${r.month ? `data-gpt-month="${esc(r.month)}"` : ""} ${r.url.startsWith("#") ? "" : 'target="_blank" rel="noopener noreferrer"'}>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</a>` : `<span>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</span>`).join(" · ")}</div>` : ""}
       ${m.has_preview ? `<details class="more" data-gpt-preview="${m.id}"><summary>Что отправлено в Codex (последний пакет)</summary><pre class="gpt-preview">Загрузка…</pre></details>` : ""}</article>`).join("") : `<div class="empty">Спросите о KPI, клиентах, заказах, звонках или деньгах. Например: «Почему у сотрудника такой KPI за ноябрь?»</div>`;
   }
-  function gptDocumentsHtml(documents) {
-    return documents.length ? `<div class="muted small">Документы чата · оригиналы и версии</div>${documents.map((d) => `<div class="inline-form"><button type="button" class="btn" data-gpt-download="${esc(d.id)}">↓ ${esc(d.name)}</button><span class="muted small">${d.parent_id ? "Исправленная версия · " : ""}${Math.ceil(d.size / 1024)} КБ · ${d.editable ? "чтение и правки" : "только чтение"}</span></div>`).join("")}` : "";
+  function gptDocumentsHtml(documents, disabled = false) {
+    return documents.length ? `<div class="muted small">Документы чата · оригиналы и версии</div>${documents.map((d) => `<div class="inline-form"><button type="button" class="btn" data-gpt-download="${esc(d.id)}">↓ ${esc(d.name)}</button><span class="muted small">${d.parent_id ? "Исправленная версия · " : ""}${Math.ceil(d.size / 1024)} КБ · ${d.editable ? "чтение и правки" : "только чтение"}</span><button type="button" class="btn" data-gpt-delete="${esc(d.id)}" aria-label="Удалить ${esc(d.name)}" ${disabled ? "disabled" : ""}>Удалить</button></div>`).join("")}` : "";
   }
   async function loadGPT() {
     clearTimeout(state.gptTimer);
@@ -1659,7 +1659,13 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       };
       modelSelect.addEventListener("change", syncModelEfforts);
       syncModelEfforts();
-      let lastMarkup = "", lastDocuments = "", polling = false, uploading = false;
+      let lastMarkup = "", lastDocuments = "", polling = false, filesBusy = false;
+      const lockFiles = () => {
+        lastDocuments = "";
+        document.getElementById("gptSend").disabled = true;
+        document.getElementById("gptFiles").disabled = true;
+        document.querySelectorAll("[data-gpt-delete]").forEach((button) => { button.disabled = true; });
+      };
       const poll = async () => {
         clearTimeout(state.gptTimer);
         if (!current() || polling) return;
@@ -1669,11 +1675,11 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           if (!current()) return;
           const markup = gptMessagesHtml(chat.messages), nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
           if (markup !== lastMarkup) { messages.innerHTML = markup; lastMarkup = markup; if (nearBottom || state.gptJustSent) messages.scrollTop = messages.scrollHeight; state.gptJustSent = false; }
-          const documentsMarkup = gptDocumentsHtml(chat.documents || []);
+          const busy = chat.messages.some((m) => m.status === "running" || m.status === "cancelling");
+          const documentsMarkup = gptDocumentsHtml(chat.documents || [], busy || filesBusy);
           if (documentsMarkup !== lastDocuments) { document.getElementById("gptDocuments").innerHTML = documentsMarkup; lastDocuments = documentsMarkup; }
-          const busy = chat.messages.some((m) => m.status === "running");
-          document.getElementById("gptSend").disabled = busy || uploading;
-          document.getElementById("gptFiles").disabled = busy || uploading;
+          document.getElementById("gptSend").disabled = busy || filesBusy;
+          document.getElementById("gptFiles").disabled = busy || filesBusy;
           document.getElementById("gptStop").hidden = !busy;
           if (busy) state.gptTimer = setTimeout(poll, 2000);
         } catch (e) { if (current() && e.message !== "auth") { document.getElementById("gptError").textContent = e.message; state.gptTimer = setTimeout(poll, 5000); } }
@@ -1681,9 +1687,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       };
       document.getElementById("gptFiles").addEventListener("change", async (event) => {
         const files = [...event.target.files], status = document.getElementById("gptUploadStatus");
-        uploading = true;
-        document.getElementById("gptSend").disabled = true;
-        event.target.disabled = true;
+        filesBusy = true;
+        lockFiles();
         document.getElementById("gptError").textContent = "";
         try {
           for (const file of files) {
@@ -1698,8 +1703,23 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           if (current()) status.textContent = "Документы прикреплены. Напишите, что нужно прочитать или изменить.";
         } catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; }
         finally {
-          uploading = false;
+          filesBusy = false;
           if (current()) { event.target.value = ""; event.target.disabled = false; await poll(); state.gptTimer = setTimeout(poll, 300); }
+        }
+      });
+      document.getElementById("gptDocuments").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-gpt-delete]");
+        if (!button || button.disabled || filesBusy) return;
+        filesBusy = true;
+        lockFiles();
+        document.getElementById("gptError").textContent = "";
+        try {
+          await api("/api/gpt-document-delete", { id:chatId, document:button.dataset.gptDelete });
+          if (current()) document.getElementById("gptUploadStatus").textContent = "Документ удалён из чата.";
+        } catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; }
+        finally {
+          filesBusy = false;
+          if (current()) { lastDocuments = ""; await poll(); state.gptTimer = setTimeout(poll, 300); }
         }
       });
       document.getElementById("gptDocuments").addEventListener("click", async (event) => {
@@ -1729,9 +1749,9 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       text.addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); document.getElementById("gptForm").requestSubmit(); } });
       document.getElementById("gptForm").addEventListener("submit", async (event) => {
         event.preventDefault(); const button = document.getElementById("gptSend"); if (button.disabled || !text.value.trim()) return;
-        button.disabled = true; document.getElementById("gptError").textContent = "";
+        lockFiles(); document.getElementById("gptError").textContent = "";
         try { await api("/api/gpt-send", { id:chatId, text:text.value, model:document.getElementById("gptModel").value, effort:document.getElementById("gptEffort").value, month:document.getElementById("gptMonth").value, fast:list.fast_allowed && !!document.getElementById("gptFast")?.checked }); if (!current()) return; text.value = ""; state.gptDrafts[chatId] = ""; state.gptJustSent = true; await poll(); }
-        catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; button.disabled = false; }
+        catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; await poll(); }
       });
       document.getElementById("gptStop").addEventListener("click", async () => { try { await api("/api/gpt-cancel", { id:chatId }); await poll(); } catch (e) { if (e.message !== "auth") toast(e.message); } });
       for (const [id,key] of [["gptModel","gptModel"],["gptEffort","gptEffort"],["gptMonth","gptMonth"]]) document.getElementById(id).addEventListener("change",(event) => { state[key] = event.target.value; });

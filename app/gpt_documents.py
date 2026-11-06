@@ -292,6 +292,13 @@ class Documents:
             raise ValueError("Некорректные данные файла") from None
         return self.save(chat, name, raw)
 
+    def delete(self, chat, identity):
+        with db_lock():
+            result = self.con.execute("DELETE FROM gpt_documents WHERE chat_id=? AND id=?", (chat, identity))
+            if not result.rowcount:
+                raise ValueError("Документ не найден")
+            self.con.commit()
+
     def download(self, chat, identity):
         row = self.get(chat, identity)
         return row["name"], row["content"]
