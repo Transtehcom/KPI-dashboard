@@ -362,6 +362,9 @@ ADDED_COLUMNS["supplier_orders"] = [("customer_order_key", "TEXT"), ("customer_o
                                      ("author_key", "TEXT")]
 
 
+ADDED_COLUMNS["gpt_messages"] = [("fast", "INTEGER NOT NULL DEFAULT 0")]
+ADDED_COLUMNS["call_processing_jobs"].append(("fast", "INTEGER NOT NULL DEFAULT 0"))
+
 def migrate(con):
     for table, cols in ADDED_COLUMNS.items():
         have = table_columns(con, table)

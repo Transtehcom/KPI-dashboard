@@ -22,6 +22,18 @@ class CallJobsTest(unittest.TestCase):
             time.sleep(.01)
         self.fail(str(self.queue.get(jid)))
 
+    def test_fast_is_persisted_and_forwarded_to_worker(self):
+        seen=[]
+        def process(*args):
+            seen.append(self.queue.current.config["codex_fast"])
+            return "ok"
+        self.queue.process_call=process
+        job=self.queue.create(["fast"],force=True,fast=True)
+        self.assertEqual(job["fast"],1)
+        self.queue.tick()
+        self.wait_status(job["id"],{"completed"})
+        self.assertEqual(seen,[True])
+
     def test_two_jobs_run_in_parallel_and_third_waits(self):
         gate=threading.Event(); entered=[]
         self.addCleanup(gate.set)

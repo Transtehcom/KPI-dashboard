@@ -18,10 +18,35 @@ from .anonymize import Pseudonymizer, restore
 from .common import ROOT, db_lock
 from .transcripts import ENGINE
 
-MODELS = {"gpt-6-luna": "GPT-6 Luna", "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna"}
+MODELS = {"gpt-6.1-sol": "GPT-6.1 Sol", "gpt-6-astra": "GPT-6 Astra", "gpt-6.1-terra": "GPT-6.1 Terra",
+          "gpt-6-sol": "GPT-6 Sol", "gpt-6-luna": "GPT-6 Luna", "gpt-5.6-sol": "GPT-5.6 Sol",
+          "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna"}
 MODEL = "gpt-5.6-terra"  # по умолчанию; руководитель выбирает модель в разделе «Звонки»
-EFFORTS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "xhigh": "Сверхвысокий", "max": "Максимальный"}
+EFFORTS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "xhigh": "Сверхвысокий", "max": "Максимальный", "ultra": "Ультра"}
 EFFORT = "high"
+
+def model_options(admin=True):
+    models = MODELS if admin else {key: MODELS[key] for key in ("gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol")}
+    levels = {}
+    for model in models:
+        allowed = {k: v for k, v in EFFORTS.items() if k != "ultra" or "luna" not in model}
+        if not admin:
+            allowed = {k: v for k, v in allowed.items() if model != "gpt-6.1-sol" or k in ("low", "medium")}
+        levels[model] = allowed
+    return {"models": models, "efforts": EFFORTS, "model_efforts": levels}
+
+
+def validate_selection(model, effort, admin=True):
+    options = model_options(admin)
+    if model not in options["models"] or effort not in options["model_efforts"][model]:
+        raise ValueError("Эта модель или уровень мышления недоступны для вашего доступа")
+
+
+
+def validate_fast(fast, admin=True):
+    if type(fast) is not bool or fast and not admin:
+        raise ValueError("Режим Fast доступен только администратору")
+
 TIMEOUT = 300
 CALL_TYPES = ["продажа", "тендер", "исполнение", "снабжение", "внутренний", "недозвон", "автоответчик", "личный", "другое"]
 PROMPT_VERSION = 6  # меняется вместе с инструкцией: разбор прежней версии при ручной обработке считается недоделанным
@@ -176,7 +201,7 @@ def codex_path(config):
 
 
 def analysis_timeout(config, effort=EFFORT):
-    default = 900 if effort in ("xhigh", "max") else 600 if effort == "high" else TIMEOUT
+    default = 900 if effort in ("xhigh", "max", "ultra") else 600 if effort == "high" else TIMEOUT
     configured = (config.get("call_records") or {}).get("analysis_timeout_seconds")
     value = default if configured is None else int(configured)
     if not 30 <= value <= 3600:
@@ -237,6 +262,8 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None):
                "--ignore-user-config", "--ignore-rules", "--disable", "shell_tool", "--skip-git-repo-check",
                "--output-schema", schema_path, "--output-last-message", answer_path,
                "-c", f"model_reasoning_effort={effort}", "-"]
+        fast = config.get("codex_fast") is True
+        cmd[-1:-1] = ["-c", 'service_tier="fast"' if fast else 'service_tier="default"', "-c", "features.fast_mode=" + ("true" if fast else "false")]
         p = _execute_cli(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=run_dir,
                            timeout=analysis_timeout(config, effort), env=env,
                            creationflags=0x08000000 if os.name == "nt" else 0)  # CREATE_NO_WINDOW

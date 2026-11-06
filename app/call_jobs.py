@@ -88,9 +88,9 @@ class JobQueue:
                 "timezone": dt.datetime.now().astimezone().strftime("UTC%z")}
 
     def create(self, ids, force=False, model=call_analysis.MODEL, effort=call_analysis.EFFORT,
-               run_at=None, author="", feedback=None):
-        if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
-            raise ValueError("Неизвестная модель или уровень усилий")
+               run_at=None, author="", feedback=None, fast=False):
+        call_analysis.validate_selection(model, effort)
+        call_analysis.validate_fast(fast)
         if not isinstance(ids, (list, tuple)) or not ids or len(ids) > 10000:
             raise ValueError("Выберите от 1 до 10 000 звонков")
         ids = list(dict.fromkeys(str(rid) for rid in ids))
@@ -130,6 +130,7 @@ class JobQueue:
                              (jid, json.dumps(ids), int(force), model, effort, author, now,
                               scheduled.isoformat(timespec="seconds") if scheduled else now,
                               "queued", len(ids), "Ожидает указанного времени" if scheduled else "В очереди"))
+            self.con.execute("UPDATE call_processing_jobs SET fast=? WHERE id=?", (int(fast), jid))
             if feedback is not None:
                 from . import call_recheck
                 call_recheck.enqueue(self.con, jid, ids[0], feedback, author, now)
@@ -238,10 +239,10 @@ class JobQueue:
             review = self.con.execute("SELECT 1 FROM call_feedback_rechecks WHERE id=? AND record=?",
                                       (self.current.job_id, rid)).fetchone()
         if review:
-            result = call_recheck.analyze_row(self.con, self.config, dict(row), titles, self.current.job_id,
+            result = call_recheck.analyze_row(self.con, self.current.config, dict(row), titles, self.current.job_id,
                                               model=self.current.model, effort=self.current.effort, cancel=cancel)
         else:
-            result = call_analysis.analyze_row(self.con, self.config, dict(row), titles,
+            result = call_analysis.analyze_row(self.con, self.current.config, dict(row), titles,
                                               model=self.current.model, effort=self.current.effort)
         if result == "failed":
             with db_lock():
@@ -254,6 +255,7 @@ class JobQueue:
         state, message = "completed", "Готово"
         errors = []
         try:
+            self.current.config = {**self.config, "codex_fast": bool(job.get("fast", 0))}
             self.current.model, self.current.effort, self.current.job_id = job["model"], job["effort"], jid
             for index, rid in enumerate(json.loads(job["ids"]), 1):
                 if cancel.is_set():

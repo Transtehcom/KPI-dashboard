@@ -74,6 +74,20 @@ class DocumentPrivacyTest(unittest.TestCase):
             for text in ("Сумма 1234567890 рублей", "Цена: 1234567890", "1 234 567 890,12 ₽"):
                 self.assertEqual(p.mask(text),text)
 
+class ModelPolicyTest(unittest.TestCase):
+    def test_models_and_efforts_are_enforced_by_role(self):
+        from app.call_analysis import model_options,validate_selection
+        admin=model_options(True);staff=model_options(False)
+        self.assertEqual(len(admin["models"]),8)
+        self.assertEqual(len(staff["models"]),4)
+        validate_selection("gpt-6.1-sol","ultra",True)
+        validate_selection("gpt-6.1-sol","medium",False)
+        validate_selection("gpt-5.6-terra","max",False)
+        validate_selection("gpt-5.6-terra","ultra",False)
+        for model,effort,manager in [("gpt-6.1-sol","high",False),("gpt-6-astra","low",False),("gpt-6-luna","ultra",True)]:
+            with self.assertRaises(ValueError):validate_selection(model,effort,manager)
+
+
 class GPTTest(unittest.TestCase):
     def setUp(self):
         self.con=connect(":memory:");self.addCleanup(self.con.close)
@@ -140,6 +154,22 @@ class GPTTest(unittest.TestCase):
         self.assertEqual(result["status"],"completed")
         self.assertEqual(result["content"],"Я всего лишь ассистент-помощник и не отвечаю на политические вопросы.")
         self.assertEqual(result["sources"],[])
+
+    def test_fast_is_admin_only_and_persisted(self):
+        own=self.service.create_chat("pm")
+        with self.assertRaises(ValueError):
+            self.service.submit("pm",own["id"],"Мой KPI",fast=True,launch=False)
+        admin=self.service.create_chat("boss")
+        job=self.service.submit("boss",admin["id"],"Мой KPI",fast=True,launch=False)
+        self.assertEqual(self.con.execute("SELECT fast FROM gpt_messages WHERE id=?",(job["id"],)).fetchone()[0],1)
+
+    def test_staff_cannot_submit_disallowed_models_or_efforts(self):
+        chat=self.service.create_chat("pm")
+        for model,effort in [("gpt-6-astra","low"),("gpt-6.1-sol","high")]:
+            with self.assertRaises(ValueError):
+                self.service.submit("pm",chat["id"],"Мой KPI",model=model,effort=effort,launch=False)
+        job=self.service.submit("pm",chat["id"],"Мой KPI",model="gpt-6.1-sol",effort="medium",launch=False)
+        self.assertEqual(job["status"],"running")
 
     def test_chat_ownership(self):
         chat=self.service.create_chat("boss")

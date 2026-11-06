@@ -270,6 +270,7 @@ class App:
                 "employees": [{"login": e["login"], "name": e["name"]} for e in choices],
                 "keep_from": call_records.keep_from(self.config),
                 "portal": b24_calendar._portal(self.config.get("bitrix24", {})),
+                "model_options": call_analysis.model_options(is_mgr),
                 "feedback_criteria": [{"key": key, "label": label} for key, label in call_feedback.CRITERIA.items()],
                 "download": call_records.status() if is_mgr else None}
 
@@ -594,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
                             return JsonResponse(service.create_chat(me["login"]))
                         if path == "/api/gpt-send" and method == "POST":
                             return JsonResponse(service.submit(me["login"],str(b.get("id") or ""),b.get("text"),
-                                b.get("model") or "gpt-6-luna",b.get("effort") or "medium",b.get("month")))
+                                b.get("model") or "gpt-6-luna",b.get("effort") or "medium",b.get("month"),fast=b.get("fast",False)))
                         if path == "/api/gpt-cancel" and method == "POST":
                             service.cancel(me["login"],str(b.get("id") or ""))
                             return JsonResponse({"ok":True})
@@ -793,7 +794,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         job = app.processing_jobs().create([record], force=True, feedback=feedback, author=me["login"],
                             model=b.get("model") or call_analysis.MODEL, effort=b.get("effort") or call_analysis.EFFORT,
-                            run_at=b.get("run_at"))
+                            run_at=b.get("run_at"), fast=b.get("fast",False))
                     except call_feedback.FeedbackConflict as exc:
                         return JsonResponse({"error": str(exc)}, 409)
                     except ValueError as exc:
@@ -1006,11 +1007,13 @@ class Handler(BaseHTTPRequestHandler):
                             rows = rows[:n]
                         ids, force = [r["id"] for r in rows], False
                     model, effort = b.get("model") or call_analysis.MODEL, b.get("effort") or call_analysis.EFFORT
-                    if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
-                        raise BadRequest("Неизвестная модель или уровень усилий")
+                    try:
+                        call_analysis.validate_selection(model, effort)
+                    except ValueError as exc:
+                        raise BadRequest(str(exc)) from None
                     try:
                         row = app.processing_jobs().create(ids, force, model, effort,
-                                                           run_at=b.get("run_at"), author=me["login"])
+                                                           run_at=b.get("run_at"), author=me["login"], fast=b.get("fast",False))
                     except ValueError as exc:
                         raise BadRequest(str(exc))
                     return JsonResponse({"ok": True, "job": row, "message": "Задача создана: " + str(row["total"]) + " звонков"})

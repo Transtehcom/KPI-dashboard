@@ -9,7 +9,7 @@ const nodes = Object.fromEntries(['cJob','cProc','cJobsHint','cJobsList','cRunAt
 const calls=[],toasts=[];
 let response = {workers:3,timezone:'UTC+0500',jobs:[{id:'job1',status:'queued',total:5,done:0,model:'terra',effort:'high',run_at:'2026-11-10T12:00',message:'<unsafe>'}]};
 const context = vm.createContext({state:{view:'calls',cRunAt:'2026-11-10T12:00'},
- document:{getElementById:id=>nodes[id]},MODELS:[['terra','Model label']],EFFORTS:[['high','High label']],
+ document:{getElementById:id=>nodes[id]},MODELS:[['terra','Model label']],EFFORTS:[['high','High label']],modelEfforts:()=>[['high','High label']],fastCalls:()=>false,
  esc:v=>String(v??'').replaceAll('<','&lt;'),nf:String,dtLabel:String,
  confirm:()=>true,pick:()=> 'terra',toast:s=>toasts.push(s),loadCalls:()=>{},
  setTimeout:()=>1,clearTimeout:()=>{},api:async(path,body)=>{calls.push([path,body]);return path==='/api/calls-job'?response:{ok:true,message:'created'};}});

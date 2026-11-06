@@ -188,9 +188,9 @@ class GPTAssistant:
                     continue
                 visible.append(row)
             last_sync=dict(self.con.execute("SELECT finished,status FROM sync_log ORDER BY id DESC LIMIT 1").fetchone() or {})
-        return {"chats": visible, "access": access.public(), "models": call_analysis.MODELS, "efforts": call_analysis.EFFORTS,
+        return {"chats": visible, "access": access.public(), **call_analysis.model_options(access.admin),
                 "default_model": "gpt-6-luna", "default_effort": "medium",
-                "last_sync":last_sync}
+                "last_sync":last_sync, "fast_allowed": access.admin}
 
     def chat(self, owner, jid):
         self.check_chat(owner, jid)
@@ -199,7 +199,7 @@ class GPTAssistant:
             if not chat:
                 raise ValueError("Чат не найден")
             messages = []
-            for row in self.con.execute("SELECT id,role,status,content,sources,(outbound IS NOT NULL) AS has_preview,created,model,effort,month FROM gpt_messages "
+            for row in self.con.execute("SELECT id,role,status,content,sources,(outbound IS NOT NULL) AS has_preview,created,model,effort,month,fast FROM gpt_messages "
                                         "WHERE chat_id=? ORDER BY id", (jid,)):
                 item = dict(row)
                 item["sources"] = json.loads(item["sources"] or "[]")
@@ -229,11 +229,11 @@ class GPTAssistant:
                 raise ValueError("Сообщение не найдено")
             return {"outbound":row[0] or "Контекст ещё не подготовлен"}
 
-    def submit(self, owner, jid, text, model="gpt-6-luna", effort="medium", month=None, launch=True):
+    def submit(self, owner, jid, text, model="gpt-6-luna", effort="medium", month=None, launch=True, fast=False):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 6000:
             raise ValueError("Введите вопрос длиной до 6 000 символов")
-        if model not in call_analysis.MODELS or effort not in call_analysis.EFFORTS:
-            raise ValueError("Неизвестная модель или уровень усилий")
+        call_analysis.validate_selection(model, effort, Access(self.config, owner).admin)
+        call_analysis.validate_fast(fast, Access(self.config, owner).admin)
         if month and (not isinstance(month,str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])",month)):
             raise ValueError("Укажите месяц ГГГГ-ММ")
         with db_lock():
@@ -250,6 +250,7 @@ class GPTAssistant:
                                       "VALUES (?,'assistant','running','Подготовка контекста…',?,?,?,?)",
                                       (jid, created, model, effort, month or current_month()))
             mid = cursor.lastrowid
+            self.con.execute("UPDATE gpt_messages SET fast=? WHERE id=?", (int(fast), mid))
             self.con.execute("UPDATE gpt_chats SET updated=?,title=CASE WHEN title='Новый чат' THEN ? ELSE title END WHERE id=?", (created, text.strip()[:70], jid))
             self.con.commit()
             event = threading.Event()
@@ -278,6 +279,7 @@ class GPTAssistant:
                 row = dict(self.con.execute("SELECT * FROM gpt_messages WHERE id=?", (mid,)).fetchone())
                 history = [dict(r) for r in self.con.execute("SELECT id,role,content,masked_content,status FROM gpt_messages "
                                                            "WHERE chat_id=? AND id<? ORDER BY id DESC LIMIT 16", (jid, mid))][::-1]
+            call_config = {**self.config, "codex_fast": bool(row["fast"]) and access.admin}
             privacy = PrivacyContext(json.loads(saved[0] or "{}"), documents_only=True)
             data_tools = self.data if access.admin else DataTools(self.con, self.config, self.data.engine.rules, access=access)
             with privacy.document("", force=True):
@@ -299,7 +301,7 @@ class GPTAssistant:
                 with db_lock():
                     self.con.execute("UPDATE gpt_messages SET outbound=?,content=? WHERE id=?", (intent_prompt, "Проверка тематики и доступа…", mid))
                     self.con.commit()
-                intent = call_analysis.run_codex(intent_prompt, self.config, model=row["model"], effort="low", schema=INTENT_SCHEMA)["result"]
+                intent = call_analysis.run_codex(intent_prompt, call_config, model=row["model"], effort="low", schema=INTENT_SCHEMA)["result"]
                 self.check_chat(saved["owner"], jid)
                 if event.is_set():
                     raise ValueError("Ответ остановлен пользователем")
@@ -327,7 +329,7 @@ class GPTAssistant:
                                      (prompt, f"Codex: шаг {step + 1} из 10…", mid))
                     self.con.execute("UPDATE gpt_chats SET privacy=? WHERE id=?", (json.dumps(privacy.dump(), ensure_ascii=False), jid))
                     self.con.commit()
-                result = call_analysis.run_codex(prompt, self.config, model=row["model"], effort=row["effort"], schema=RESPONSE_SCHEMA)["result"]
+                result = call_analysis.run_codex(prompt, call_config, model=row["model"], effort=row["effort"], schema=RESPONSE_SCHEMA)["result"]
                 self.check_chat(saved["owner"], jid)
                 if event.is_set():
                     raise ValueError("Ответ остановлен пользователем")
