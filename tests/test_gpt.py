@@ -90,6 +90,35 @@ class GPTTest(unittest.TestCase):
             self.assertNotIn("Секретный клиент",json.dumps(out,ensure_ascii=False))
         self.assertEqual(p.mask("Секретный клиент"),"Секретный клиент")
 
+    def test_calendar_reads_existing_schedule_without_database_lock(self):
+        import threading
+        from app.common import db_lock
+        self.config["employees"][2]["b24_user_id"]=123
+        checked=[]
+        def schedule(cfg,uid,day):
+            self.assertEqual(uid,123)
+            self.assertEqual(day.isoformat(),"2026-11-06")
+            def probe():
+                acquired=db_lock().acquire(blocking=False)
+                checked.append(acquired)
+                if acquired:db_lock().release()
+            thread=threading.Thread(target=probe);thread.start();thread.join(1)
+            return {"items":[{"kind":"event","title":"Встреча","from":"10:00","to":"11:00","url":"https://crm.example.test/calendar/"}],"calendar_error":None,"tasks_error":None,"activities_error":None}
+        with mock.patch("app.gpt_tools.b24_calendar.day_schedule",side_effect=schedule):
+            out=self.service.tools("calendar",'{"date":"2026-11-06"}',"Анна Мерзлякова","",gpt_privacy.PrivacyContext(documents_only=True))
+        self.assertEqual(checked,[True])
+        self.assertEqual(out["total_items"],1)
+        self.assertEqual(out["items"][0]["from"],"10:00")
+        self.assertTrue(out["items"][0]["source"])
+
+    def test_calendar_supports_live_user_id_and_preserves_partial_errors(self):
+        with mock.patch("app.gpt_tools.b24_calendar.day_schedule",return_value={"items":[],"calendar_error":"scope","tasks_error":None,"activities_error":None}) as fetch:
+            out=self.service.tools("calendar",'{"date":"2026-11-06","user_id":"456"}',"","",gpt_privacy.PrivacyContext(documents_only=True))
+        self.assertEqual(fetch.call_args.args[1],456)
+        self.assertIn("Календарь",out["errors"]["calendar_error"])
+        self.assertEqual(out["total_items"],0)
+        with self.assertRaises(ValueError):self.service.tools("calendar",'{"date":"bad","user_id":"456"}',"","",gpt_privacy.PrivacyContext())
+
     def test_chat_ownership(self):
         chat=self.service.create_chat("boss")
         with self.assertRaises(ValueError):self.service.chat("other",chat["id"])

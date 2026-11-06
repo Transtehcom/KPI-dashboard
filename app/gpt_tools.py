@@ -3,14 +3,14 @@ import datetime as dt
 import json
 import re
 
-from . import call_analysis, money, sync
+from . import b24_calendar, call_analysis, money, sync
 from .common import current_month, db_lock, month_bounds
 from .crm_links import record_url
 from .engine import Engine
 from .anonymize import GENERIC
 from .gpt_live import LiveSources, LIVE_TOOLS
 
-TOOLS = ["employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
+TOOLS = ["calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
 SEARCH = {
     "clients": ("id,name,emp,need,strategy,updated", ["name"], "name"),
     "crm_deals": ("id,entity,title,client,emp,stage,amount,created,stage_since,client_ref", ["title", "client"], "title"),
@@ -58,9 +58,59 @@ class DataTools:
             raise ValueError("Уточните сотрудника через employees: имя не найдено или неоднозначно")
         return matches[0]
 
+    def calendar(self, query, employee, privacy):
+        try:
+            params = json.loads(query) if query.strip().startswith("{") else {"date": query}
+            params = privacy.restore(params)
+            if not isinstance(params, dict):
+                raise ValueError()
+            day = dt.date.fromisoformat(params.get("date") or dt.date.today().isoformat())
+        except (TypeError, ValueError):
+            raise ValueError("Укажите query с date в формате ГГГГ-ММ-ДД и employee либо user_id") from None
+        uid = str(params.get("user_id") or "")
+        name = "Сотрудник Б24"
+        if not uid:
+            value = privacy.restore(employee or "").strip().casefold()
+            people = self.config.get("employees", [])
+            matches = [e for e in people if value in (e["login"].casefold(), e["name"].casefold())]
+            matches = matches or [e for e in people if value and value in e["name"].casefold()]
+            if len(matches) != 1:
+                raise ValueError("Найдите сотрудника через employees или b24_search entity=user и передайте user_id")
+            name = matches[0]["name"]
+            uid = str(matches[0].get("b24_user_id") or "")
+        if not re.fullmatch(r"[1-9]\d{0,19}", uid):
+            raise ValueError("Нужен ID сотрудника Б24 из employees или b24_search entity=user")
+        cfg = self.config.get("bitrix24", {})
+        if not cfg.get("webhook"):
+            raise ValueError("Подключение календаря Б24 не настроено")
+        try:
+            schedule = b24_calendar.day_schedule({**cfg, "request_attempts": 1, "request_timeout_seconds": 25}, int(uid), day)
+        except Exception:
+            raise ValueError("Не удалось загрузить расписание из Б24") from None
+        errors = {}
+        for key in ("calendar_error", "tasks_error", "activities_error"):
+            error = schedule.get(key)
+            if error:
+                errors[key] = "Вебхуку нужно разрешение «Календарь»" if key == "calendar_error" and error == "scope" else "Источник расписания недоступен — проверьте права и соединение Б24"
+        items = []
+        for index, event in enumerate(schedule.get("items", [])[:100]):
+            sid = privacy.source("calendar:" + uid + ":" + day.isoformat() + ":" + str(index), str(event.get("title") or "Расписание"), event.get("url"), "Календарь Б24")
+            items.append({**event, "source": sid})
+        source = privacy.source("calendar:" + uid + ":" + day.isoformat(), name + " — расписание на " + day.isoformat(), None, "Календарь Б24")
+        return self.protect({
+            "employee": name, "user_id": uid, "date": day.isoformat(),
+            "origin": "Расписание Б24 — источник календаря дашборда",
+            "fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "cache_seconds": b24_calendar.CACHE_SECONDS,
+            "items": items, "total_items": len(schedule.get("items", [])),
+            "limit": 100, "errors": errors, "source": source,
+        }, privacy)
+
     def execute(self, tool, query, employee, month, privacy):
         if tool not in TOOLS:
             raise ValueError("Неизвестный инструмент; произвольный SQL и изменение данных недоступны")
+        if tool == "calendar":
+            return self.calendar(query or "", employee, privacy)
         if tool in LIVE_TOOLS:
             return self.live.execute(tool, query, privacy)
         query, employee = privacy.restore(query or ""), privacy.restore(employee or "")
