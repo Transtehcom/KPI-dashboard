@@ -1632,8 +1632,14 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       ${(m.sources || []).length ? `<div class="small gpt-sources">Источники: ${(m.sources || []).map((r) => r.url ? `<a href="${esc(r.url)}" ${r.month ? `data-gpt-month="${esc(r.month)}"` : ""} ${r.url.startsWith("#") ? "" : 'target="_blank" rel="noopener noreferrer"'}>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</a>` : `<span>${esc(r.title)} (${esc(r.system)}${r.fetched_at ? ` · ${esc(dtLabel(r.fetched_at))}` : ""})</span>`).join(" · ")}</div>` : ""}
       ${m.has_preview ? `<details class="more" data-gpt-preview="${m.id}"><summary>Что отправлено в Codex (последний пакет)</summary><pre class="gpt-preview">Загрузка…</pre></details>` : ""}</article>`).join("") : `<div class="empty">Спросите о KPI, клиентах, заказах, звонках или деньгах. Например: «Почему у сотрудника такой KPI за ноябрь?»</div>`;
   }
-  function gptDocumentsHtml(documents, disabled = false) {
-    return documents.length ? `<div class="muted small">Документы чата · оригиналы и версии</div>${documents.map((d) => `<div class="inline-form"><button type="button" class="btn" data-gpt-download="${esc(d.id)}">↓ ${esc(d.name)}</button><span class="muted small">${d.parent_id ? "Исправленная версия · " : ""}${Math.ceil(d.size / 1024)} КБ · ${d.editable ? "чтение и правки" : "только чтение"}</span><button type="button" class="btn" data-gpt-delete="${esc(d.id)}" aria-label="Удалить ${esc(d.name)}" ${disabled ? "disabled" : ""}>Удалить</button></div>`).join("")}` : "";
+  function gptDocumentsHtml(documents, disabled = false, history = []) {
+    const rows = documents.map((d) => `<div class="inline-form"><input type="checkbox" data-gpt-file="${esc(d.id)}" aria-label="Выбрать ${esc(d.name)}" ${disabled ? "disabled" : ""}><button type="button" class="btn" data-gpt-download="${esc(d.id)}">↓ ${esc(d.name)}</button><span class="muted small">${esc(dtLabel(d.created))} · ${d.parent_id ? "Исправленная версия · " : ""}${Math.ceil(d.size / 1024)} КБ · ${d.editable ? "чтение и правки" : "только чтение"}</span><button type="button" class="btn" data-gpt-delete="${esc(d.id)}" aria-label="Удалить ${esc(d.name)}" ${disabled ? "disabled" : ""}>Удалить</button></div>`).join("");
+    const removed = history.map((d) => `<div class="muted small">${esc(d.name)} · загружен ${esc(dtLabel(d.created))} · удалён ${esc(dtLabel(d.deleted))}</div>`).join("");
+    return `<details class="more" open><summary>История вложений · ${documents.length} доступно · ${history.length} удалено</summary>${rows || '<div class="muted small">Доступных вложений нет</div>'}${documents.length ? `<button type="button" class="btn" data-gpt-clear ${disabled ? "disabled" : ""}>Удалить выбранные вложения</button>` : ""}${removed}</details>`;
+  }
+  function gptChatListHtml(chats, selected) {
+    const groups = [...new Set(chats.map((c) => c.group_name || ""))].sort((a,b) => a.localeCompare(b,"ru"));
+    return groups.map((group) => `<details open><summary>${esc(group || "Без группы")}</summary>${chats.filter((c) => (c.group_name || "") === group).map((c) => `<button class="nav-item ${c.id === selected ? "active" : ""}" data-gpt-chat="${esc(c.id)}">${esc(c.title)}</button>`).join("")}</details>`).join("");
   }
   async function loadGPT() {
     clearTimeout(state.gptTimer);
@@ -1646,7 +1652,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       if (!list.chats.some((c) => c.id === state.gptChat)) state.gptChat = list.chats[0].id;
       const chatId = state.gptChat;
       state.gptDrafts ||= {};
-      main.innerHTML = `<div class="head"><div><div class="eyebrow">Помощник по данным компании</div><h1>ttkGPT</h1><div class="sub">${esc(list.access?.description || "Дашборд · Битрикс24 · 1С")} · ${esc(list.access?.label || "")}</div></div></div><div class="gpt-layout"><aside class="panel"><div class="panel-b"><button class="btn" id="gptNew">Новый чат</button></div><div class="gpt-chats">${list.chats.map((c) => `<button class="nav-item ${c.id === chatId ? "active" : ""}" data-gpt-chat="${esc(c.id)}">${esc(c.title)}</button>`).join("")}</div></aside><section class="panel"><div class="panel-b"><p class="muted small">Каждый чат использует отдельную сохранённую сессию Codex. Мастер-инструкция задаётся при её создании. Имена, компании и обычные данные передаются Codex без обезличивания. Данные документов с названиями «договор», «счёт», «КП», «накладная», а также личных документов обезличиваются. Точные суммы и даты сохраняются. Пароли и ключи доступа скрываются всегда. Снимок дашборда обновлён ${esc(list.last_sync?.finished ? dtLabel(list.last_sync.finished) : "данных пока нет")} ${esc(list.last_sync?.status || "")}. Карточки Б24 и 1С читаются напрямую по запросу.</p><div class="inline-form"><label>Месяц<input type="month" id="gptMonth" value="${esc(state.gptMonth || state.month)}"></label><label>Модель<select id="gptModel">${Object.entries(list.models).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptModel || list.default_model) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label><label>Усилие<select id="gptEffort">${Object.entries(list.efforts).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptEffort || list.default_effort) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div>${list.fast_allowed ? `<label class="small"><input type="checkbox" id="gptFast" ${state.gptFast ? "checked" : ""}> Fast</label>` : ""}<div class="muted small">ttkGPT — корпоративный интерфейс на базе моделей OpenAI. Все права на модели и товарные знаки принадлежат их правообладателям. Справочник городов — <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>).</div><div id="gptMessages" class="gpt-messages"><div class="empty">Загрузка чата…</div></div><div id="gptDocuments"></div><form id="gptForm"><label class="small">Прикрепить документы<input type="file" id="gptFiles" multiple accept=".docx,.xlsx,.txt,.md,.csv,.pdf"></label><div class="muted small">До 3 МБ на файл. DOCX, XLSX, TXT/MD/CSV — чтение и правки. PDF — чтение текстового слоя. Напишите ниже, что нужно сделать.</div><div id="gptUploadStatus" class="muted small" aria-live="polite"></div><textarea id="gptText" rows="3" maxlength="6000" placeholder="Ваш вопрос…" required>${esc(state.gptDrafts[chatId] || "")}</textarea><div class="inline-form"><button class="btn primary" id="gptSend">Отправить</button><button class="btn" type="button" id="gptStop" hidden>Остановить</button><span class="muted small">Ctrl+Enter — отправить. Изменения в исходных системах недоступны.</span></div><div class="err" id="gptError"></div></form></div></section></div>`;
+      main.innerHTML = `<div class="head"><div><div class="eyebrow">Помощник по данным компании</div><h1>ttkGPT</h1><div class="sub">${esc(list.access?.description || "Дашборд · Битрикс24 · 1С")} · ${esc(list.access?.label || "")}</div></div></div><div class="gpt-layout"><aside class="panel"><div class="panel-b"><button class="btn" id="gptNew">Новый чат</button></div><div class="gpt-chats">${gptChatListHtml(list.chats, chatId)}</div></aside><section class="panel"><div class="panel-b"><p class="muted small">Каждый чат использует отдельную сохранённую сессию Codex. Мастер-инструкция задаётся при её создании. Имена, компании и обычные данные передаются Codex без обезличивания. Данные документов с названиями «договор», «счёт», «КП», «накладная», а также личных документов обезличиваются. Точные суммы и даты сохраняются. Пароли и ключи доступа скрываются всегда. Снимок дашборда обновлён ${esc(list.last_sync?.finished ? dtLabel(list.last_sync.finished) : "данных пока нет")} ${esc(list.last_sync?.status || "")}. Карточки Б24 и 1С читаются напрямую по запросу.</p><div class="inline-form"><label>Месяц<input type="month" id="gptMonth" value="${esc(state.gptMonth || state.month)}"></label><label>Модель<select id="gptModel">${Object.entries(list.models).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptModel || list.default_model) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label><label>Усилие<select id="gptEffort">${Object.entries(list.efforts).map(([k,v]) => `<option value="${esc(k)}" ${k === (state.gptEffort || list.default_effort) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div>${list.fast_allowed ? `<label class="small"><input type="checkbox" id="gptFast" ${state.gptFast ? "checked" : ""}> Fast</label>` : ""}<div class="muted small">ttkGPT — корпоративный интерфейс на базе моделей OpenAI. Все права на модели и товарные знаки принадлежат их правообладателям. Справочник городов — <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>).</div><div class="inline-form"><button type="button" class="btn" id="gptRename">Переименовать чат</button><button type="button" class="btn" id="gptGroup">Группа</button><button type="button" class="btn" id="gptDeleteChat">Удалить чат</button></div><div id="gptRollback"></div><div id="gptMessages" class="gpt-messages"><div class="empty">Загрузка чата…</div></div><div id="gptDocuments"></div><form id="gptForm"><label class="small">Прикрепить документы<input type="file" id="gptFiles" multiple accept=".docx,.xlsx,.txt,.md,.csv,.pdf"></label><div class="muted small">До 3 МБ на файл. DOCX, XLSX, TXT/MD/CSV — чтение и правки. PDF — чтение текстового слоя. Напишите ниже, что нужно сделать.</div><div id="gptUploadStatus" class="muted small" aria-live="polite"></div><textarea id="gptText" rows="3" maxlength="6000" placeholder="Ваш вопрос…" required>${esc(state.gptDrafts[chatId] || "")}</textarea><div class="inline-form"><button class="btn primary" id="gptSend">Отправить</button><button class="btn" type="button" id="gptStop" hidden>Остановить</button><span class="muted small">Ctrl+Enter — отправить. Изменения в исходных системах недоступны.</span></div><div class="err" id="gptError"></div></form></div></section></div>`;
       const messages = document.getElementById("gptMessages"), text = document.getElementById("gptText");
       document.getElementById("gptFast")?.addEventListener("change", (event) => { state.gptFast = event.target.checked; });
       const modelSelect = document.getElementById("gptModel"), effortSelect = document.getElementById("gptEffort");
@@ -1664,7 +1670,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         lastDocuments = "";
         document.getElementById("gptSend").disabled = true;
         document.getElementById("gptFiles").disabled = true;
-        document.querySelectorAll("[data-gpt-delete]").forEach((button) => { button.disabled = true; });
+        document.querySelectorAll("[data-gpt-delete], [data-gpt-clear], [data-gpt-file], #gptRollbackButton, #gptRename, #gptGroup, #gptDeleteChat").forEach((button) => { button.disabled = true; });
       };
       const poll = async () => {
         clearTimeout(state.gptTimer);
@@ -1676,10 +1682,16 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           const markup = gptMessagesHtml(chat.messages), nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
           if (markup !== lastMarkup) { messages.innerHTML = markup; lastMarkup = markup; if (nearBottom || state.gptJustSent) messages.scrollTop = messages.scrollHeight; state.gptJustSent = false; }
           const busy = chat.messages.some((m) => m.status === "running" || m.status === "cancelling");
-          const documentsMarkup = gptDocumentsHtml(chat.documents || [], busy || filesBusy);
+          const documentsMarkup = gptDocumentsHtml(chat.documents || [], busy || filesBusy, chat.document_history || []);
           if (documentsMarkup !== lastDocuments) { document.getElementById("gptDocuments").innerHTML = documentsMarkup; lastDocuments = documentsMarkup; }
           document.getElementById("gptSend").disabled = busy || filesBusy;
           document.getElementById("gptFiles").disabled = busy || filesBusy;
+          const requests = chat.messages.filter((m) => m.role === "user");
+          const rollback = document.getElementById("gptRollback");
+          const selected = rollback.querySelector("select")?.value;
+          rollback.innerHTML = requests.length ? `<details class="more"><summary>Откат запросов</summary><p class="muted small">Выберите начало диапазона. Выбранный запрос и все последующие ответы, запросы и новые вложения будут удалены. Продолжение начнётся в новой сессии с оставшейся перепиской.</p><select id="gptRollbackFrom" ${busy || filesBusy ? "disabled" : ""}>${requests.map((m,i) => `<option value="${m.id}">${i+1}. ${esc(dtLabel(m.created))} · ${esc((m.content || "").slice(0,90))}</option>`).join("")}</select><button type="button" class="btn" id="gptRollbackButton" ${busy || filesBusy ? "disabled" : ""}>Откатить до выбранного запроса</button></details>` : "";
+          if (selected && requests.some((m) => String(m.id) === selected)) rollback.querySelector("select").value = selected;
+          for (const id of ["gptRename", "gptGroup", "gptDeleteChat"]) document.getElementById(id).disabled = busy || filesBusy;
           document.getElementById("gptStop").hidden = !busy;
           if (busy) state.gptTimer = setTimeout(poll, 2000);
         } catch (e) { if (current() && e.message !== "auth") { document.getElementById("gptError").textContent = e.message; state.gptTimer = setTimeout(poll, 5000); } }
@@ -1706,6 +1718,46 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           filesBusy = false;
           if (current()) { event.target.value = ""; event.target.disabled = false; await poll(); state.gptTimer = setTimeout(poll, 300); }
         }
+      });
+      const manage = async (action, value, reload = false) => {
+        if (filesBusy) return;
+        filesBusy = true;
+        lockFiles();
+        document.getElementById("gptError").textContent = "";
+        try {
+          await api("/api/gpt-manage", {id:chatId, action, value});
+          if (!current()) return;
+          if (action === "delete") { delete state.gptDrafts[chatId]; state.gptChat = null; }
+          if (reload) { await loadGPT(); return; }
+        } catch (e) { if (current() && e.message !== "auth") document.getElementById("gptError").textContent = e.message; }
+        finally {
+          filesBusy = false;
+          if (current()) { lastDocuments = ""; await poll(); state.gptTimer = setTimeout(poll, 300); }
+        }
+      };
+      document.getElementById("gptRename").addEventListener("click", () => {
+        const title = prompt("Название чата", list.chats.find((c) => c.id === chatId).title);
+        if (title !== null) manage("rename", title, true);
+      });
+      document.getElementById("gptGroup").addEventListener("click", () => {
+        const group = prompt("Название группы. Пустое значение — без группы.\nГруппы чатов: " + [...new Set(list.chats.map((c) => c.group_name).filter(Boolean))].join(", "), list.chats.find((c) => c.id === chatId).group_name || "");
+        if (group !== null) manage("group", group, true);
+      });
+      document.getElementById("gptDeleteChat").addEventListener("click", () => {
+        if (confirm("Удалить этот чат, всю переписку и вложения без возможности восстановления?")) manage("delete", null, true);
+      });
+      document.getElementById("gptRollback").addEventListener("click", (event) => {
+        const button = event.target.closest("#gptRollbackButton");
+        if (!button || button.disabled) return;
+        const select = document.getElementById("gptRollbackFrom");
+        if (confirm("Удалить выбранный запрос и всё после него, включая новые вложения?\n" + select.selectedOptions[0].textContent)) manage("rollback", Number(select.value));
+      });
+      document.getElementById("gptDocuments").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-gpt-clear]");
+        if (!button || button.disabled) return;
+        const selected = [...document.querySelectorAll("[data-gpt-file]:checked")].map((input) => input.dataset.gptFile);
+        if (!selected.length) { document.getElementById("gptError").textContent = "Выберите вложения галочками"; return; }
+        if (confirm(`Удалить выбранные вложения (${selected.length})?`)) manage("clear_documents", selected);
       });
       document.getElementById("gptDocuments").addEventListener("click", async (event) => {
         const button = event.target.closest("[data-gpt-delete]");

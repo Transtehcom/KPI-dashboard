@@ -595,6 +595,8 @@ class Handler(BaseHTTPRequestHandler):
                             return JsonResponse(service.preview(me["login"],q.get("id") or "",int(q.get("message") or 0)))
                         if path == "/api/gpt-new" and method == "POST":
                             return JsonResponse(service.create_chat(me["login"]))
+                        if path == "/api/gpt-manage" and method == "POST":
+                            return JsonResponse(service.manage_chat(me["login"], str(b.get("id") or ""), b.get("action"), b.get("value")))
                         if path == "/api/gpt-send" and method == "POST":
                             return JsonResponse(service.submit(me["login"],str(b.get("id") or ""),b.get("text"),
                                 b.get("model") or "gpt-6-luna",b.get("effort") or "medium",b.get("month"),fast=b.get("fast",False)))

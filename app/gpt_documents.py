@@ -258,6 +258,14 @@ class Documents:
             rows = self.con.execute("SELECT id,name,created,parent_id,unit_count,length(content) AS size FROM gpt_documents WHERE chat_id=? ORDER BY created,rowid", (chat,)).fetchall()
         return [{**dict(r), "editable": extension(r["name"]) != ".pdf"} for r in rows]
 
+    def history(self, chat):
+        with db_lock():
+            return [dict(r) for r in self.con.execute("SELECT id,name,created,parent_id,size,deleted FROM gpt_document_deletions WHERE chat_id=? ORDER BY deleted DESC", (chat,))]
+
+    def archive_deleted(self, chat, identities):
+        marks = ",".join("?" for _ in identities)
+        self.con.execute(f"INSERT OR REPLACE INTO gpt_document_deletions SELECT id,chat_id,name,created,parent_id,length(content),? FROM gpt_documents WHERE chat_id=? AND id IN ({marks})", (dt.datetime.now().isoformat(timespec="microseconds"), chat, *identities))
+
     def get(self, chat, identity):
         with db_lock():
             row = self.con.execute("SELECT * FROM gpt_documents WHERE chat_id=? AND id=?", (chat, identity)).fetchone()
@@ -271,6 +279,8 @@ class Documents:
         _obj, units = load(name, raw)
         identity, created = uuid.uuid4().hex, dt.datetime.now().isoformat(timespec="microseconds")
         with db_lock():
+            if not self.con.execute("SELECT 1 FROM gpt_chats WHERE id=?", (chat,)).fetchone():
+                raise ValueError("Чат не найден")
             count, size = self.con.execute("SELECT count(*),coalesce(sum(length(content)),0) FROM gpt_documents WHERE chat_id=?", (chat,)).fetchone()
             if count >= 30 or size + len(raw) > 30 * 1024 * 1024:
                 raise ValueError("В чате достигнут лимит 30 документов/версий или 30 МБ. Создайте новый чат")
@@ -294,6 +304,7 @@ class Documents:
 
     def delete(self, chat, identity):
         with db_lock():
+            self.archive_deleted(chat, [identity])
             result = self.con.execute("DELETE FROM gpt_documents WHERE chat_id=? AND id=?", (chat, identity))
             if not result.rowcount:
                 raise ValueError("Документ не найден")

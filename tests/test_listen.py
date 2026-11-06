@@ -206,6 +206,23 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(delete("boss"),200)
         self.assertEqual(self.get("boss",path)[0],400)
 
+    def test_gpt_management_own_chat_and_foreign_access(self):
+        service = self.app.gpt_service()
+        chat = service.create_chat("pm")["id"]
+        def manage(login, action, value=None):
+            req = urllib.request.Request(self.base+"/api/gpt-manage", data=json.dumps({"id":chat,"action":action,"value":value}).encode(), headers={"Cookie":self.tokens[login],"Content-Type":"application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req) as response:return response.status
+            except urllib.error.HTTPError as error:
+                with error:return error.code
+        self.assertEqual(manage("boss", "delete"), 400)
+        self.assertEqual(manage("pm", "rename", "Работа"), 200)
+        self.assertEqual(manage("pm", "group", "Моя группа"), 200)
+        self.assertEqual(service.chat("pm", chat)["title"], "Работа")
+        self.assertEqual(manage("pm", "rollback", 999999), 400)
+        self.assertEqual(manage("pm", "delete"), 200)
+        self.assertEqual(self.get("pm", "/api/gpt-chat?id="+chat)[0], 400)
+
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
         self.app.config['employees'].append(employee)

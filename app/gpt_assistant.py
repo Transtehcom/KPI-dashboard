@@ -148,7 +148,7 @@ onec_card: {"entity":"метка типа","id":"метка id","fields":["ме�
 
 
 def now():
-    return dt.datetime.now().isoformat(timespec="seconds")
+    return dt.datetime.now().isoformat(timespec="microseconds")
 
 
 def homework_request(text):
@@ -195,7 +195,7 @@ class GPTAssistant:
     def chats(self, owner):
         access = Access(self.config, owner)
         with db_lock():
-            rows = [dict(r) for r in self.con.execute("SELECT id,title,updated FROM gpt_chats WHERE owner=? ORDER BY updated DESC,rowid DESC LIMIT 100", (owner,))]
+            rows = [dict(r) for r in self.con.execute("SELECT c.id,c.title,c.updated,coalesce(g.name,'') AS group_name FROM gpt_chats c LEFT JOIN gpt_chat_groups g ON g.chat_id=c.id WHERE c.owner=? ORDER BY c.updated DESC,c.rowid DESC", (owner,))]
             visible = []
             for row in rows:
                 try:
@@ -220,7 +220,56 @@ class GPTAssistant:
                 item = dict(row)
                 item["sources"] = json.loads(item["sources"] or "[]")
                 messages.append(item)
-            return {**dict(chat), "messages": messages, "documents": self.documents.listing(jid)}
+            return {**dict(chat), "messages": messages, "documents": self.documents.listing(jid), "document_history": self.documents.history(jid)}
+
+    def manage_chat(self, owner, jid, action, value=None):
+        with db_lock():
+            self.check_chat(owner, jid)
+            if jid in self.active or self.con.execute("SELECT 1 FROM gpt_messages WHERE chat_id=? AND status IN ('running','cancelling')", (jid,)).fetchone():
+                raise ValueError("Дождитесь завершения ответа перед изменением чата")
+            if action in ("rename", "group"):
+                limit = 120 if action == "rename" else 80
+                if not isinstance(value, str) or len(value.strip()) > limit or (action == "rename" and not value.strip()):
+                    raise ValueError(f"Введите название длиной до {limit} символов")
+                if action == "rename":
+                    self.con.execute("UPDATE gpt_chats SET title=? WHERE id=?", (value.strip(), jid))
+                else:
+                    self.con.execute("INSERT OR REPLACE INTO gpt_chat_groups VALUES (?,?)", (jid, value.strip()))
+            elif action == "delete":
+                for table in ("gpt_documents", "gpt_document_deletions", "gpt_messages", "gpt_codex_sessions", "gpt_chat_scopes", "gpt_chat_groups"):
+                    self.con.execute(f"DELETE FROM {table} WHERE chat_id=?", (jid,))
+                self.con.execute("DELETE FROM gpt_chats WHERE id=?", (jid,))
+            elif action == "clear_documents":
+                if not isinstance(value, list) or not value or len(value) > 30 or any(not isinstance(i, str) for i in value):
+                    raise ValueError("Выберите от 1 до 30 вложений")
+                marks = ",".join("?" for _ in value)
+                identities = list(set(value))
+                count = self.con.execute(f"SELECT count(*) FROM gpt_documents WHERE chat_id=? AND id IN ({marks})", (jid, *value)).fetchone()[0]
+                if count != len(identities):
+                    raise ValueError("Документ не найден в этом чате")
+                self.documents.archive_deleted(jid, identities)
+                self.con.execute(f"DELETE FROM gpt_documents WHERE chat_id=? AND id IN ({marks})", (jid, *value))
+            elif action == "rollback":
+                if type(value) is not int:
+                    raise ValueError("Выберите запрос для отката")
+                message = self.con.execute("SELECT created FROM gpt_messages WHERE chat_id=? AND id=? AND role='user'", (jid, value)).fetchone()
+                if message is None:
+                    raise ValueError("Запрос не найден в этом чате")
+                cutoff = message["created"]
+                # Legacy requests have no fractional seconds. Keep ambiguous same-second uploads.
+                if "." not in cutoff:
+                    cutoff = (dt.datetime.fromisoformat(cutoff) + dt.timedelta(seconds=1)).isoformat()
+                documents = [r[0] for r in self.con.execute("SELECT id FROM gpt_documents WHERE chat_id=? AND created>=?", (jid, cutoff))]
+                if documents:
+                    self.documents.archive_deleted(jid, documents)
+                self.con.execute("DELETE FROM gpt_messages WHERE chat_id=? AND id>=?", (jid, value))
+                self.con.execute("DELETE FROM gpt_documents WHERE chat_id=? AND created>=?", (jid, cutoff))
+                self.con.execute("DELETE FROM gpt_codex_sessions WHERE chat_id=?", (jid,))
+                self.con.execute("UPDATE gpt_chats SET updated=? WHERE id=?", (now(), jid))
+            else:
+                raise ValueError("Неизвестное действие")
+            self.con.commit()
+        return {"ok": True}
 
     def document_upload(self, owner, jid, name, encoded):
         self.check_chat(owner, jid)
@@ -303,7 +352,7 @@ class GPTAssistant:
                 access = self.check_chat(saved["owner"], jid)
                 row = dict(self.con.execute("SELECT * FROM gpt_messages WHERE id=?", (mid,)).fetchone())
                 history = [dict(r) for r in self.con.execute("SELECT id,role,content,masked_content,status FROM gpt_messages "
-                                                           "WHERE chat_id=? AND id<? ORDER BY id DESC LIMIT 16", (jid, mid))][::-1]
+                                                           "WHERE chat_id=? AND id<? ORDER BY id DESC LIMIT 80", (jid, mid))][::-1]
             if event.is_set():
                 raise ValueError("Ответ остановлен пользователем")
             question = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
