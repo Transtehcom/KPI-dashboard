@@ -268,6 +268,12 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None, session=N
                "--output-schema", schema_path, "--output-last-message", answer_path,
                "-c", f"model_reasoning_effort={effort}", "-"]
         fast = config.get("codex_fast") is True
+        web = config.get("codex_web_search") is True
+        cmd[-1:-1] = ["-c", 'web_search="live"' if web else 'web_search="disabled"']
+        if web:
+            cmd.insert(2, "--json")
+            cmd[-1:-1] = ["-c", "project_doc_max_bytes=0"]
+            config["codex_web_used"] = False
         cmd[-1:-1] = ["-c", 'service_tier="fast"' if fast else 'service_tier="default"', "-c", "features.fast_mode=" + ("true" if fast else "false")]
         if session is not None:
             cmd.remove("--ephemeral")
@@ -289,6 +295,15 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None, session=N
         if p.returncode:
             detail = (p.stderr or p.stdout or "").strip()
             raise RuntimeError(f"Codex CLI: код {p.returncode}, {detail[:1000]}")
+        if web:
+            for line in p.stdout.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                item = event.get("item") or {}
+                if event.get("type") == "item.completed" and item.get("type") in ("web_search", "web_search_call") and item.get("status", "completed") in ("completed", "success", "succeeded"):
+                    config["codex_web_used"] = True
         if session is not None:
             started = []
             for line in p.stdout.splitlines():

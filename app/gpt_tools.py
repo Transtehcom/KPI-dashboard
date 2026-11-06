@@ -3,14 +3,14 @@ import datetime as dt
 import json
 import re
 
-from . import b24_calendar, call_analysis, call_records, money, sync
+from . import b24_calendar, call_analysis, call_records, gpt_weather, money, sync
 from .common import current_month, db_lock, month_bounds
 from .crm_links import record_url
 from .engine import Engine
 from .anonymize import GENERIC
 from .gpt_live import LiveSources, LIVE_TOOLS
 
-TOOLS = ["calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
+TOOLS = ["weather", "calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", *LIVE_TOOLS]
 SEARCH = {
     "clients": ("id,name,emp,need,strategy,updated", ["name"], "name"),
     "crm_deals": ("id,entity,title,client,emp,stage,amount,created,stage_since,client_ref", ["title", "client"], "title"),
@@ -127,6 +127,8 @@ class DataTools:
     def execute(self, tool, query, employee, month, privacy):
         if tool not in TOOLS:
             raise ValueError("Неизвестный инструмент; произвольный SQL и изменение данных недоступны")
+        if tool == "weather":
+            return gpt_weather.lookup(query or "{}", self.config, privacy)
         if self.access:
             self.access.check_tool(tool)
             self.access.check_employee(privacy.restore(employee or ""))
