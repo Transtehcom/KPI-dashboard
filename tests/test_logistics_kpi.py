@@ -26,16 +26,17 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.config["employees"].append({"login": "logist", "name": "Логист", "position": "logistics", "visible": True})
         return Engine(self.con, self.rules, self.config)
 
-    def test_source_six_items_keep_85_percent_and_pending_compensation(self):
+    def test_source_six_items_keep_85_percent_and_approved_compensation(self):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
         self.assertTrue(p["draft"])
-        self.assertIsNone(p["salary"])
-        self.assertIsNone(p["kpi_bonus"])
+        self.assertEqual(p["salary"], 70000)
+        self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .10, .15, .10, .10])
         self.assertEqual([i["n"] for i in p["items"]], list(range(1, 7)))
         self.assertEqual(len({i["code"] for i in p["items"]}), 6)
         self.assertIn("85%", " ".join(p["setup_issues"]))
+        self.assertFalse(any("Оклад и размер премии" in issue for issue in p["setup_issues"]))
         self.assertIn("X", p["items"][4]["description"])
         self.assertIn("стоимость повреждений", p["items"][3]["description"].lower())
         self.assertIn("15 минут", p["items"][5]["description"])
@@ -61,6 +62,9 @@ class LogisticsKPIDraftTest(unittest.TestCase):
             with self.subTest(month=month):
                 r = engine.compute("logist", month)
                 self.assertTrue(r["draft"])
+                self.assertEqual(r["salary"], 70000)
+                self.assertEqual(r["kpi_bonus"], 10000)
+                self.assertEqual([item["amount"] for item in r["items"]], [2000, 2000, 1000, 1500, 1000, 1000])
                 self.assertEqual(r["payout"], 0)
                 self.assertEqual(r["met_count"], 0)
                 self.assertEqual(len(r["items"]), 6)
@@ -87,8 +91,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertTrue(p["draft"])
         self.assertEqual(p["setup_issues"], profile["setup_issues"])
         self.assertEqual(len(p["items"]), 6)
-        self.assertIsNone(p["salary"])
-        self.assertIsNone(p["kpi_bonus"])
+        self.assertEqual(p["salary"], 70000)
+        self.assertEqual(p["kpi_bonus"], 10000)
 
 
 if __name__ == "__main__":
