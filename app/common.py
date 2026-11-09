@@ -394,6 +394,8 @@ def connect(path=None):
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     migrate(con)
+    from .operations import ensure_schema
+    ensure_schema(con)
     return con
 
 
