@@ -48,6 +48,64 @@ class AgentTest(unittest.TestCase):
         self.assertIsNone(self.service.sessions.state(chat)["active_message"])
         self.assertIn('"tool": "employees"', self.service.preview("boss", chat, reply["id"])["outbound"])
 
+    def test_work_master_excludes_internal_classification_instructions(self):
+        def behavior(args, payload):
+            self.assertNotIn("Верни только классификацию", args["master"])
+            return {"kind":"answer","answer":"Для поиска писем подключите почту","sources":[]}
+        _chat, reply = self.request("boss", "Найди письма от GitHub в моей почте", behavior)
+        self.assertEqual(reply["status"], "completed")
+
+    def test_nested_classification_is_repaired_before_user_sees_it(self):
+        replies = iter([
+            {"kind":"answer","answer":'{"domains":["general"],"other_people":false}',"sources":[]},
+            {"kind":"answer","answer":"Для поиска писем нужно подключить почту","sources":[]},
+        ])
+        _chat, reply = self.request("boss", "Найди письма от GitHub в моей почте", lambda args,payload:next(replies))
+        self.assertEqual(reply["status"], "completed")
+        self.assertIn("подключить почту", reply["content"])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_classification_and_work_use_separate_thread_contexts(self):
+        def behavior(args, payload):
+            if payload["mode"] == "access_check":
+                self.assertTrue(args["ephemeral"])
+                self.assertEqual(args["tools"], [])
+                self.assertIn("Верни только классификацию", args["master"])
+                return {"domains":["self"],"other_people":False}
+            self.assertIsNone(args["thread_id"])
+            self.assertNotIn("Верни только классификацию", args["master"])
+            return {"kind":"answer","answer":"Ваши данные","sources":[]}
+        _chat, reply = self.request("pm", "Покажи мои показатели", behavior)
+        self.assertEqual(reply["status"], "completed")
+        self.assertEqual(len(self.calls), 2)
+
+    def test_format_repair_cannot_repeat_tool_actions(self):
+        def behavior(args, payload):
+            if len(self.calls) == 1:
+                return {"kind":"answer","answer":'{"domains":["general"],"other_people":false}',"sources":[]}
+            with self.assertRaises(ValueError):
+                args["tool_handler"]("ttk_document_edit", {"query":"{}"})
+            return {"kind":"answer","answer":"Нужно подключить почту","sources":[]}
+        _chat, reply = self.request("boss", "Найди письма", behavior)
+        self.assertEqual(reply["status"], "completed")
+
+    def test_repeated_classification_output_never_becomes_completed_answer(self):
+        result = {"kind":"answer","answer":'{"domains":["general"],"other_people":false}',"sources":[]}
+        _chat, reply = self.request("boss", "Найди письма от GitHub", lambda args,payload:result)
+        self.assertEqual(reply["status"], "error")
+        self.assertNotIn('"domains"', reply["content"])
+
+    def test_old_classification_artifacts_do_not_prime_new_work_turn(self):
+        chat = self.service.create_chat("boss")["id"]
+        self.con.execute("INSERT INTO gpt_messages(chat_id,role,status,content) VALUES (?,'user','completed','Проверь мою почту')", (chat,))
+        self.con.execute("INSERT INTO gpt_messages(chat_id,role,status,content) VALUES (?,'assistant','completed',?)", (chat,'{"domains":["general"],"other_people":false}'))
+        self.con.commit()
+        def behavior(args, payload):
+            self.assertFalse(any('"domains"' in item["content"] for item in payload["history"]))
+            return {"kind":"answer","answer":"Подключите почту для поиска писем","sources":[]}
+        _chat, reply = self.request("boss", "Найди письма GitHub", behavior, chat)
+        self.assertEqual(reply["status"], "completed")
+
     def test_staff_preflight_denies_other_direction_before_source_reads(self):
         def behavior(args, payload):
             self.assertEqual(payload["mode"], "access_check")

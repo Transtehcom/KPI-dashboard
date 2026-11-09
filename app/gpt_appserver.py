@@ -367,7 +367,7 @@ class AppServer:
         return len(json.dumps(content, ensure_ascii=False).encode("utf-8")) <= MAX_TOOL_BYTES
 
     def run(self, thread_id, master, input, model, effort, fast, output_schema, tools,
-            tool_handler, cancel_event, on_progress, on_thread):
+            tool_handler, cancel_event, on_progress, on_thread, ephemeral=False):
         if self.process is None:
             raise RuntimeError("Соединение с Codex не открыто")
         self._deadline = time.monotonic() + TURN_TIMEOUT
@@ -385,6 +385,7 @@ class AppServer:
                     params.update(threadId=thread_id, excludeTurns=True)
                     response = self._rpc("thread/resume", params)
                 else:
+                    params["ephemeral"] = ephemeral
                     params.update(dynamicTools=tools, environments=[], selectedCapabilityRoots=[],
                                   allowProviderModelFallback=False, baseInstructions=master, developerInstructions="")
                     response = self._rpc("thread/start", params)
