@@ -10,7 +10,7 @@ from .engine import Engine
 from .anonymize import GENERIC
 from .gpt_live import LiveSources, LIVE_TOOLS
 
-TOOLS = ["weather", "calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", "python_calculate", *LIVE_TOOLS]
+TOOLS = ["weather", "calendar", "employees", "kpi", "search", "calls", "call_detail", "money", "sync_status", "operations_report", "python_calculate", *LIVE_TOOLS]
 SEARCH = {
     "clients": ("id,name,emp,need,strategy,updated", ["name"], "name"),
     "crm_deals": ("id,entity,title,client,emp,stage,amount,created,stage_since,client_ref", ["title", "client"], "title"),
@@ -137,6 +137,37 @@ class DataTools:
         if tool == "python_calculate":
             from .gpt_calculate import calculate
             return calculate(query)
+        if tool == 'operations_report':
+            from . import operations_views
+            if self.access:
+                raise ValueError('Панели отделов доступны только руководителю')
+            try:
+                parameters=privacy.restore(json.loads(query or '{}'))
+                if not isinstance(parameters,dict):
+                    raise ValueError()
+                kind=parameters.get('kind','sales')
+                if kind not in ('sales','supply'):
+                    raise ValueError()
+                today=dt.date.today().isoformat()
+                first=dt.date.fromisoformat(parameters.get('date_from') or parameters.get('date') or today).isoformat()
+                last=dt.date.fromisoformat(parameters.get('date_to') or parameters.get('date') or today).isoformat()
+                if first>last:
+                    raise ValueError()
+            except (TypeError,ValueError):
+                raise ValueError('Укажите kind sales/supply и даты date_from/date_to в формате ГГГГ-ММ-ДД') from None
+            who=self.employee(employee)['login'] if employee else 'Все'
+            with db_lock():
+                report=operations_views.build(self.con,self.config,kind,first,last,who)
+                rows=[]
+                for row in report['records'][:40]:
+                    source=privacy.source('operations:'+row['id'],row.get('title') or row['id'],
+                                          row.get('url') or '#metrics-'+kind,'1С / Битрикс24')
+                    rows.append({key:row.get(key) for key in ('id','title','client','owner','owner_name','status','due','closed_at','late_seconds','timeliness','item_count','filled_count','required_count','completeness')} | {'source':source})
+                result={key:report[key] for key in ('kind','date_from','date_to','cutoff','history_start','coverage','tiles','results','warnings')}
+                result.update(records=rows,total_records=len(report['records']),limit=40,
+                              events=report['events'][:60],total_events=len(report['events']),
+                              source=privacy.source('operations:'+kind+':'+first+':'+last,'Панель '+('продаж' if kind=='sales' else 'снабжения')+' '+first+' — '+last,'#metrics-'+kind,'Дашборд'))
+            return self.protect(result,privacy)
         if tool == "calendar":
             return self.calendar(query or "", employee, privacy)
         if tool in LIVE_TOOLS:

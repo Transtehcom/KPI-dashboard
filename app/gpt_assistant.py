@@ -123,6 +123,7 @@ Google Calendar здесь не используется. Не объявляй 
 search — поиск по query: компания, номер заказа/лида/сделки; calls — звонки employee за month (query — компания);
 call_detail — подробности и расшифровка звонка по query=id из calls;
 money — платёжные показатели за month; sync_status — дата и статус синхронизации.
+operations_report — рассчитанный отчёт руководителя по продажам или снабжению. query содержит kind sales/supply и date_from/date_to. Используй готовые числа, явно указывай время среза, границу истории и предупреждения о недостающих данных.
 Для нужного сотрудника сначала используй employees. Можно использовать метку сотрудника из вопроса, employee или aliases из ответа.
 Прямые инструменты получают параметры в query как JSON-строку. Сохраняй метки из данных.
 b24_search: {"entity":"company|contact|lead|deal|activity|task|user|requisite","text":"...","offset":0};

@@ -18,7 +18,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from .crm_links import employee_url, portal_origin
-from . import call_feedback, call_recheck
+from . import call_feedback, call_recheck, operations, operations_views
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -204,6 +204,7 @@ class App:
             "criteria_titles": CRITERIA_TITLES,
             "last_sync": last,
             "sync_running": sync.is_running(),
+            "operations_enabled": bool(self.config.get('operations',{}).get('enabled')),
         }
 
     def calendar(self, me, is_mgr, q):
@@ -527,6 +528,78 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         self.api("POST", u.path, {})
 
+    def operations_response(self, method, path, query, body, me):
+        if me.get('role') != 'manager':
+            return JsonResponse({'error':'Доступно только руководителю'},403)
+        app = self.app
+        today = dt.date.today()
+        first = self.date_param(query.get('date_from')) or today.isoformat()
+        last = self.date_param(query.get('date_to')) or today.isoformat()
+        if first > last:
+            raise BadRequest('Начало периода позже его конца')
+        cutoff = min(dt.datetime.combine(dt.date.fromisoformat(last),dt.time.max),dt.datetime.now())
+        with app.lock:
+            if path == '/api/operations' and method == 'GET':
+                kind = query.get('kind') or 'sales'
+                if kind not in ('sales','supply'):
+                    raise BadRequest('Неизвестная панель')
+                employee = query.get('emp') or 'Все'
+                valid_employees = {e['login'] for e in app.config.get('employees',[])}
+                if employee != 'Все' and employee not in valid_employees:
+                    raise BadRequest('Сотрудник не найден')
+                channel = query.get('channel') or 'Все'
+                if channel not in ('Все','Тендеры','Прямые'):
+                    raise BadRequest('Неизвестный канал')
+                revision = tuple(app.con.execute('SELECT COALESCE(MAX(id),0) FROM '+table).fetchone()[0] for table in
+                                 ('operations_snapshots','operations_source_history','operations_item_scope','operations_price_approval','operations_deadline_approval'))
+                key = (kind,first,last,employee,channel,revision,cutoff.strftime('%Y-%m-%dT%H:%M'))
+                cache = getattr(app,'_operations_cache',{})
+                if key not in cache:
+                    cache = {key:operations_views.build(app.con,app.config,kind,first,last,employee,channel)}
+                    app._operations_cache = cache
+                return JsonResponse(cache[key])
+            identity = str(body.get('request_id') or query.get('request_id') or query.get('id') or '')
+            entity = operations.get_entity(app.con,'onec',identity,cutoff) or operations.get_entity(app.con,'bitrix',identity,cutoff)
+            if entity is None:
+                return JsonResponse({'error':'Документ не найден в выбранном срезе'},404)
+            if path == '/api/operations/document' and method == 'GET':
+                document = operations_views.document_detail(app.con,app.config,identity,cutoff)
+                versions = [row for row in operations.versions(app.con,entity.get('_source') or 'onec',cutoff) if row['id']==identity]
+                history = [{'observed_at':row['_observed_at'],'status':row.get('status'),'due':row.get('due'),'owner':row.get('owner')} for row in versions]
+                events = [event for event in operations.events(app.con,entity.get('_source') or 'onec',cutoff) if event.get('entity_id')==identity]
+                return JsonResponse({'document':document,'history':history,'events':events})
+            if path == '/api/operations/deadline-approval' and method == 'POST':
+                try:
+                    operations_views.approve_deadline(app.con,identity,body.get('due'),body.get('reason'),me['login'])
+                except ValueError as exc:
+                    raise BadRequest(str(exc)) from None
+                app.con.commit()
+                return JsonResponse({'ok':True})
+            item_id = str(body.get('item_id') or query.get('item_id') or '')
+            item = next((row for row in entity.get('items') or [] if row.get('id')==item_id),None)
+            if item is None:
+                return JsonResponse({'error':'Позиция документа не найдена'},404)
+            if path == '/api/operations/prices' and method == 'GET':
+                history = operations_views.price_history(app.con,{**item,'request_id':identity},cutoff)
+                return JsonResponse({'history':history})
+            try:
+                if path == '/api/operations/item-scope' and method == 'POST':
+                    operations_views.set_item_scope(app.con,identity,item_id,body.get('included'),body.get('reason'),me['login'])
+                elif path == '/api/operations/price-approval' and method == 'POST':
+                    supplier = str(body.get('supplier_id') or '')
+                    if not any(str(offer.get('supplier_id'))==supplier for offer in item.get('offers') or []):
+                        # A prior supplier offer may be approved for a new request.
+                        candidates = operations_views.price_history(app.con,{**item,'request_id':identity},cutoff).get('offers',[])
+                        if not any(str(offer.get('supplier_id'))==supplier for offer in candidates):
+                            return JsonResponse({'error':'Предложение поставщика не найдено'},404)
+                    operations_views.approve_price(app.con,identity,item_id,supplier,me['login'])
+                else:
+                    return JsonResponse({'error':'Маршрут не найден'},404)
+            except ValueError as exc:
+                raise BadRequest(str(exc)) from None
+            app.con.commit()
+            return JsonResponse({'ok':True})
+
     def api(self, method, path, q):
         response = self.api_response(method, path, q)
         if response is not None:
@@ -564,6 +637,9 @@ class Handler(BaseHTTPRequestHandler):
                 return JsonResponse({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
             month = self.month_param(q["month"]) if q.get("month") else current_month()
+
+            if path == '/api/operations' or path.startswith('/api/operations/'):
+                return self.operations_response(method,path,q,b,me)
 
             if path == "/api/calendar":  # расписание из Битрикс24 на день — запрос в Б24 без общей блокировки базы
                 return JsonResponse(app.calendar(me, is_mgr, q))

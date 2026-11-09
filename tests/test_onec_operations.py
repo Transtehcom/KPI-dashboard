@@ -29,6 +29,17 @@ class Source:
 
 
 class OperationsSourceTests(unittest.TestCase):
+    def test_supply_best_price_total_uses_published_line_amounts(self):
+        source=Source({'Document_ТТК_ЗаявкаВОтделСнабжения':[{'Ref_Key':guid(1),'ТаблицаТовары':[
+            {'LineNumber':'1','Количество':10,'ЛучшаяЦена':139344.26,'ЛучшаяСумма':1393442.6,'СуммаТекущегоПоставщика':1393442.6,'Примечание':'Confirmed'},
+            {'LineNumber':'2','ЛучшаяСумма':37030739.01}]}]})
+        result=fetch(source,{})
+        row=result['entities'][0]
+        self.assertEqual(row['best_price_total'],38424181.61)
+        self.assertIsNone(row['vat_included'])
+        self.assertEqual(row['items'][0]['best_price'],139344.26)
+        self.assertEqual(row['items'][0]['note'],'Confirmed')
+
     def test_identity_includes_base_kind_and_normalized_guid(self):
         source = Source()
         key = identity(source, "kp", guid(1).upper())

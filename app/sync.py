@@ -7,7 +7,7 @@ from . import call_records, demo, employees, manual, workload, task_efficiency, 
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, merge_rows, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
-from . import b24_sales_register, onec_money, onec_sales_register
+from . import b24_sales_register, onec_money, onec_sales_register, operations, onec_operations
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC, supplier_date_from
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -64,6 +64,9 @@ def run(con, config, force_demo=False):
             register = None
             money_data, money_err = None, None
             b24 = None
+            operations_enabled = bool(config.get('operations',{}).get('enabled'))
+            operations_data, operations_error, operations_bitrix = None, None, None
+            operations_bitrix_error = None
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
                 b24 = Bitrix24(config["bitrix24"], log=log.append)
@@ -174,7 +177,32 @@ def run(con, config, force_demo=False):
             else:
                 log.append("1С не настроена (onec.base_url)")
 
-            if writes:
+            if operations_enabled and config.get('onec',{}).get('base_url') and 'СЕРВЕР-1С' not in config['onec']['base_url']:
+                try:
+                    log.append('1С → история панелей продаж и снабжения')
+                    operations_data = onec_operations.fetch(OneC(config['onec'],log=log.append),config)
+                    if operations_data.get('errors'):
+                        operations_error = 'Не загружены источники панели: '+', '.join(operations_data['errors'])
+                except Exception as exc:
+                    operations_error = 'Ошибка загрузки панели 1С: '+type(exc).__name__
+
+            if operations_enabled and b24:
+                required = {'crm_deals','call_records','task_ledger'}
+                completed = {table for source,table,_,_ in writes if source=='Б24'}
+                if required <= completed:
+                    try:
+                        if operations_data and not operations_error:
+                            current_entities = operations_data.get('entities',[])
+                        else:
+                            with db_lock():
+                                current_entities = operations.snapshot(con,'onec')
+                        operations_bitrix = operations.fetch_bitrix(b24,config,current_entities)
+                    except Exception as exc:
+                        operations_bitrix_error = 'Ошибка загрузки связей панели Б24: '+type(exc).__name__
+                else:
+                    operations_bitrix_error = 'Не завершена загрузка источников Б24 для панели'
+
+            if writes or operations_data is not None or operations_error or operations_bitrix is not None or operations_bitrix_error:
                 with db_lock():
                     try:
                         for src, table, rows, date_field in writes:
@@ -223,6 +251,23 @@ def run(con, config, force_demo=False):
                             log.append(f"Б24 → реестр продаж: новых {new}, обновлено {upd}")
                         if any(table == "clients" for _, table, _, _ in writes):
                             snapshot_clients(con, current_month())
+                        if operations_enabled:
+                            if operations_data is not None and not operations_error:
+                                entities = list(operations_data['entities'])
+                                entities.append(operations.source_metadata(operations_data))
+                                operations.capture(con,'onec',entities,operations_data.get('events',[]))
+                                log.append(f'1С → история панели: документов {len(entities)-1}')
+                            elif operations_error:
+                                operations.mark_failure(con,'onec',operations_error)
+                                status='error'
+                                log.append(operations_error)
+                            if operations_bitrix is not None:
+                                operations.capture_bitrix(con,config,source_data=operations_bitrix)
+                                log.append('Б24 → история панели обновлена')
+                            elif operations_bitrix_error:
+                                operations.mark_failure(con,'bitrix',operations_bitrix_error)
+                                status='error'
+                                log.append(operations_bitrix_error)
                         con.commit()
                     except Exception as e:  # noqa
                         con.rollback()

@@ -150,6 +150,9 @@ def _linked(onec, row):
 
 
 def _amount(kind, row):
+    if kind == 'supply':
+        amounts=[_number(line.get('ЛучшаяСумма')) for line in row.get('ТаблицаТовары') or []]
+        return (round(sum(amounts),2),None,'ТаблицаТовары.ЛучшаяСумма') if amounts and None not in amounts else (None,None,None)
     if kind in ("kp", "order"):
         return _number(row.get("СуммаДокумента")), True, "СуммаДокумента"
     if kind != "tender":
@@ -197,6 +200,9 @@ def _items(entity, row, names, units, suppliers):
                 "base_row_number": line.get("НомерСтрокиДокументаОснования"),
                 "selected_supplier_id": supplier, "selected_supplier_name": suppliers.get(supplier),
                 "selected_price": _number(line.get("ЦенаТекущегоПоставщика")),
+                "selected_amount": _number(line.get("СуммаТекущегоПоставщика")),
+                "best_price": _number(line.get("ЛучшаяЦена")), "best_amount": _number(line.get("ЛучшаяСумма")),
+                "note": line.get("Примечание") or None,
                 "selected_delivery_days": _number(line.get("СрокТекущегоПоставщика")),
                 "source_date_raw": line.get("ДатаОбновленияЦен") or None, "offers": []}
         if entity["kind"] == "supply":
@@ -324,6 +330,8 @@ def fetch(onec, config, since=None):
                       "delivery": row.get("ПунктДоставки") or row.get("АдресДоставки") or row.get("УсловияДоставкиТекст") or None,
                       "posted": row.get("Posted"), "events": [], "items": []}
             entity["items"] = _items(entity, row, names, units, partners)
+            if kind == 'supply':
+                entity['best_price_total']=amount
             if kind == "transport":
                 entity["delivery_options"] = [{"id": str(line.get("LineNumber") or index),
                     "selected": bool(line.get("Флаг")), "carrier": line.get("ТранспортнаяКомпания") or None,

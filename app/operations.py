@@ -105,6 +105,13 @@ def report_summary(entity):
     return summary
 
 
+def source_metadata(payload):
+    warnings=payload.get('warnings',[])
+    submission_history=not any(str(warning).startswith(('Журнал состояний','Журнал ТТКСостояния')) for warning in warnings)
+    return {'id':'operations:source:onec','kind':'source_meta','warnings':warnings,
+            'capabilities':{'submission_history':submission_history}}
+
+
 def _quote_signature(offer):
     return _digest({k:v for k,v in offer.items() if k not in ('first_seen_at', 'is_initial', 'last_seen_at')})
 
@@ -191,7 +198,7 @@ def versions(con, source, cutoff=None, lean=False):
     if cutoff:
         where += ' AND observed_at<=?'
         args.append(_stamp(cutoff))
-    payload="json_remove(COALESCE(summary,payload),'$.items')" if lean else 'payload'
+    payload="json_object('id',json_extract(COALESCE(summary,payload),'$.id'),'due',json_extract(COALESCE(summary,payload),'$.due'))" if lean else 'payload'
     return [{**json.loads(row['payload']), '_observed_at':row['observed_at'], '_source':source} for row in con.execute(
         'SELECT '+payload+' AS payload,observed_at FROM operations_snapshots WHERE '+where+' ORDER BY observed_at,id', args)]
 

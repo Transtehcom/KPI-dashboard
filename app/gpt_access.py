@@ -79,6 +79,8 @@ class Access:
     def check_tool(self, tool):
         if self.admin:
             return
+        if tool == 'operations_report':
+            raise ValueError('Панели отделов доступны только руководителю')
         if tool == "money" or tool == "kpi" and self.position not in PROFILES:
             raise ValueError("Этот источник недоступен для вашей должности")
 
