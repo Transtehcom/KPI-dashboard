@@ -45,29 +45,29 @@ app/operations_views.py exports build(con, config, kind, date_from, date_to, emp
 
 ## Task 1 — history and source capture
 
-- [ ] Add focused failing tests for midnight deadlines, versioned snapshots, source failure and idempotence.
-- [ ] Implement app/operations.py and app/onec_operations.py with read-only source mapping tested against available OData metadata.
-- [ ] Capture document references, source event authors, full timestamps, supplier item offers and separate transport deadlines.
-- [ ] Run source/history tests and commit.
+- [x] Add focused failing tests for midnight deadlines, versioned snapshots, source failure and idempotence.
+- [x] Implement app/operations.py and app/onec_operations.py with read-only source mapping tested against available OData metadata.
+- [x] Capture document references, source event authors, full timestamps, supplier item offers and separate transport deadlines.
+- [x] Run source/history tests and commit.
 
 ## Task 2 — computed reports and price guidance
 
-- [ ] Add failing tests for explicit connected documents, historical cutoff, closing/reopening, known-denominator rates and supplier median.
-- [ ] Implement app/operations_views.py, audit scope exclusions and quantity comparability approvals.
-- [ ] Verify sales event attribution, request-only supply counts and sample date arithmetic.
-- [ ] Run report tests and commit.
+- [x] Add failing tests for explicit connected documents, historical cutoff, closing/reopening, known-denominator rates and supplier median.
+- [x] Implement app/operations_views.py, audit scope exclusions and quantity comparability approvals.
+- [x] Verify sales event attribution, request-only supply counts and sample date arithmetic.
+- [x] Run report tests and commit.
 
 ## Task 3 — API, UI and ttkGPT
 
-- [ ] Add manager-authorized operations GET and admin-only audited POST endpoints with date and identity validation.
-- [ ] Add feature-gated sales day and supply views, preserving existing registry editors and navigation.
-- [ ] Render filters, source freshness, linked drilldowns, request items, price history, scope editing and daily event feeds.
-- [ ] Expose computed reports to ttkGPT through existing scoped data tools, using access checks before retrieval.
-- [ ] Run server, UI and access tests and commit.
+- [x] Add manager-authorized operations GET and admin-only audited POST endpoints with date and identity validation.
+- [x] Add feature-gated sales day and supply views, preserving existing registry editors and navigation.
+- [x] Render filters, source freshness, linked drilldowns, request items, price history, scope editing and daily event feeds.
+- [x] Expose computed reports to ttkGPT through existing scoped data tools, using access checks before retrieval.
+- [x] Run server, UI and access tests and commit.
 
 ## Task 4 — integration and production deployment
 
-- [ ] Integrate independent source loading and capture into hourly sync, preserving atomic snapshot writes and existing KPI data.
-- [ ] Run the full existing suite and new regression tests, independent code review and UI syntax checks.
-- [ ] Back up live SQLite, seed source snapshots, verify source totals and control examples, then restart only the verified supervised dashboard.
-- [ ] Verify HTTP readiness, live API behavior and history boundary. Commit fixes and offer GitHub upload.
+- [x] Integrate independent source loading and capture into hourly sync, preserving atomic snapshot writes and existing KPI data.
+- [x] Run the full existing suite and new regression tests, independent code review and UI syntax checks.
+- [x] Back up live SQLite, seed source snapshots, verify source totals and control examples, then restart only the verified supervised dashboard.
+- [x] Verify HTTP readiness, live API behavior and history boundary. Commit fixes and offer GitHub upload.
