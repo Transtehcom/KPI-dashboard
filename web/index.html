@@ -522,6 +522,16 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 @media (max-width: 900px) { .sp-two { grid-template-columns: minmax(0, 1fr); } }
 .sp-tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; background: var(--surface-2); color: var(--fg-2); }
 .sp-tag.bad { background: var(--bad-soft); color: var(--bad); }
+.op-record { border-bottom: 1px solid var(--line); padding: 12px 0; }
+.op-record > summary { cursor: pointer; line-height: 1.7; }
+.op-record .op-record { margin-left: 16px; }
+.op-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 8px 0; }
+.op-items { margin: 12px 0; padding: 12px; background: var(--surface-2); border-radius: 6px; }
+.op-amber { border-left: 4px solid #c58b18; padding-left: 10px; background: #c58b1812; }
+.op-stat { cursor: pointer; text-align: left; color: inherit; font: inherit; }
+.op-stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.op-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.op-scope input[type=text] { min-width: 180px; flex: 1; }
 .sp-grp { cursor: pointer; }
 .sp-grp.on th, .sp-grp.on td { background: var(--accent-soft); }
 .sp-drill { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); overflow: auto; }
@@ -2376,6 +2386,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     if (!METRICS[state.view]) return;
     const { main, current } = viewRequest(), m = METRICS[state.view];
     try {
+      if (state.boot.operations_enabled && (m.kind === "sales" || m.kind === "supply")) {
+        if (m.kind === "sales") state.sp = state.sp || { tab: "day", channel: "Все", emp: "Все", drill: null };
+        if (m.kind === "supply" || state.sp.tab === "day") { await loadOperations(m.kind, current); return; }
+      }
       if (m.kind === "sales") { await loadSales(current); return; }
       if (m.kind === "logistics") {
         if (!state.lPer) state.lPer = { mode: "month", month: state.boot.current_month };
@@ -2391,6 +2405,321 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   const ruMoment = (v) => (v ? ruDay(v.slice(0, 10)) + (v.length > 10 ? " " + v.slice(11, 16) : "") : "—");
+  // ---------- operational panels
+  function operationsState(kind) {
+    state.ops = state.ops || {};
+    const panel = state.ops[kind] = state.ops[kind] || { per: { mode: "day", day: isoDay(new Date()) }, emp: "Все", channel: "Все", drill: null };
+    panel.pages = panel.pages || { queue: {}, records: {}, events: {}, drill: {} };
+    return panel;
+  }
+  async function loadOperations(kind, current) {
+    const s = operationsState(kind), [a, b] = periodRange(s.per);
+    const params = new URLSearchParams({ kind, date_from: a || "2000-01-01", date_to: b || isoDay(new Date()), emp: s.emp, channel: s.channel });
+    const data = await api("/api/operations?" + params);
+    if (current()) renderOperations(data, current);
+  }
+  function operationsLink(label, url) {
+    const text = esc(label || "—"), value = String(url || "");
+    if (/[\u0000-\u0020\u007f]/.test(value)) return text;
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        const parsed = new URL(value);
+        if (parsed.username || parsed.password) return text;
+        return `<a href="${esc(value)}" target="_blank" rel="noopener noreferrer">${text} ↗</a>`;
+      } catch (_) { return text; }
+    }
+    if (/^e1cib(?:\/|:\/\/)[a-z0-9?=&%._/-]+$/i.test(value)) return `<span>${text} <button class="link-btn" type="button" data-op-copy-source="${esc(value)}">Скопировать ссылку 1С</button></span>`;
+    if (/^#[a-z][a-z0-9?=&%._/-]*$/i.test(value)) return `<a href="${esc(value)}">${text} ↗</a>`;
+    return text;
+  }
+  function operationsMoment(value) {
+    if (!value) return "—";
+    const text = String(value);
+    return esc(ruMoment(text) + (text.length >= 19 ? text.slice(16, 19) : ""));
+  }
+  function operationsDelay(value) {
+    if (value == null) return "срок не установлен";
+    const seconds = Math.max(0, Math.round(Number(value)));
+    if (!seconds) return "без опоздания";
+    return `${Math.floor(seconds / 86400)} д ${Math.floor(seconds % 86400 / 3600)} ч ${Math.floor(seconds % 3600 / 60)} мин ${seconds % 60} с`;
+  }
+  function operationsMoney(value, currency, decimals = 0) {
+    return value == null ? "—" : esc(nf(value, decimals)) + (currency ? " " + esc(currency) : "");
+  }
+  function operationsSourceDetails(entity) {
+    const currency = entity.currency || "валюта не указана";
+    const values = [["best_price_total", "Сумма лучших цен из 1С"], ["best_price", "Лучшая цена из 1С"], ["best_amount", "Сумма по лучшей цене из 1С"], ["selected_amount", "Сумма выбранного поставщика из 1С"]]
+      .filter(([key]) => entity[key] != null).map(([key, title]) => `<span>${title} <b>${operationsMoney(entity[key], currency, 2)}</b> · база НДС не подтверждена</span>`).join("");
+    const options = entity.delivery_options || [];
+    const cost = (option) => operationsMoney(option.amount, option.currency || "валюта не указана", 2) + " · " + (option.vat_included === true ? "с НДС" : option.vat_included === false ? "без НДС" : "база НДС не подтверждена");
+    return `${values ? `<div class="op-meta small">${values}</div>` : ""}${entity.note ? `<p class="small">Примечание из 1С — ${esc(entity.note)}</p>` : ""}
+      ${options.filter((option) => option.selected).map((option) => `<p class="small"><b>Стоимость выбранной доставки ${cost(option)}</b> · ${esc(option.carrier || "перевозчик не указан")} · ${esc(option.from || "пункт отправления не указан")} → ${esc(option.to || "пункт назначения не указан")}</p>`).join("")}
+      ${options.length ? `<details><summary>Варианты доставки из 1С · ${esc(nf(options.length))}</summary><div class="scroll"><table class="mt"><thead><tr><th>Выбор</th><th>Перевозчик</th><th>Откуда</th><th>Куда</th><th>Стоимость</th></tr></thead><tbody>${options.map((option) => `<tr><td>${option.selected ? "Выбрана" : "—"}</td><td>${esc(option.carrier || "не указан")}</td><td>${esc(option.from || "не указан")}</td><td>${esc(option.to || "не указан")}</td><td>${cost(option)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}`;
+  }
+  function operationsTileValue(tile) {
+    if (tile.value == null) return "—";
+    return esc(nf(tile.key === "on_time_rate" ? tile.value * 100 : tile.value)) + (tile.key === "on_time_rate" ? "%" : "");
+  }
+  function operationsOffer(offer, record, item, approval = false) {
+    const canEdit = state.boot.me.role === "manager";
+    const reasons = { supplier_unknown: "поставщик не установлен", nonpositive_price: "цена не положительная", price_date_unknown: "дата цены не подтверждена", future_price: "цена после среза", older_than_30_days: "старше 30 дней", expired: "срок действия истёк", not_observed: "предложение после среза", unit_unknown: "единица не указана", unit_mismatch: "другая единица", currency_unknown: "валюта не указана", currency_mismatch: "другая валюта", vat_included_unknown: "НДС не указан", vat_included_mismatch: "другая база НДС", delivery_unknown: "доставка не указана", delivery_mismatch: "другие условия доставки", quantity_mismatch: "количество не сопоставимо", own_quote: "само сравниваемое предложение" };
+    const excluded = (offer.exclusion_reasons || []).map((reason) => reasons[reason] || reason);
+    const priceDate = offer.offered_at || offer.quote_date || offer.date || offer.price_date;
+    return `<tr><td>${operationsLink(offer.supplier_name || offer.supplier || offer.supplier_id, offer.url)}</td>
+      <td class="n">${operationsMoney(offer.price, offer.currency)}</td><td>${esc(offer.quantity ?? "—")} ${esc(offer.unit || "")}${offer.quantity_min != null || offer.quantity_max != null ? `<div class="small muted">партия ${esc(offer.quantity_min ?? "—")} – ${esc(offer.quantity_max ?? "—")}</div>` : ""}</td>
+      <td>${offer.vat_included === true ? "с НДС" : offer.vat_included === false ? "без НДС" : "НДС не указан"}<div class="small muted">${esc(offer.delivery || offer.delivery_terms || "доставка не указана")}</div></td>
+      <td>${priceDate ? operationsMoment(priceDate) + (offer.date_verified === false ? " · по дате наблюдения" : "") : "дата предложения не подтверждена"}<div class="small muted">Зафиксировано ${operationsMoment(offer.first_seen_at || offer.first_seen || offer.observed_at)}</div>${offer.valid_until ? `<div class="small">Действует до ${operationsMoment(offer.valid_until)}</div>` : ""}</td>
+      <td>${offer.eligible === true ? "Сопоставимо" : excluded.length ? esc(excluded.join(", ")) : "Исходное предложение"}${offer.quantity_approved || offer.approved ? '<div class="small">Количество подтверждено руководителем</div>' : ""}
+      ${offer.approval ? `<div class="small muted">${esc(offer.approval.author || "—")} · ${operationsMoment(offer.approval.created_at)}</div>` : ""}
+      ${approval && canEdit && offer.supplier_id && !offer.quantity_approved && !offer.approved ? `<button class="btn" type="button" data-op-approve data-request="${esc(record.id)}" data-item="${esc(item.id)}" data-supplier="${esc(offer.supplier_id)}">Подтвердить количество ${esc(item.quantity ?? "—")} ${esc(item.unit || "")}</button>` : ""}</td></tr>`;
+  }
+  function operationsOffers(offers, record, item, approval = false) {
+    return offers.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Поставщик</th><th class="n">Цена</th><th>Количество</th><th>НДС и доставка</th><th>Дата предложения</th><th>Сопоставимость</th></tr></thead><tbody>${offers.map((offer) => operationsOffer(offer, record, item, approval)).join("")}</tbody></table></div>` : '<div class="muted small">Предложений нет</div>';
+  }
+  function operationsPriceHistory(history, record, item, pager = {}) {
+    const count = history.supplier_count ?? history.suppliers ?? 0;
+    return `<div class="op-meta"><span>Медиана <b>${operationsMoney(history.median, item.currency)}</b></span><span>Минимум ${operationsMoney(history.min, item.currency)}</span><span>Максимум ${operationsMoney(history.max, item.currency)}</span><span>Поставщиков ${esc(nf(count))}</span></div>
+      <div class="muted small">Предварительный ориентир. Срок актуальности — 30 календарных дней и собственный срок действия. В расчёт входят сопоставимые количество, единица, валюта, НДС и доставка. Даты и причины исключения показаны по каждому предложению.</div>
+      <div data-op-history-offers>${operationsPage(history.offers || history.history || [], pager, (page) => operationsOffers(page, record, item, true), "предложений")}</div>`;
+  }
+  function operationsItems(record) {
+    const canEdit = state.boot.me.role === "manager";
+    return (record.items || []).map((item) => {
+      const history = item.history || item.benchmark || {}, scope = item.scope || {}, selected = item.selected_offer;
+      return `<details class="op-items${history.amber ? " op-amber" : ""}"><summary><b>${esc(item.name || item.title || item.id)}</b> · ${esc(item.quantity ?? "—")} ${esc(item.unit || "")} · ${item.included === false ? "исключена" : item.filled ? "заполнена" : "нет положительного предложения"}${history.amber ? ' · цена выше максимума двух и более поставщиков' : ""}</summary>
+        <div class="muted small">${esc([item.characteristic, item.lot && "Лот " + item.lot].filter(Boolean).join(" · "))}</div>
+        ${operationsSourceDetails(item)}
+        ${canEdit ? `<form class="op-scope" data-op-scope data-request="${esc(record.id)}" data-item="${esc(item.id)}"><label><input type="checkbox" name="included" ${item.included !== false ? "checked" : ""}>Обязательная позиция</label><input type="text" name="reason" value="${esc(scope.reason || item.scope_reason || "")}" maxlength="1000" aria-label="Причина исключения" placeholder="Причина исключения обязательна"><button class="btn" type="submit">Сохранить</button></form>` : ""}
+        ${item.included === false ? `<p class="small">Причина исключения — ${esc(scope.reason || item.scope_reason || "—")} · ${esc(scope.author || "—")} · ${operationsMoment(scope.created_at || scope.at)}</p>` : ""}
+        <p class="small">Выбранный поставщик — ${selected ? esc(selected.supplier_name || selected.supplier || selected.supplier_id || "—") + " · " + operationsMoney(selected.price, selected.currency) : esc(item.selected_supplier || "не выбран")} · Историческая оценка строки ${operationsMoney(item.historical_estimate ?? history.estimate, item.currency)}</p>
+        ${operationsOffers(item.offers || [], record, item, true)}
+        <details data-op-history data-request="${esc(record.id)}" data-item="${esc(item.id)}"><summary>История цен и предварительный ориентир</summary><div data-op-history-body class="small muted">Предложения загружаются при раскрытии позиции</div></details>
+      </details>`;
+    }).join("");
+  }
+  function operationsDocument(doc) {
+    return `<details class="op-record"><summary>${operationsLink(doc.title || doc.number || doc.id, doc.url)} <span class="muted small">${esc(doc.status || "")}</span></summary>
+      <div class="op-meta"><span>ID ${esc(doc.id)}</span><span>Дата ${operationsMoment(doc.date)}</span><span>Ответственный ${esc(doc.owner_name || doc.owner || "не назначен")}</span><span>Срок ${doc.due ? operationsMoment(doc.due) : "не установлен"}</span><span>Закрытие ${operationsMoment(doc.closed_at)}</span></div>
+      ${doc.amount != null ? `<div>Сумма источника ${operationsMoney(doc.amount, doc.currency)} · ${doc.vat_included === true ? "с НДС" : doc.vat_included === false ? "без НДС" : "база НДС не подтверждена"}</div>` : ""}
+      ${operationsSourceDetails(doc)}
+      ${doc.id ? `<p><a href="#operations-document=${esc(encodeURIComponent(doc.id))}">Открыть карточку и историю документа</a></p>` : ""}
+      ${(doc.warnings || []).map((warning) => `<p class="late small">${esc(typeof warning === "string" ? warning : warning.message || warning.title || "")}</p>`).join("")}
+      ${(doc.links || []).length ? `<div class="small muted">Связанные ID — ${esc(doc.links.map((link) => typeof link === "string" ? link : link.id || link.entity_id || "").join(", "))}</div>` : ""}
+      ${(doc.items || []).length || doc.item_count ? `<div class="small muted">Позиций в документе ${esc(nf(doc.item_count ?? doc.items.length))}</div>` : ""}</details>`;
+  }
+  function operationsRecord(record, items = true) {
+    const statuses = { on_time: "В срок", late: "Закрыта с опозданием", open: "В работе", overdue: "Открытая просрочка", unknown: "Срок не установлен", review: "Требует сверки" };
+    return `<details class="op-record"><summary><b>${operationsLink(record.title || record.id, record.url)}</b> · ${esc(record.client || "—")} · ${esc(record.owner_name || record.owner || "Не назначен")} <span class="sp-tag${record.late_seconds > 0 ? " bad" : ""}">${esc(statuses[record.timeliness] || record.status || "—")}</span></summary>
+      <div class="op-meta"><span>Статус ${esc(record.status || "—")}</span><span>Срок ${record.due ? operationsMoment(record.due) : "не установлен"}</span><span>Закрытие ${operationsMoment(record.closed_at)}</span><span>Опоздание ${esc(operationsDelay(record.late_seconds))}</span>${record.asof ? `<span>Состояние и просрочка на ${operationsMoment(record.asof)}</span>` : ""}</div>
+      ${record.due_change_pending ? `<div class="op-amber"><p>Перенос срока требует согласования. Действующий срок ${operationsMoment(record.due)} · Новый срок в источнике ${operationsMoment(record.due_raw || record.current_due)}</p>${items && state.boot.me.role === "manager" ? `<form class="op-scope" data-op-deadline data-request="${esc(record.active_obligation_id || record.id)}" data-due="${esc(record.due_raw || record.current_due || "")}"><input type="text" name="reason" required maxlength="1000" aria-label="Причина согласования переноса" placeholder="Причина согласования переноса"><button class="btn" type="submit">Согласовать новый срок</button></form>` : ""}</div>` : ""}
+      ${record.deadline_approval ? `<p class="small muted">Срок согласовал ${esc(record.deadline_approval.author || "—")} · ${operationsMoment(record.deadline_approval.created_at)} · ${esc(record.deadline_approval.reason || "—")}</p>` : ""}
+      ${(record.warnings || []).map((warning) => `<p class="late small">${esc(typeof warning === "string" ? warning : warning.message || warning.title || "")}</p>`).join("")}
+      ${record.amount != null ? `<p class="small">Сумма источника ${operationsMoney(record.amount, record.currency)} · ${record.vat_included === true ? "с НДС" : record.vat_included === false ? "без НДС" : "база НДС не подтверждена"}</p>` : ""}
+      ${operationsSourceDetails(record)}
+      ${record.id && !record._detail_loaded ? `<p><a href="#operations-document=${esc(encodeURIComponent(record.id))}">Позиции и история документа</a></p>` : ""}
+      ${((record.items || []).length || record.item_count || record.required_count != null) && items ? `<div class="op-meta"><span>Обязательных строк ${esc(nf(record.required_count ?? (record.items || []).filter((item) => item.included !== false).length))}</span><span>Заполнено ${esc(nf(record.filled_count ?? record.price_filled ?? (record.items || []).filter((item) => item.included !== false && item.filled).length))}</span><span>Выбранные предложения ${operationsMoney(record.selected_total, record.currency)}</span><span>Предварительная оценка недостающих строк ${operationsMoney(record.estimate_total, record.currency)}</span><span>Без оценки ${record.unestimated_count == null ? "—" : esc(nf(record.unestimated_count))}</span></div>${operationsItems(record)}` : ""}
+      <details><summary>Документы источников · ${esc(nf((record.documents || []).length))}</summary>${(record.documents || []).map(operationsDocument).join("") || '<div class="muted small">Связанные документы не установлены</div>'}</details></details>`;
+  }
+  function operationsEvents(events) {
+    return events.length ? `<div class="scroll"><table class="mt"><thead><tr><th>Когда</th><th>Автор действия</th><th>Событие</th><th>Документ / источник</th></tr></thead><tbody>${events.map((event) => `<tr><td class="nw">${operationsMoment(event.at)}</td><td>${esc(event.author_name || event.author || "Не установлен")}<div class="small muted">${esc(event.department || "")}</div></td><td>${esc(event.description || event.kind || "—")} ${esc(event.status || "")}</td><td>${operationsLink(event.entity_title || event.title || event.entity_id || event.id, event.url)}<div class="small muted">ID события ${esc(event.id)}</div></td></tr>`).join("")}</tbody></table></div>` : '<div class="muted">Событий за период нет</div>';
+  }
+  function operationsPage(rows, pager, renderRows, noun) {
+    const page = pgInfo(pager, rows.length);
+    return pgHtml(pager, rows.length, noun) + renderRows(rows.slice(page.from, page.to));
+  }
+  function operationsRecordList(records) {
+    return records.map((record) => operationsRecord(record)).join("") || '<div class="muted">Документов нет</div>';
+  }
+  function bindOperationsPage(container, rows, pager, renderRows, noun, report, current) {
+    if (!container) return;
+    pgBind(container, pager, () => {
+      container.innerHTML = operationsPage(rows, pager, renderRows, noun);
+      bindOperationsContent(container, report, current);
+      bindOperationsPage(container, rows, pager, renderRows, noun, report, current);
+    });
+  }
+  function operationsDrill(report, tile) {
+    if (!tile) return "";
+    const records = new Set(tile.record_ids || []), events = new Set(tile.event_ids || []);
+    const rows = [...(report.records || []).filter((record) => records.has(record.id)).map((record) => ({ record })), ...(report.events || []).filter((event) => events.has(event.id)).map((event) => ({ event }))];
+    const renderRows = (page) => {
+      const documents = page.filter((row) => row.record).map((row) => operationsRecord(row.record, false)).join("");
+      const activity = page.filter((row) => row.event).map((row) => row.event);
+      return documents + (activity.length ? operationsEvents(activity) : "") || '<div class="muted">Исходных записей нет</div>';
+    };
+    return `<section class="panel"><div class="panel-h"><h2>${esc(tile.title)} · ${operationsTileValue(tile)}</h2></div><div class="panel-b">${operationsPage(rows, operationsState(report.kind).pages.drill, renderRows, "записей")}</div></section>`;
+  }
+  function operationsShowDrill(report, tile, current) {
+    const container = document.getElementById("opDrill"), pager = operationsState(report.kind).pages.drill;
+    container.innerHTML = operationsDrill(report, tile);
+    bindOperationsSources(container, report, current);
+    pgBind(container, pager, () => operationsShowDrill(report, tile, current));
+  }
+  function renderOperations(d, current) {
+    const main = document.getElementById("main"), s = operationsState(d.kind), sources = d.coverage?.sources || d.coverage || {};
+    const employees = Array.isArray(d.employees) ? d.employees : Object.entries(d.employees || {}).map(([login, name]) => ({ login, name }));
+    const results = d.results || {}, tiles = d.tiles || [];
+    const peopleFields = [["open", "В работе"], ...(d.kind === "supply" ? [["due_today", "Срок сегодня"]] : []), ["created", "Созданы"], ["closed", "Закрыты"], ...(d.kind === "supply" ? [["closed_late", "Из закрытых позже срока"]] : []), ["events", "Действия"], ["overdue", "Просрочены"]];
+    const reviewResults = [["closed_without_plan", "Закрыты без планового срока"], ["closed_without_fact", "Закрыты без фактической даты"]]
+      .filter(([key]) => results[key] != null).map(([key, title]) => tiles.some((tile) => tile.key === key)
+        ? `<button type="button" class="link-btn" data-op-tile="${key}">${title} · ${esc(nf(results[key]))}</button>`
+        : `<span>${title} · ${esc(nf(results[key]))}</span>`).join("");
+    main.innerHTML = `<div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>${d.kind === "sales" ? "День менеджера" : "Снабжение"}</h1><div class="sub">${esc(periodLabel(d.date_from, d.date_to))} · Очередь на ${operationsMoment(d.cutoff)} · Екатеринбург, UTC+5</div></div></div>
+      ${d.kind === "sales" ? `<div class="sp-seg" role="tablist">${[["day", "День менеджера"], ["reg", "Реестр"], ["act", "Действия"], ["panel", "Панель реестра"]].map(([key, title]) => `<button class="btn${key === "day" ? " primary" : ""}" type="button" data-op-tab="${key}" role="tab" aria-selected="${key === "day"}">${title}</button>`).join("")}</div>` : ""}
+      <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(s.per, "op", false)}<label>Сотрудник<select id="opEmp"><option value="Все">Все</option>${employees.map((employee) => `<option value="${esc(employee.login || employee.id)}" ${s.emp === (employee.login || employee.id) ? "selected" : ""}>${esc(employee.name || employee.title || employee.login)}</option>`).join("")}</select></label><label>Канал<select id="opChannel">${[["Все", "Все"], ["Тендеры", "Тендеры"], ["Прямые", "Прямые продажи"]].map(([key, title]) => `<option value="${key}" ${s.channel === key ? "selected" : ""}>${title}</option>`).join("")}</select></label></div><button class="btn" type="button" id="opRefresh">Обновить отчёт</button></div><div class="panel-b small"><div class="op-meta">${[["onec", "1С"], ["bitrix", "Б24"]].map(([key, title]) => { const source = sources[key] || {}; return `<span class="${source.stale || !source.updated_at ? "late" : ""}"><b>${title}</b> ${operationsMoment(source.updated_at)} · ${!source.updated_at ? "загрузка отсутствует" : source.stale ? "данные устарели · более 90 минут" : "актуальные данные"}${source.age_minutes != null ? " · " + esc(nf(source.age_minutes)) + " мин" : ""}${source.error ? " · " + esc(source.error) : ""}</span>`; }).join("")}</div><div>История с ${operationsMoment(d.history_start)}. Данные устаревают через 90 минут после успешной загрузки каждого источника.</div>${(d.warnings || []).map((warning) => `<p class="late">${esc(typeof warning === "string" ? warning : warning.message || warning.title || "")}</p>`).join("")}</div></section>
+      <section class="stats">${tiles.map((tile) => `<button class="panel stat op-stat" type="button" data-op-tile="${esc(tile.key)}" aria-expanded="${s.drill === tile.key}"><span class="eyebrow">${esc(tile.title)}</span><div class="v">${operationsTileValue(tile)}</div><span class="h">Документы и события ↗</span></button>`).join("")}</section>
+      <div id="opDrill">${operationsDrill(d, tiles.find((tile) => tile.key === s.drill))}</div>
+      <section class="panel"><div class="panel-h"><h2>Очередь на дату среза</h2></div><div class="panel-b" id="opQueue">${operationsPage(d.queue || [], s.pages.queue, operationsRecordList, "документов")}</div></section>
+      <section class="panel"><div class="panel-h"><h2>Результаты отдела за период</h2></div><div class="panel-b">${results.on_time_rate != null ? `<p><button type="button" class="link-btn" data-op-tile="on_time_rate">В срок ${esc(nf(results.on_time_rate * 100))}% · ${esc(nf(results.on_time ?? 0))} из ${esc(nf(results.known_timeliness ?? 0))} закрытых заявок с известными сроком и фактом</button></p>` : '<p class="muted">Доля своевременных — нет закрытых заявок с известными сроком и фактом</p>'}${reviewResults ? `<div class="op-meta small">${reviewResults}</div>` : ""}<details><summary>Все документы выбранного периода · ${esc(nf((d.records || []).length))}</summary><div id="opRecords">${operationsPage(d.records || [], s.pages.records, operationsRecordList, "документов")}</div></details></div></section>
+      <section class="panel"><div class="panel-h"><h2>По сотрудникам и отделам</h2></div><div class="panel-b">${(d.people || []).length ? `<div class="scroll"><table class="mt"><thead><tr><th>Сотрудник / группа</th>${peopleFields.map(([, title]) => `<th class="n">${title}</th>`).join("")}</tr></thead><tbody>${d.people.map((person, index) => `<tr><th>${esc(person.name || person.login || "Не назначен")}<div class="small muted">${esc([person.department, person.group].filter(Boolean).join(" · "))}</div></th>${peopleFields.map(([key]) => `<td class="n"><button type="button" class="link-btn" data-op-person="${index}" data-op-metric="${key}">${esc(nf(person[key] ?? 0))}</button></td>`).join("")}</tr>`).join("")}</tbody></table></div>` : '<div class="muted">Данных по сотрудникам нет</div>'}</div></section>
+      <section class="panel"><div class="panel-h"><h2>Действия и события за период</h2></div><div class="panel-b" id="opEvents">${operationsPage(d.events || [], s.pages.events, operationsEvents, "событий")}</div></section>`;
+    bindOperations(d, current);
+  }
+  async function operationsSaveScope(form, current) {
+    const included = form.elements.included.checked, reason = form.elements.reason.value.trim();
+    if (!included && !reason) { toast("Укажите причину исключения позиции"); return; }
+    const submit = form.querySelector("button[type=submit]");
+    submit.disabled = true;
+    try {
+      await api("/api/operations/item-scope", { request_id: form.dataset.request, item_id: form.dataset.item, included, reason });
+      if (current()) { toast("Состав заявки сохранён"); loadMetrics(); }
+    } catch (e) { if (current() && e.message !== "auth") toast(e.message); }
+    finally { if (form.isConnected) submit.disabled = false; }
+  }
+  async function operationsApprove(button, current) {
+    button.disabled = true;
+    try {
+      await api("/api/operations/price-approval", { request_id: button.dataset.request, item_id: button.dataset.item, supplier_id: button.dataset.supplier });
+      if (current()) { toast("Сопоставимость количества подтверждена"); loadMetrics(); }
+    } catch (e) { if (current() && e.message !== "auth") toast(e.message); }
+    finally { if (button.isConnected) button.disabled = false; }
+  }
+  async function operationsSaveDeadline(form, current) {
+    const reason = form.elements.reason.value.trim();
+    if (!reason) { toast("Укажите причину согласования переноса"); return; }
+    const submit = form.querySelector("button[type=submit]");
+    submit.disabled = true;
+    try {
+      await api("/api/operations/deadline-approval", { request_id: form.dataset.request, due: form.dataset.due, reason });
+      if (current()) { toast("Новый срок согласован"); loadMetrics(); }
+    } catch (e) { if (current() && e.message !== "auth") toast(e.message); }
+    finally { if (form.isConnected) submit.disabled = false; }
+  }
+  async function operationsCopySource(button) {
+    const value = button.dataset.opCopySource;
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); toast("Ссылка 1С скопирована"); return; }
+    } catch (_) { /* Доступ к буферу может быть недоступен по HTTP. */ }
+    const field = document.createElement("textarea");
+    field.value = value;
+    field.readOnly = true;
+    field.setAttribute("aria-label", "Ссылка для открытия в клиенте 1С");
+    field.style.cssText = "display:block;width:100%;margin:8px 0";
+    button.after(field);
+    field.focus();
+    field.select();
+    let copied = false;
+    try { copied = !!document.execCommand?.("copy"); } catch (_) { /* Поле остаётся выделенным для ручного копирования. */ }
+    if (copied) { field.remove(); toast("Ссылка 1С скопирована"); }
+    else { toast("Ссылка выделена. Нажмите Ctrl+C и вставьте её в клиенте 1С"); field.addEventListener("blur", () => field.remove(), { once: true }); }
+  }
+  function bindOperationsSources(container, report, current) {
+    container.querySelectorAll("[data-op-copy-source]").forEach((button) => {
+      button.onclick = (event) => { event.preventDefault(); event.stopPropagation(); return operationsCopySource(button); };
+    });
+    container.querySelectorAll('a[href^="#operations-document="]').forEach((link) => {
+      link.onclick = async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const enclosingDetails = link.closest("details");
+        if (enclosingDetails) enclosingDetails.open = true;
+        if (link._documentBody) { link._documentBody.hidden = !link._documentBody.hidden; return; }
+        if (link._loading) return;
+        link._loading = true;
+        try {
+          const id = decodeURIComponent(link.getAttribute("href").slice("#operations-document=".length));
+          const query = new URLSearchParams({ id, date_to: report.date_to });
+          const result = await api("/api/operations/document?" + query);
+          if (!current() || !link.isConnected) return;
+          const body = document.createElement("div");
+          body.className = "op-items";
+          const doc = result.document || {}, items = doc.items || [], pager = {}, historyPager = {}, eventsPager = {};
+          const localReport = { ...report, records: [doc], events: result.events || [] };
+          const renderItems = (page) => operationsItems({ ...doc, items: page });
+          const renderVersions = (page) => page.map((version) => `<div class="small muted">Зафиксировано ${operationsMoment(version.observed_at || version._observed_at)}</div>${operationsDocument(version.document || version.payload || version)}`).join("") || '<div class="muted small">Изменений после исходного среза нет</div>';
+          body.innerHTML = operationsRecord({ ...doc, items: [], item_count: doc.item_count ?? items.length, _detail_loaded: true }) + `<div data-op-full-items>${operationsPage(items, pager, renderItems, "позиций")}</div><details><summary>История зафиксированных версий</summary><div data-op-versions>${operationsPage(result.history || [], historyPager, renderVersions, "версий")}</div></details><details><summary>События документа</summary><div data-op-document-events>${operationsPage(result.events || [], eventsPager, operationsEvents, "событий")}</div></details>`;
+          (link.closest("summary") || link).after(body);
+          link._documentBody = body;
+          bindOperationsContent(body, localReport, current);
+          bindOperationsPage(body.querySelector("[data-op-full-items]"), items, pager, renderItems, "позиций", localReport, current);
+          bindOperationsPage(body.querySelector("[data-op-versions]"), result.history || [], historyPager, renderVersions, "версий", localReport, current);
+          bindOperationsPage(body.querySelector("[data-op-document-events]"), result.events || [], eventsPager, operationsEvents, "событий", localReport, current);
+        } catch (e) { if (current() && e.message !== "auth") toast(e.message); }
+        finally { link._loading = false; }
+      };
+    });
+  }
+  function bindOperations(d, current) {
+    const main = document.getElementById("main"), s = operationsState(d.kind);
+    const reload = () => { s.drill = null; Object.values(s.pages).forEach((pager) => { pager.page = 0; }); loadMetrics(); };
+    bindPeriod("op", () => s.per, (per) => { s.per = per; }, reload);
+    for (const [id, field] of [["opEmp", "emp"], ["opChannel", "channel"]]) {
+      const input = document.getElementById(id);
+      if (input) input.addEventListener("change", () => { s[field] = input.value; reload(); });
+    }
+    const refresh = document.getElementById("opRefresh");
+    if (refresh) refresh.addEventListener("click", loadMetrics);
+    main.querySelectorAll("[data-op-tab]").forEach((button) => button.addEventListener("click", () => { state.sp.tab = button.dataset.opTab; loadMetrics(); }));
+    main.querySelectorAll("[data-op-tile]").forEach((button) => button.addEventListener("click", () => {
+      s.drill = s.drill === button.dataset.opTile ? null : button.dataset.opTile;
+      s.pages.drill.page = 0;
+      operationsShowDrill(d, d.tiles.find((tile) => tile.key === s.drill), current);
+      main.querySelectorAll("[data-op-tile]").forEach((tile) => tile.setAttribute("aria-expanded", String(tile.dataset.opTile === s.drill)));
+    }));
+    main.querySelectorAll("[data-op-person]").forEach((button) => button.addEventListener("click", () => {
+      const person = d.people[Number(button.dataset.opPerson)], key = button.dataset.opMetric;
+      const metric = d.tiles.find((tile) => tile.key === key), members = new Set(metric?.record_ids || []);
+      let records = d.records.filter((record) => record.owner === person.login && members.has(record.id));
+      if (key === "due_today") records = d.queue.filter((record) => record.owner === person.login && (record.due || "").slice(0, 10) === d.date_to);
+      if (key === "closed_late") records = d.records.filter((record) => record.owner === person.login && record.timeliness === "late" && (record.closed_at || "").slice(0, 10) >= d.date_from && (record.closed_at || "").slice(0, 10) <= d.date_to);
+      const titles = { due_today: "Срок сегодня", closed_late: "Из закрытых позже срока" };
+      const tile = { key, title: (person.name || person.login || "Не назначен") + " · " + (titles[key] || metric?.title || key), value: person[key],
+        record_ids: records.map((record) => record.id),
+        event_ids: key === "events" ? d.events.filter((event) => event.author === person.login).map((event) => event.id) : [] };
+      s.pages.drill.page = 0;
+      operationsShowDrill(d, tile, current);
+    }));
+    bindOperationsContent(main, d, current);
+    bindOperationsPage(document.getElementById("opQueue"), d.queue || [], s.pages.queue, operationsRecordList, "документов", d, current);
+    bindOperationsPage(document.getElementById("opRecords"), d.records || [], s.pages.records, operationsRecordList, "документов", d, current);
+    bindOperationsPage(document.getElementById("opEvents"), d.events || [], s.pages.events, operationsEvents, "событий", d, current);
+    const selected = d.tiles.find((tile) => tile.key === s.drill);
+    if (selected) operationsShowDrill(d, selected, current);
+  }
+  function bindOperationsContent(container, d, current) {
+    bindOperationsSources(container, d, current);
+    container.querySelectorAll("[data-op-scope]").forEach((form) => form.addEventListener("submit", (event) => { event.preventDefault(); operationsSaveScope(form, current); }));
+    container.querySelectorAll("[data-op-deadline]").forEach((form) => form.addEventListener("submit", (event) => { event.preventDefault(); operationsSaveDeadline(form, current); }));
+    container.querySelectorAll("[data-op-approve]").forEach((button) => button.addEventListener("click", () => operationsApprove(button, current)));
+    container.querySelectorAll("[data-op-history]").forEach((details) => details.addEventListener("toggle", async () => {
+      if (!details.open || details._loaded || details._loading) return;
+      details._loading = true;
+      try {
+        const query = new URLSearchParams({ request_id: details.dataset.request, item_id: details.dataset.item, date_to: d.date_to });
+        const result = await api("/api/operations/prices?" + query);
+        if (!current() || !details.isConnected) return;
+        const record = d.records.find((record) => record.id === details.dataset.request), item = record?.items?.find((item) => item.id === details.dataset.item);
+        if (!record || !item) return;
+        const history = result.history || result, pager = {}, offers = history.offers || history.history || [];
+        details.querySelector("[data-op-history-body]").innerHTML = operationsPriceHistory(history, record, item, pager);
+        const offerContainer = details.querySelector("[data-op-history-offers]");
+        bindOperationsContent(offerContainer, d, current);
+        bindOperationsPage(offerContainer, offers, pager, (page) => operationsOffers(page, record, item, true), "предложений", d, current);
+        details._loaded = true;
+      } catch (e) { if (current() && e.message !== "auth") toast(e.message); }
+      finally { details._loading = false; }
+    }));
+  }
   // даты поручения экспедитору: ДОП/ДОФ/просрочка отгрузки и ДПП/ДФП/просрочка поставки (план − факт, «−1» — позже плана)
   const foDates = (r) => {
     const day = (v) => (v ? ruDay(v.slice(0, 10)) : "—");
@@ -2900,7 +3229,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   function renderSales(d) {
     const s = state.sp, P = d.panel;
     const scroll = [...document.querySelectorAll("#main .dt-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
-    const tabs = [["panel", "Панель"], ["reg", `Реестр · ${nf(d.objects.length)}`], ["act", `Действия · ${nf(d.actions.length)}`]];
+    const tabs = [...(state.boot.operations_enabled ? [["day", "День менеджера"]] : []), ["panel", "Панель"], ["reg", `Реестр · ${nf(d.objects.length)}`], ["act", `Действия · ${nf(d.actions.length)}`]];
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>Продажи</h1>
         <div class="sub">Срез на ${ruMoment(P.now)} · данные реестра и действий вводятся здесь, долг — из 1С</div></div></div>
@@ -3011,7 +3340,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const s = state.sp, main = document.getElementById("main");
     const salesView = state.view;
     const again = () => { sideCache = {}; if (state.view === salesView) loadMetrics(); };
-    main.querySelectorAll("[data-sptab]").forEach((b) => b.addEventListener("click", () => { s.tab = b.dataset.sptab; renderSales(d); }));
+    main.querySelectorAll("[data-sptab]").forEach((b) => b.addEventListener("click", () => { s.tab = b.dataset.sptab; if (s.tab === "day") loadMetrics(); else renderSales(d); }));
     main.querySelectorAll("[data-spch]").forEach((b) => b.addEventListener("click", () => { s.channel = b.dataset.spch; s.drill = null; again(); }));
     const cl = document.getElementById("spClosed");
     if (cl) cl.addEventListener("change", () => { s.showClosed = cl.checked; spPg("obj").page = 0; renderSales(d); });
