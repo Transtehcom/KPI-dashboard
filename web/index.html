@@ -2389,6 +2389,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     try {
       if (state.boot.operations_enabled && (m.kind === "sales" || m.kind === "supply")) {
         if (m.kind === "sales") state.sp = state.sp || { tab: "day", channel: "Все", emp: "Все", drill: null };
+        if (m.kind === "sales" && !["day", "reg", "act"].includes(state.sp.tab)) state.sp.tab = "day";
         if (m.kind === "supply" || state.sp.tab === "day") { await loadOperations(m.kind, current); return; }
       }
       if (m.kind === "sales") { await loadSales(current); return; }
@@ -2566,7 +2567,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         ? `<button type="button" class="link-btn" data-op-tile="${key}">${title} · ${esc(nf(results[key]))}</button>`
         : `<span>${title} · ${esc(nf(results[key]))}</span>`).join("");
     main.innerHTML = `<div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>${d.kind === "sales" ? "День менеджера" : "Снабжение"}</h1><div class="sub">${esc(periodLabel(d.date_from, d.date_to))} · Очередь на ${operationsMoment(d.cutoff)} · Екатеринбург, UTC+5</div></div></div>
-      ${d.kind === "sales" ? `<div class="sp-seg" role="tablist">${[["day", "День менеджера"], ["reg", "Реестр"], ["act", "Действия"], ["panel", "Панель реестра"]].map(([key, title]) => `<button class="btn${key === "day" ? " primary" : ""}" type="button" data-op-tab="${key}" role="tab" aria-selected="${key === "day"}">${title}</button>`).join("")}</div>` : ""}
+      ${d.kind === "sales" ? `<div class="sp-seg" role="tablist">${[["day", "День менеджера"], ["reg", "Реестр"], ["act", "Действия"]].map(([key, title]) => `<button class="btn${key === "day" ? " primary" : ""}" type="button" data-op-tab="${key}" role="tab" aria-selected="${key === "day"}">${title}</button>`).join("")}</div>` : ""}
       <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(s.per, "op", false)}<label>Сотрудник<select id="opEmp"><option value="Все">Все</option>${employees.map((employee) => `<option value="${esc(employee.login || employee.id)}" ${s.emp === (employee.login || employee.id) ? "selected" : ""}>${esc(employee.name || employee.title || employee.login)}</option>`).join("")}</select></label><label>Канал<select id="opChannel">${[["Все", "Все"], ["Тендеры", "Тендеры"], ["Прямые", "Прямые продажи"]].map(([key, title]) => `<option value="${key}" ${s.channel === key ? "selected" : ""}>${title}</option>`).join("")}</select></label></div><button class="btn" type="button" id="opRefresh">Обновить отчёт</button></div><div class="panel-b small"><div class="op-meta">${[["onec", "1С"], ["bitrix", "Б24"]].map(([key, title]) => { const source = sources[key] || {}; return `<span class="${source.stale || !source.updated_at ? "late" : ""}"><b>${title}</b> ${operationsMoment(source.updated_at)} · ${!source.updated_at ? "загрузка отсутствует" : source.stale ? "данные устарели · более 90 минут" : "актуальные данные"}${source.age_minutes != null ? " · " + esc(nf(source.age_minutes)) + " мин" : ""}${source.error ? " · " + esc(source.error) : ""}</span>`; }).join("")}</div><div>История с ${operationsMoment(d.history_start)}. Данные устаревают через 90 минут после успешной загрузки каждого источника.</div>${(d.warnings || []).map((warning) => `<p class="late">${esc(typeof warning === "string" ? warning : warning.message || warning.title || "")}</p>`).join("")}</div></section>
       <section class="stats">${tiles.map((tile) => `<button class="panel stat op-stat" type="button" data-op-tile="${esc(tile.key)}" aria-expanded="${s.drill === tile.key}"><span class="eyebrow">${esc(tile.title)}</span><div class="v">${operationsTileValue(tile)}</div><span class="h">Документы и события ↗</span></button>`).join("")}</section>
       <div id="opDrill">${operationsDrill(d, tiles.find((tile) => tile.key === s.drill))}</div>
@@ -3220,63 +3221,25 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     }));
   }
 
-  // ---------- «Метрики → Отдел продаж»: панель, реестр и действия по макету «Метрики ОП.xlsx»
+  // ---------- «Метрики → Отдел продаж»: реестр и действия по макету «Метрики ОП.xlsx»
   const SP_CH = [["Все", "Всё"], ["Прямые", "Прямые продажи"], ["Тендеры", "Тендеры"]];
   async function loadSales(current) {
-    const s = state.sp = state.sp || { tab: "panel", channel: "Все", emp: "Все", drill: null };
+    const s = state.sp = state.sp || { tab: "reg", channel: "Все", emp: "Все", drill: null };
     const data = await api(`/api/metrics?kind=sales&channel=${encodeURIComponent(s.channel)}&emp=${encodeURIComponent(s.emp)}`);
     if (current()) renderSales(data);
   }
   function renderSales(d) {
     const s = state.sp, P = d.panel;
+    if (!["reg", "act"].includes(s.tab)) s.tab = "reg";
     const scroll = [...document.querySelectorAll("#main .dt-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
-    const tabs = [...(state.boot.operations_enabled ? [["day", "День менеджера"]] : []), ["panel", "Панель"], ["reg", `Реестр · ${nf(d.objects.length)}`], ["act", `Действия · ${nf(d.actions.length)}`]];
+    const tabs = [...(state.boot.operations_enabled ? [["day", "День менеджера"]] : []), ["reg", `Реестр · ${nf(d.objects.length)}`], ["act", `Действия · ${nf(d.actions.length)}`]];
     document.getElementById("main").innerHTML = `
       <div class="head"><div><div class="eyebrow">Метрики · Битрикс24 и 1С</div><h1>Продажи</h1>
         <div class="sub">Срез на ${ruMoment(P.now)} · данные реестра и действий вводятся здесь, долг — из 1С</div></div></div>
       <div class="sp-seg" role="tablist">${tabs.map(([k, t]) => `<button class="btn${s.tab === k ? " primary" : ""}" data-sptab="${k}">${t}</button>`).join("")}</div>
-      ${s.tab === "reg" ? spRegistry(d) : s.tab === "act" ? spActions(d) : spPanel(d)}`;
+      ${s.tab === "act" ? spActions(d) : spRegistry(d)}`;
     document.querySelectorAll("#main .dt-wrap").forEach((w, i) => { if (scroll[i]) { w.scrollTop = scroll[i][0]; w.scrollLeft = scroll[i][1]; } });
     bindSales(d);
-  }
-  function spPanel(d) {
-    const s = state.sp, P = d.panel, T = P.tiles, tm = Object.entries(d.team);
-    const tagCls = { "Жёсткий срок": "bad", "Просрочка продаж": "bad", "Просрочка ожидания": "bad", "Решение ИД": "", "Сегодня": "" };
-    const empty = !d.objects.length;
-    return `
-      <section class="panel"><div class="panel-h"><div class="sp-seg" style="margin:0">${SP_CH.map(([v, t]) => `<button class="btn${s.channel === v ? " primary" : ""}" data-spch="${v}">${t}</button>`).join("")}</div>
-        <div class="filters"><label>Сотрудник<select id="spEmp"><option value="Все">Все</option>${tm.map(([l, n]) => `<option value="${esc(l)}" ${s.emp === l ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label></div></div></section>
-      ${empty ? `<section class="panel"><div class="panel-b" style="padding-top:16px">Реестр пуст. Добавьте объекты на вкладке «Реестр» и действия по ним на вкладке «Действия» — панель посчитается сама.</div></section>` : ""}
-      <section class="stats">
-        <div class="panel stat"><div class="eyebrow">Действия на сегодня</div><div class="v">${nf(T.today)}</div></div>
-        <div class="panel stat"><div class="eyebrow">Жёсткие сроки ≤ 48 ч</div><div class="v">${nf(T.hard)}</div></div>
-        <div class="panel stat"><div class="eyebrow">Просрочено у продаж</div><div class="v${T.sales_late ? " late" : ""}">${nf(T.sales_late)}</div></div>
-        <div class="panel stat"><div class="eyebrow">Ожидание других</div><div class="v">${nf(T.waiting)}</div></div>
-      </section>
-      <div class="muted small" style="margin:-4px 0 12px">Объектов: ${nf(P.objects)} · без следующего действия продавца: ${nf(P.no_action)}${P.no_due ? ` · без срока этапа: ${nf(P.no_due)}` : ""}${P.no_stage ? ` · этап не выбран: ${nf(P.no_stage)} (вкладка «Реестр»)` : ""} · карточки считают действия, а не сделки</div>
-      <section class="panel"><div class="panel-h"><h2>Сегодня и критические сроки</h2><span class="muted small">сначала жёсткие сроки, затем прочие просрочки и задачи на сегодня · первые 6 действий</span></div>
-        <div class="panel-b">${P.critical.length ? `<table class="mt"><thead><tr><th>Объект</th><th>Что сделать</th><th>Кто выполняет</th><th>Срок</th></tr></thead><tbody>
-          ${P.critical.map((c) => `<tr><td>${esc(c.obj)}</td><td style="white-space:normal">${esc(c.what)} <span class="sp-tag ${tagCls[c.tag]}">${esc(c.tag)}</span></td><td>${esc(c.who)}</td><td class="${c.late ? "late" : ""}" style="${c.late ? "color:var(--bad);font-weight:600" : ""}">${c.due ? ruMoment(c.due) : "Нет данных"}</td></tr>`).join("")}
-        </tbody></table>` : `<span class="muted">Срочных действий нет</span>`}</div></section>
-      <div class="sp-two">
-        <section class="panel"><div class="panel-h"><h2>Где находится работа</h2><span class="muted small">нажмите группу — список объектов</span></div>
-          <div class="panel-b"><table class="mt"><thead><tr><th>Группа этапов</th><th class="n">Всего</th><th class="n">Просрочено</th></tr></thead><tbody>
-            ${P.groups.map((g) => `<tr class="sp-grp${s.drill === g.group ? " on" : ""}" data-spdrill="${esc(g.group)}"><th><a href="#" onclick="return false">${esc(g.group)}</a></th><td class="n">${nf(g.total)}</td><td class="n${g.late ? " late" : ""}">${nf(g.late)}</td></tr>`).join("")}
-          </tbody></table>
-          ${s.drill ? `<div class="sp-drill"><b>${esc(s.drill)}</b>${(P.drill[s.drill] || []).length ? `<table class="mt"><thead><tr><th>Объект</th><th>Клиент</th><th>Сотрудник</th><th>Этап</th><th>Что ещё нужно</th><th>Срок этапа</th></tr></thead><tbody>
-            ${P.drill[s.drill].map((o) => `<tr><td>${crmLink(o.id, o.url)}</td><td style="white-space:normal">${crmLink(o.client || "—", o.client_url)}</td><td>${esc(o.emp || "—")}</td><td>${esc(o.stage)}</td><td style="white-space:normal">${esc(o.need || "—")}</td><td style="${o.late ? "color:var(--bad);font-weight:600" : ""}">${o.due ? ruMoment(o.due) : "нет срока"}</td></tr>`).join("")}</tbody></table>` : `<div class="muted small">Объектов в группе нет</div>`}</div>` : ""}</div></section>
-        <section class="panel"><div class="panel-h"><h2>Что нужно для расчёта</h2></div>
-          <div class="panel-b"><table class="mt"><tbody>${P.need.map((n) => `<tr><th>${esc(n.title)}</th><td class="n"><b>${nf(n.count)}</b></td></tr>`).join("")}</tbody></table>
-          <div class="muted small" style="margin-top:10px">Количество объектов на расчёте, где эта часть ещё не готова. Это оставшаяся работа, а не оценка сотрудника.</div></div></section>
-      </div>
-      <section class="panel"><div class="panel-h"><h2>Очередь сотрудников</h2><span class="muted small">объекты и действия считаются отдельно</span></div>
-        <div class="panel-b">${P.queue.length ? `<table class="mt"><thead><tr><th>Сотрудник</th><th class="n">Лиды</th><th class="n">Сделки</th><th class="n">Исполнение</th><th class="n">Свои просрочки</th><th class="n">Ожидания других</th></tr></thead><tbody>
-          ${P.queue.map((q) => `<tr><th>${esc(q.name)}</th><td class="n">${nf(q.leads)}</td><td class="n">${nf(q.deals)}</td><td class="n">${nf(q.exec)}</td><td class="n${q.late ? " late" : ""}">${nf(q.late)}</td><td class="n">${nf(q.waiting)}</td></tr>`).join("")}
-        </tbody></table>` : `<span class="muted">Сотрудников отдела ОП нет</span>`}</div></section>
-      <section class="panel"><div class="panel-h"><h2>Требует решения ИД</h2><span class="muted small">${nf(P.ask_count)} открытых вопросов · все — на вкладке «Действия», «Нужно решение ИД = Да»</span></div>
-        <div class="panel-b">${P.ask.length ? `<table class="mt"><tbody>${P.ask.map((a) => `<tr><td style="width:90px">${esc(a.obj)}</td><td style="white-space:normal">${esc(a.question)}</td><td class="n" style="${a.late ? "color:var(--bad);font-weight:600" : ""}">${a.due ? ruMoment(a.due) : "нет срока"}</td></tr>`).join("")}</tbody></table>` : `<span class="muted">Открытых вопросов нет</span>`}</div></section>
-      <div class="muted small" style="margin:4px 0 16px">Битрикс24 — стадии, действия, сроки и согласования. 1С — исполнение, подтверждённые суммы и задолженность. Ожидание другого отдела не отменяет контроль со стороны продавца.
-        Контроль данных: действий без связи с объектом — ${nf(P.control.no_link)}; выбранных действий без срока — ${nf(P.control.no_due)}.</div>`;
   }
   const spIn = (f, v, type = "text", w) => `<input data-f="${f}" type="${type}" value="${esc(v ?? "")}"${w ? ` style="width:${w}px"` : ""}>`;
   const spSel = (f, v, opts, blank = true) => `<select data-f="${f}">${blank ? `<option value=""></option>` : ""}${opts.map((o) => { const [val, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${v === val ? "selected" : ""}>${esc(t)}</option>`; }).join("")}</select>`;
