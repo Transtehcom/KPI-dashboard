@@ -16,17 +16,18 @@ class SupplyDocumentsTest(unittest.TestCase):
         self.addCleanup(self.con.close)
 
     def test_contract_name_variants(self):
-        for name in ("ДОГОВОР поставки.pdf", "скан_договора.pdf", "дог. 123.pdf", "Дог.pdf"):
+        for name in ("ДОГОВОР поставки.pdf", "скан_договора.pdf", "дог. 123.pdf", "Дог.pdf",
+                     "дог 123.pdf", "скан_дог_123.PDF", "Допсоглашение к договору.pdf"):
             self.assertIsNotNone(CONTRACT_NAME.search(name), name)
-        for name in ("счет.pdf", "спецификация.pdf", "подогрев.pdf", "dog.pdf"):
+        for name in ("счет.pdf", "спецификация.pdf", "подогрев.pdf", "dog.pdf", "догма.pdf", "бульдог.pdf"):
             self.assertIsNone(CONTRACT_NAME.search(name), name)
 
-    def test_files_in_contract_and_request_owner_determine_qualification(self):
+    def test_order_and_contract_files_and_request_owner_determine_qualification(self):
         calls = []
         class Source:
             def _odata(self, entity, params):
                 calls.append((entity,params))
-                return {
+                rows = {
                     "Document_ЗаказКлиента": [{"Ref_Key":"customer","ДокументОснование":"base"}],
                     "Document_ТТК_ЗаявкаВОтделСнабжения": [
                         {"Ref_Key":"request","Number":"REQ-1","ДокументОснования":"base",
@@ -35,6 +36,10 @@ class SupplyDocumentsTest(unittest.TestCase):
                         {"Ref_Key":"one","Number":"001","Date":"2026-11-02","Договор_Key":"contract",
                          "ТТК_ЗаказКлиента_Key":"customer","Автор_Key":"author"},
                         {"Ref_Key":"two","Number":"002","Date":"2026-11-03","Договор_Key":"other",
+                         "ДокументОснование":"request"},
+                        {"Ref_Key":"three","Number":"003","Date":"2026-11-03","Договор_Key":"third",
+                         "ДокументОснование":"request"},
+                        {"Ref_Key":"four","Number":"004","Date":"2026-11-03","Договор_Key":"fourth",
                          "ДокументОснование":"request"}],
                     "Catalog_ДоговорыКонтрагентов": [{"Ref_Key":"contract","Description":"Договор поставки"}],
                     "Catalog_ДоговорыКонтрагентовПрисоединенныеФайлы": [
@@ -43,14 +48,31 @@ class SupplyDocumentsTest(unittest.TestCase):
                         {"Ref_Key":"f3","ВладелецФайла_Key":"other","Description":"договор","DeletionMark":True},
                         {"Ref_Key":"folder","ВладелецФайла_Key":"other","Description":"договора","IsFolder":True},
                         {"Ref_Key":"f4","ВладелецФайла_Key":"other","Description":"счет"}],
+                    "Catalog_Файлы": [
+                        {"Ref_Key":f"unrelated-{i}","ВладелецФайла":"two",
+                         "ВладелецФайла_Type":"StandardODATA.BusinessProcess_Задание","Description":"договор"}
+                        for i in range(200)] + [
+                        {"Ref_Key":"order-file","ВладелецФайла":"two",
+                         "ВладелецФайла_Type":"StandardODATA.Document_ЗаказПоставщику","Description":"ДОГ 123","Расширение":"pdf"},
+                        {"Ref_Key":"order-file-2","ВладелецФайла":"two",
+                         "ВладелецФайла_Type":"StandardODATA.Document_ЗаказПоставщику","Description":"договор.pdf","Расширение":"pdf"},
+                        {"Ref_Key":"deleted","ВладелецФайла":"three","DeletionMark":True,
+                         "ВладелецФайла_Type":"StandardODATA.Document_ЗаказПоставщику","Description":"договор"},
+                        {"Ref_Key":"unmatched","ВладелецФайла":"three",
+                         "ВладелецФайла_Type":"StandardODATA.Document_ЗаказПоставщику","Description":"счет"},
+                        {"Ref_Key":"contract-file","ВладелецФайла":"fourth",
+                         "ВладелецФайла_Type":"StandardODATA.Catalog_ДоговорыКонтрагентов","Description":"договора.pdf"}],
                 }[entity]
+                start = params.get("$skip", 0)
+                return rows[start:start + params.get("$top", len(rows))]
         rows = fetch(Source(),{"author_owners":{"author":"Wrong owner"}},{"supply owner":"supply"},
                      dt.date(2026,11,1),dt.date(2026,11,30))
-        self.assertEqual([r["emp"] for r in rows],["supply","supply"])
-        self.assertEqual([r["has_contract"] for r in rows],[1,0])
+        self.assertEqual([r["emp"] for r in rows],["supply"] * 4)
+        self.assertEqual([r["has_contract"] for r in rows],[1,1,0,1])
         self.assertEqual(len(json.loads(rows[0]["files"])),2)
         self.assertEqual(rows[1]["request_docs"],"REQ-1")
-        self.assertNotIn("Catalog_Файлы",[entity for entity,_ in calls])
+        self.assertEqual(json.loads(rows[1]["files"]),["ДОГ 123.pdf", "договор.pdf"])
+        self.assertEqual(json.loads(rows[3]["files"]),["договора.pdf"])
         file_query = next(params for entity,params in calls if entity.endswith("ПрисоединенныеФайлы"))
         self.assertNotIn("Base64Data",file_query["$select"])
 

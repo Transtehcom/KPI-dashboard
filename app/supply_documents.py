@@ -1,11 +1,14 @@
-"""Документооборот снабжения — доля заказов с файлом в карточке договора."""
+"""Документооборот снабжения — доля заказов с файлом договора."""
 import json
 import re
 
 from .onec_supply import _when, order_requests, supply_request_context
+from .onec_operations import _pages
 
 
-CONTRACT_NAME = re.compile(r"договор|(?<![а-яё])дог\.", re.I)
+CONTRACT_NAME = re.compile(r"договор|(?<![а-яёa-z])дог(?![а-яёa-z])", re.I)
+ORDER_TYPE = "StandardODATA.Document_ЗаказПоставщику"
+CONTRACT_TYPE = "StandardODATA.Catalog_ДоговорыКонтрагентов"
 
 
 def fetch(onec, ds, managers, first, last):
@@ -17,25 +20,32 @@ def fetch(onec, ds, managers, first, last):
         "$select": "Ref_Key,Number,Date,Договор_Key,ТТК_ЗаказКлиента_Key,ДокументОснование,Контрагент/Description"})
     contracts = {r["Ref_Key"]: r.get("Description") for r in onec._odata("Catalog_ДоговорыКонтрагентов", {
         "$format": "json", "$select": "Ref_Key,Description"})}
-    attached = onec._odata("Catalog_ДоговорыКонтрагентовПрисоединенныеФайлы", {
+    attached = _pages(onec, "Catalog_ДоговорыКонтрагентовПрисоединенныеФайлы", {
         "$format": "json", "$filter": "DeletionMark eq false and IsFolder eq false",
         "$select": "Ref_Key,Description,ВладелецФайла_Key,Расширение,DeletionMark,IsFolder"})
+    generic = _pages(onec, "Catalog_Файлы", {
+        "$filter": "DeletionMark eq false",
+        "$select": "Ref_Key,Description,ВладелецФайла,ВладелецФайла_Type,Расширение,DeletionMark"})
+    attachments = [(CONTRACT_TYPE, file.get("ВладелецФайла_Key"), file) for file in attached]
+    attachments.extend((file.get("ВладелецФайла_Type"), file.get("ВладелецФайла"), file) for file in generic)
     files = {}
-    for file in attached:
+    for owner_type, owner_key, file in attachments:
         if file.get("DeletionMark") or file.get("IsFolder"):
             continue
         name = file.get("Description") or ""
         extension = file.get("Расширение") or ""
         name = name if not extension or name.lower().endswith("." + extension.lower()) else name + "." + extension
         if CONTRACT_NAME.search(name):
-            files.setdefault(file.get("ВладелецФайла_Key"), {})[file["Ref_Key"]] = name
+            files.setdefault((owner_type, owner_key), {})[file["Ref_Key"]] = name
     rows = {}
     for order in orders:
         requests = order_requests(order, context)
         owners = {(r.get("ОтветственныйСнабжение") or {}).get("Description") for r in requests} - {None, ""}
         owner = next(iter(owners)) if len(owners) == 1 else ""
         contract = order.get("Договор_Key")
-        matched = list(files.get(contract, {}).values())
+        matched_files = dict(files.get((CONTRACT_TYPE, contract), {}))
+        matched_files.update(files.get((ORDER_TYPE, order["Ref_Key"]), {}))
+        matched = list(matched_files.values())
         rows[order["Ref_Key"]] = {
             "id": order["Ref_Key"], "emp": managers.get(owner.strip().lower(), "1c:" + owner),
             "doc": order["Number"].strip(), "dt": order["Date"][:10],
