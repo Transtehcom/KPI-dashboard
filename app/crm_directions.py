@@ -32,6 +32,8 @@ def selected_directions(value):
         return None
     chosen = value.split(',') if isinstance(value, str) else list(value)
     if chosen == ['all'] or not chosen:
+        return None
+    if chosen == ['tagged']:
         return list(DIRECTIONS)
     if any(key not in DIRECTIONS for key in chosen):
         raise ValueError('Неизвестное направление')

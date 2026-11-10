@@ -7,7 +7,7 @@ const main = {innerHTML:'',querySelectorAll:()=>[]};
 const nodes = new Map();
 const options = [{value:'epc',name:'EPC'},{value:'bpla',name:'БПЛА'},{value:'kpi',name:'KPI'},
   {value:'investments',name:'Инвестиции'},{value:'factoring',name:'Факторинг'}];
-const boxes = ['__all',...options.map(item=>item.value)].map(value=>({value,checked:false,events:{},
+const boxes = ['__all','__tagged',...options.map(item=>item.value)].map(value=>({value,checked:false,events:{},
   addEventListener(name,fn){this.events[name]=fn;}}));
 function node(id) {
   if (!nodes.has(id)) nodes.set(id,{events:{},open:false,value:'',addEventListener(name,fn){this.events[name]=fn;},
@@ -44,5 +44,20 @@ assert.ok(!main.innerHTML.includes('БПЛА учитывается по наз�
 boxes[0].events.change();
 assert.deepEqual(Array.from(state.fDirections),[]);
 context.renderFunnel(data);
-assert.ok(main.innerHTML.includes('Все пять направлений по тегам'));
+assert.ok(main.innerHTML.includes('Все карточки без отбора по направлениям'));
+assert.ok(main.innerHTML.includes('<td colspan="3">Все</td>'));
+boxes.find(box=>box.value==='__tagged').checked=true;
+boxes.find(box=>box.value==='__tagged').events.change();
+assert.deepEqual(Array.from(state.fDirections),['tagged']);
+context.renderFunnel(data);
+assert.ok(main.innerHTML.includes('Карточки хотя бы с одним из пяти тегов направлений'));
+assert.ok(main.innerHTML.includes('<td colspan="3">Все с тегом</td>'));
+boxes.forEach(box=>{box.checked=['__tagged','epc'].includes(box.value);});
+boxes.find(box=>box.value==='epc').events.change();
+assert.deepEqual(Array.from(state.fDirections),['epc']);
+boxes.forEach(box=>{box.checked=box.value==='__tagged';});
+boxes.find(box=>box.value==='__tagged').events.change();
+boxes.find(box=>box.value==='__tagged').checked=false;
+boxes.find(box=>box.value==='__tagged').events.change();
+assert.deepEqual(Array.from(state.fDirections),[]);
 console.log('Funnel direction selection and both modes: OK');

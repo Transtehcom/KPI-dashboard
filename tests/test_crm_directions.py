@@ -44,7 +44,9 @@ class FunnelDirectionsTest(unittest.TestCase):
                  (['kpi', 'bpla', 'epc'], {'1', '2', '3', '5', '6', '10'}),
                  (['epc', 'investments'], {'6', '7', '10'}),
                  (['epc', 'bpla'], {'1', '2', '3', '4', '6', '10'}),
-                 ('all', {'1', '2', '3', '5', '6', '7', '8', '10'})]
+                 ('tagged', {'1', '2', '3', '5', '6', '7', '8', '10'}),
+                 ('all', {str(i) for i in range(1, 11)}),
+                 ([], {str(i) for i in range(1, 11)})]
         for kind in ['leads', 'deals']:
             for mode in ['date', 'fact']:
                 self.load_rows(kind, mode)
@@ -60,6 +62,9 @@ class FunnelDirectionsTest(unittest.TestCase):
     def test_unknown_direction_is_rejected(self):
         with self.assertRaises(ValueError):
             deal_funnel(self.con, self.config, directions=['other'])
+        for selection in ['tagged,epc', 'all,bpla']:
+            with self.subTest(selection=selection), self.assertRaises(ValueError):
+                deal_funnel(self.con, self.config, directions=selection)
 
     def test_other_filter_options_remain_visible_when_directions_change(self):
         config = {**self.config, 'employees': [{'login': 'epc_owner', 'department': 'supply'}]}

@@ -3515,11 +3515,13 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const cats = d.deals.filters.categories, catName = (cats.find((c) => c.value === d.deals.applied.category) || {}).name;
     const directionOptions = d.deals.filters.directions || [];
     const selectedDirections = state.fDirections || [];
-    const directionNames = selectedDirections.map((key) => directionOptions.find((item) => item.value === key)?.name || key);
+    const directionNames = selectedDirections.map((key) => key === "tagged" ? "Все с тегом" : directionOptions.find((item) => item.value === key)?.name || key);
     const directionLabel = !directionNames.length ? "Все" : directionNames.length === 1 ? directionNames[0] : `Выбрано ${directionNames.length}`;
-    const directionRule = selectedDirections.includes("bpla") && !selectedDirections.includes("kpi")
+    const directionRule = !selectedDirections.length ? "Все карточки без отбора по направлениям."
+      : selectedDirections.includes("tagged") ? "Карточки хотя бы с одним из пяти тегов направлений."
+      : selectedDirections.includes("bpla") && !selectedDirections.includes("kpi")
       ? "БПЛА учитывается по названию или тегу. Выбранные направления объединяются."
-      : "Отбор по тегам. «Все» — карточки хотя бы с одним из пяти тегов направлений.";
+      : "Отбор по тегам. Выбранные направления объединяются.";
 
     // --- графика: ширина (длина) — количество, насыщенность цвета и толщина полосы — сумма
     const panel = (x) => {
@@ -3587,7 +3589,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <table class="pr pr-params"><tbody>
           <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
           <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
-          ${PREVIEW ? "" : `<tr><th>Направления</th><td colspan="3">${esc(directionNames.join(", ") || "Все пять направлений по тегам")}</td></tr>`}
+          ${PREVIEW ? "" : `<tr><th>Направления</th><td colspan="3">${esc(directionNames.join(", ") || "Все")}</td></tr>`}
           <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${fact ? `факт: переходы по истории стадий ${esc(perRange)}` : `${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки`}</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
@@ -3606,8 +3608,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <div class="sub">${fact ? "Движение лидов и сделок по истории стадий" : "Текущее состояние открытых лидов и сделок"} на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
         <div class="filters">
           ${perHtml}
-          ${PREVIEW ? "" : `<div class="msel-wrap"><span>Направления</span><details class="msel" id="fDirections" ${state.fDirectionsOpen ? "open" : ""}><summary title="${esc(directionNames.join(", ") || "Все пять направлений по тегам")}">${esc(directionLabel)}</summary>
-            <div class="msel-pop"><label><input type="checkbox" value="__all" ${selectedDirections.length ? "" : "checked"}>Все</label>${directionOptions.map((option) => `<label><input type="checkbox" value="${esc(option.value)}" ${selectedDirections.includes(option.value) ? "checked" : ""}>${esc(option.name)}</label>`).join("")}<div class="small muted">${esc(directionRule)}</div></div></details></div>`}
+          ${PREVIEW ? "" : `<div class="msel-wrap"><span>Направления</span><details class="msel" id="fDirections" ${state.fDirectionsOpen ? "open" : ""}><summary title="${esc(directionNames.join(", ") || "Все карточки без отбора по направлениям")}">${esc(directionLabel)}</summary>
+            <div class="msel-pop"><label><input type="checkbox" value="__all" ${selectedDirections.length ? "" : "checked"}>Все</label><label><input type="checkbox" value="__tagged" ${selectedDirections.includes("tagged") ? "checked" : ""}>Все с тегом</label>${directionOptions.map((option) => `<label><input type="checkbox" value="${esc(option.value)}" ${selectedDirections.includes(option.value) ? "checked" : ""}>${esc(option.name)}</label>`).join("")}<div class="small muted">${esc(directionRule)}</div></div></details></div>`}
           ${PREVIEW ? "" : `<label for="fDep">Отдел<select id="fDep"><option value="__all">Все</option>${deps.map((x) => `<option value="${esc(x.value)}" ${state.fDep === x.value ? "selected" : ""}>${esc(x.name)} (${x.count})</option>`).join("")}</select></label>`}
           <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
             <div class="msel-pop">${respList.map((r) => `<label><input type="checkbox" value="${esc(r.value)}" ${chosen.includes(r.value) ? "checked" : ""}>${esc(r.name)} <span class="muted">(${r.count})</span></label>`).join("")}
@@ -3659,8 +3661,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     if (directions) {
       directions.addEventListener("toggle", () => { state.fDirectionsOpen = directions.open; });
       directions.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => checkbox.addEventListener("change", () => {
-        state.fDirections = checkbox.value === "__all" ? [] : [...directions.querySelectorAll('input[type="checkbox"]:checked')]
-          .map((item) => item.value).filter((key) => key !== "__all");
+        state.fDirections = checkbox.value === "__all" ? []
+          : checkbox.value === "__tagged" ? (checkbox.checked ? ["tagged"] : [])
+          : [...directions.querySelectorAll('input[type="checkbox"]:checked')]
+            .map((item) => item.value).filter((key) => directionOptions.some((option) => option.value === key));
         state.fDirectionsOpen = true;
         load();
       }));

@@ -23,18 +23,20 @@ function fixture(source,view) {
 }
 (async()=>{
   for (const mode of ['date','fact']) {
-    const f=fixture(kpiSource,'funnel');
-    f.state.fMode=mode;
-    f.state.fDirections=['kpi','bpla','epc'];
-    const request=f.run();
-    assert.equal(f.pending.length,2);
-    for (const pending of f.pending) {
-      const query=new URL(pending.url,'http://localhost').searchParams;
-      assert.equal(query.get('directions'),'kpi,bpla,epc');
-      assert.equal(query.get('mode'),mode);
-      pending.resolve({});
+    for (const selection of [[],['tagged'],['kpi','bpla','epc']]) {
+      const f=fixture(kpiSource,'funnel');
+      f.state.fMode=mode;
+      f.state.fDirections=selection;
+      const request=f.run();
+      assert.equal(f.pending.length,2);
+      for (const pending of f.pending) {
+        const query=new URL(pending.url,'http://localhost').searchParams;
+        assert.equal(query.get('directions'),selection.join(',')||'all');
+        assert.equal(query.get('mode'),mode);
+        pending.resolve({});
+      }
+      await request;
     }
-    await request;
   }
   for (const [source,view] of [[kpiSource,'emp'],[kpiSource,'funnel'],[callsSource,'calls'],[moneySource,'money']]) {
     const f=fixture(source,view), request=f.run();

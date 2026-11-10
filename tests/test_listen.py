@@ -434,7 +434,8 @@ class ListenTest(unittest.TestCase):
             total = lambda value: json.loads(self.get('pm', '/api/funnel?directions=' + value)[2])['total']
             self.assertEqual(total('bpla'), 3)
             self.assertEqual(total('kpi,bpla'), 2)
-            self.assertEqual(total('all'), 2)
+            self.assertEqual(total('all'), 3)
+            self.assertEqual(total('tagged'), 2)
             self.assertEqual(self.get('pm', '/api/funnel?directions=unknown')[0], 400)
         finally:
             with db_lock():
