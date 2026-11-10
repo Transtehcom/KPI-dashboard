@@ -15,6 +15,9 @@ class NavigationTest(unittest.TestCase):
     def test_history_routes_and_admin_workload(self):
         self.run_script("test_navigation.js")
 
+    def test_funnel_direction_selection(self):
+        self.run_script("test_funnel_directions.js")
+
     def test_late_responses_cannot_replace_the_active_view(self):
         self.run_script("test_navigation_races.js")
 

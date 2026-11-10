@@ -1165,7 +1165,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         const [dFrom, dTo] = funnelPeriod();
         const per = dFrom || dTo ? `&date_from=${dFrom}&date_to=${dTo}&date_field=${state.fDateField || "created"}` : "";
         const dep = state.fDep == null ? "" : `&department=${encodeURIComponent(state.fDep || "_none")}`;
-        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&mode=${state.fMode === "fact" ? "fact" : "date"}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}${dep}`);
+        const directions = PREVIEW ? "" : `&directions=${encodeURIComponent((state.fDirections || []).join(",") || "all")}`;
+        const q = (kind, cat) => api(`/api/funnel?kind=${kind}&mode=${state.fMode === "fact" ? "fact" : "date"}&login=${encodeURIComponent((state.fLogins || []).join(","))}&category=${encodeURIComponent(cat)}${per}${dep}${directions}`);
         const logins = (state.fLogins || []).join(",");
         const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
           logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
@@ -3505,6 +3506,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     for (const id of ["mMenu", "sMenu", "fMenu"]) { const mm = document.getElementById(id); if (mm && mm.open && !mm.contains(e.target)) mm.open = false; }
     const det = document.getElementById("fResp");
     if (det && det.open && !det.contains(e.target)) { det.open = false; state.fRespOpen = false; }
+    const directions = document.getElementById("fDirections");
+    if (directions && directions.open && !directions.contains(e.target)) { directions.open = false; state.fDirectionsOpen = false; }
   });
   function renderFunnel(d) {
     state.fData = d;
@@ -3547,6 +3550,13 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const deps = [...depMap.values()].sort((a, b) => (a.value === "") - (b.value === "") || a.name.localeCompare(b.name, "ru"));
     const depName = state.fDep == null ? "" : (depMap.get(state.fDep) || {}).name || "";
     const cats = d.deals.filters.categories, catName = (cats.find((c) => c.value === d.deals.applied.category) || {}).name;
+    const directionOptions = d.deals.filters.directions || [];
+    const selectedDirections = state.fDirections || [];
+    const directionNames = selectedDirections.map((key) => directionOptions.find((item) => item.value === key)?.name || key);
+    const directionLabel = !directionNames.length ? "Все" : directionNames.length === 1 ? directionNames[0] : `Выбрано ${directionNames.length}`;
+    const directionRule = selectedDirections.includes("bpla") && !selectedDirections.includes("kpi")
+      ? "БПЛА учитывается по названию или тегу. Выбранные направления объединяются."
+      : "Отбор по тегам. «Все» — карточки хотя бы с одним из пяти тегов направлений.";
 
     // --- графика: ширина (длина) — количество, насыщенность цвета и толщина полосы — сумма
     const panel = (x) => {
@@ -3614,6 +3624,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <table class="pr pr-params"><tbody>
           <tr><th>Данные Битрикс24 на</th><td>${esc(snapTxt)}</td><th>Отчёт сформирован</th><td>${ruDay(isoDay(now))} ${pad2(now.getHours())}:${pad2(now.getMinutes())}, ${esc(state.boot.me.name)}</td></tr>
           <tr><th>Отдел</th><td>${depName ? esc(depName) : "все"}</td><th>Воронка сделок</th><td>${catName ? esc(catName) : "все"}</td></tr>
+          ${PREVIEW ? "" : `<tr><th>Направления</th><td colspan="3">${esc(directionNames.join(", ") || "Все пять направлений по тегам")}</td></tr>`}
           <tr><th>Ответственные</th><td>${chosen.length ? esc(chosenNames.join(", ")) : "все"}</td><th>Период</th><td>${fact ? `факт: переходы по истории стадий ${esc(perRange)}` : `${dFrom || dTo ? `${byStage ? "дата перехода на текущую стадию" : "дата создания"} ${esc(perRange)}` : "всё время"}; учитываются открытые сейчас лиды и сделки`}</td></tr>
         </tbody></table></div>
       <div id="fCalPrint">${calPrintHtml()}</div>
@@ -3632,6 +3643,8 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <div class="sub">${fact ? "Движение лидов и сделок по истории стадий" : "Текущее состояние открытых лидов и сделок"} на ${esc(snapTxt)}. Обновляется при каждой синхронизации с Битрикс24.${esc(perTxt)}${!chosen.length && !PREVIEW ? " Выберите ответственного — рядом появится его расписание из календаря Битрикс24 на последний день периода." : ""}</div></div>
         <div class="filters">
           ${perHtml}
+          ${PREVIEW ? "" : `<div class="msel-wrap"><span>Направления</span><details class="msel" id="fDirections" ${state.fDirectionsOpen ? "open" : ""}><summary title="${esc(directionNames.join(", ") || "Все пять направлений по тегам")}">${esc(directionLabel)}</summary>
+            <div class="msel-pop"><label><input type="checkbox" value="__all" ${selectedDirections.length ? "" : "checked"}>Все</label>${directionOptions.map((option) => `<label><input type="checkbox" value="${esc(option.value)}" ${selectedDirections.includes(option.value) ? "checked" : ""}>${esc(option.name)}</label>`).join("")}<div class="small muted">${esc(directionRule)}</div></div></details></div>`}
           ${PREVIEW ? "" : `<label for="fDep">Отдел<select id="fDep"><option value="__all">Все</option>${deps.map((x) => `<option value="${esc(x.value)}" ${state.fDep === x.value ? "selected" : ""}>${esc(x.name)} (${x.count})</option>`).join("")}</select></label>`}
           <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
             <div class="msel-pop">${respList.map((r) => `<label><input type="checkbox" value="${esc(r.value)}" ${chosen.includes(r.value) ? "checked" : ""}>${esc(r.name)} <span class="muted">(${r.count})</span></label>`).join("")}
@@ -3679,6 +3692,16 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     det.querySelectorAll("input[type=checkbox]").forEach((cb) => cb.addEventListener("change", () =>
       setLogins([...det.querySelectorAll("input[type=checkbox]:checked")].map((x) => x.value), true)));
     document.getElementById("fRespClear").addEventListener("click", () => setLogins([], false));
+    const directions = document.getElementById("fDirections");
+    if (directions) {
+      directions.addEventListener("toggle", () => { state.fDirectionsOpen = directions.open; });
+      directions.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => checkbox.addEventListener("change", () => {
+        state.fDirections = checkbox.value === "__all" ? [] : [...directions.querySelectorAll('input[type="checkbox"]:checked')]
+          .map((item) => item.value).filter((key) => key !== "__all");
+        state.fDirectionsOpen = true;
+        load();
+      }));
+    }
     main.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => setLogins([b.dataset.resp], false)));
     main.querySelectorAll("[data-fview]").forEach((a) => a.addEventListener("click", (e) => {
       e.preventDefault(); state.fView = a.dataset.fview; renderFunnel(state.fData);

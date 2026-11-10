@@ -424,6 +424,23 @@ class ListenTest(unittest.TestCase):
         self.assertEqual((total(""), total("&department=" + op), total("&department=_none"), total(f"&department={op},_none")),
                          (2, 1, 1, 2))
 
+    def test_funnel_direction_param_filters_cards_and_rejects_unknown_choices(self):
+        with db_lock():
+            self.con.execute("DELETE FROM crm_deals")
+            self.con.executemany("INSERT INTO crm_deals (id,entity,title,tags,stage_id,semantic) VALUES (?,'deal',?,?,'NEW','P')",
+                                 [('tag1','БПЛА','["KPI"]'), ('tag2','БПЛА','[]'), ('tag3','Проект','["БПЛА"]')])
+            self.con.commit()
+        try:
+            total = lambda value: json.loads(self.get('pm', '/api/funnel?directions=' + value)[2])['total']
+            self.assertEqual(total('bpla'), 3)
+            self.assertEqual(total('kpi,bpla'), 2)
+            self.assertEqual(total('all'), 2)
+            self.assertEqual(self.get('pm', '/api/funnel?directions=unknown')[0], 400)
+        finally:
+            with db_lock():
+                self.con.execute("DELETE FROM crm_deals")
+                self.con.commit()
+
     def test_listen_own_can_be_disabled(self):
         self.app.config["call_records"]["listen_own"] = False
         try:

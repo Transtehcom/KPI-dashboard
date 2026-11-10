@@ -1,8 +1,10 @@
 """Генератор демо-данных: правдоподобные записи в нормализованных таблицах, чтобы дашборд работал без подключения к Б24 и 1С."""
 import datetime as dt
+import json
 import random
 
 from .common import SYNC_TABLES, current_month, db_lock, month_add, month_bounds, replace_rows, today, weeks_of_month
+from .crm_directions import DIRECTIONS
 
 CLIENTS = ["ООО «СтройИнвест»", "АО «УралТехМонтаж»", "ГБУ «Дирекция капстроя»", "ООО «ЭнергоСервис»", "МУП «Водоканал»",
            "ПАО «Металлург»", "ООО «ТрансЛогистик»", "АО «Нефтехимпроект»", "ООО «ГородСтрой»", "ФГУП «Связьмонтаж»",
@@ -293,7 +295,8 @@ def generate(con, config):
         return {"id": nid("cd"), "entity": entity, "emp": o.get("login"), "responsible_id": str(o.get("b24_user_id", "")),
                 "responsible": o["name"], "category_id": cid, "category": cname, "stage_id": sid, "stage": sname,
                 "stage_sort": (si + 1) * 10, "semantic": "P", "title": title, "client": rnd.choice(CLIENTS), "amount": amount,
-                "created": created.isoformat(), "stage_since": since.isoformat(), "snapshot": snap}
+                "created": created.isoformat(), "stage_since": since.isoformat(), "snapshot": snap,
+                "tags": json.dumps([list(DIRECTIONS.values())[len(data['crm_deals']) % len(DIRECTIONS)]], ensure_ascii=False)}
 
     for cid, (cname, word, group, stages) in pipelines.items():
         for si, (sid, sname, w) in enumerate(stages):

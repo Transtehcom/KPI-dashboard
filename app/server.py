@@ -706,8 +706,13 @@ class Handler(BaseHTTPRequestHandler):
                     mode = q.get("mode") or "date"
                     if mode not in ("date", "fact"):
                         raise BadRequest("Неизвестный вид воронок")
+                    from .crm_directions import selected_directions
+                    try:
+                        directions = selected_directions(q.get('directions'))
+                    except ValueError as exc:
+                        raise BadRequest(str(exc)) from None
                     return JsonResponse(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
-                                                      date_from, date_to, date_field, deps, mode))
+                                                      date_from, date_to, date_field, deps, mode, directions))
                 if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
                     if not date_from and not date_to:  # период не выбран — текущий месяц, как в KPI

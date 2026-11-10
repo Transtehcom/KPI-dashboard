@@ -3,6 +3,7 @@ import datetime as dt
 
 from .common import load_rules
 from .crm_links import record_url, client_url, object_url
+from .crm_directions import DIRECTIONS, matches_directions, selected_directions
 
 DEFAULT_SECTIONS = {
     "deals": [
@@ -73,7 +74,7 @@ def _fact_pick(sc, rows, by_rec):
 
 
 def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created",
-                departments=None, mode="date"):
+                departments=None, mode="date", directions=None):
     """login — ключ ответственного (логин сотрудника или «id:<ID в Б24>») либо список таких ключей.
     date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
     в период: created — дата создания, stage — дата перехода на текущую стадию.
@@ -82,6 +83,7 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
     departments — отделы ответственных из раздела «Сотрудники» (по логину, а без KPI — по ID в Б24);
     «» — ответственные, которых в разделе нет («Без отдела»)."""
     entity, cfg_key = KINDS[kind]
+    chosen_directions = selected_directions(directions)
     fcfg = config.get(cfg_key, {})
     sections_cfg = fcfg.get("sections") or DEFAULT_SECTIONS[kind]
     fact = mode == "fact"
@@ -115,6 +117,8 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
     for r in all_rows:
         cats.setdefault(r["category_id"], {"value": r["category_id"], "name": r["category"], "count": 0})
 
+    # Направление меняет счётчики, но не скрывает уже выбранные отдел/сотрудника/воронку.
+    all_rows = [row for row in all_rows if matches_directions(row, chosen_directions)]
     if (date_from or date_to) and not fact:
         col = DATE_FIELDS[date_field]
         all_rows = [r for r in all_rows if r[col] and (not date_from or r[col][:10] >= date_from)
@@ -213,12 +217,14 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         "total_amount": sum(r["amount"] or 0 for r in rows if r["id"] in in_funnel),
         "other_stages": [{"category": c, "stage": s, "count": n} for (c, s), n in sorted(other.items(), key=lambda x: -x[1])],
         "filters": {
+            "directions": [{"value": key, "name": label} for key, label in DIRECTIONS.items()],
             "responsibles": sorted(resp.values(), key=lambda x: x["name"]),
             # отделы по алфавиту, «Без отдела» — последним
             "departments": sorted(deps.values(), key=lambda x: (x["value"] == "", x["name"])),
             "categories": sorted(cats.values(), key=lambda x: x["name"]),
         },
         "applied": {"login": ",".join(sorted(logins)), "logins": sorted(logins), "category": "" if category is None else str(category),
+                    "directions": chosen_directions,
                     "departments": sorted(deps_chosen) if deps_chosen is not None else [],
                     "date_from": date_from or "", "date_to": date_to or "", "date_field": date_field},
     }

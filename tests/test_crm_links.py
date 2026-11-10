@@ -91,6 +91,7 @@ class CRMLinksTest(unittest.TestCase):
         from app.bitrix24 import Bitrix24
         b24=Bitrix24(self.config["bitrix24"],log=lambda *a:None)
         b24.deal_stages=mock.Mock(return_value={"0":{"name":"Продажи","stages":{}}})
+        b24.call=mock.Mock(return_value={"result":{"UF_TAG":{"formLabel":"Теги"}}})
         b24.list_all=mock.Mock(return_value=[{"ID":"42","ASSIGNED_BY_ID":"56","COMPANY_ID":"7","TITLE":"Сделка","CATEGORY_ID":"0"}])
         b24.by_ids=mock.Mock(return_value={"7":{"TITLE":"Компания"}})
         b24._user_names=mock.Mock(return_value={"56":"Тест"})

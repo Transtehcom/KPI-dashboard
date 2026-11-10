@@ -82,7 +82,8 @@ def run(con, config, force_demo=False):
                     traceback.print_exc()
                 try:  # «Воронки → Факт»: переходы по стадиям за последние дни (config.funnel_fact_days, по умолчанию 120)
                     since = (dt.date.today() - dt.timedelta(days=int(config.get("funnel_fact_days", 120)))).isoformat()
-                    moves, records = b24.fetch_crm_fact(by_uid, since, config.get("deal_funnel", {}))
+                    retained = [row[0] for row in con.execute('SELECT id FROM fact_records')]
+                    moves, records = b24.fetch_crm_fact(by_uid, since, config.get("deal_funnel", {}), retained=retained)
                     writes.append(("Б24", "stage_moves", moves, None))
                     writes.append(("Б24", "fact_records", records, None))
                 except Exception as e:  # noqa

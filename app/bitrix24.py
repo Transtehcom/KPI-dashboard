@@ -8,6 +8,7 @@ import urllib.request
 
 from .common import parse_date
 from .client_qualification import qualify_client
+from .crm_directions import normalize_tags
 from .crm_activities import (activity_bindings, activity_datetime, activity_deadline, call_binding, followup_activity,
                              is_next_step_for_call, planned_activity)
 
@@ -762,9 +763,23 @@ class Bitrix24:
                 users[str(u["ID"])] = " ".join(x for x in (u.get("NAME"), u.get("LAST_NAME")) if x) or f"Пользователь {u['ID']}"
         return users
 
+    def crm_tag_field(self, entity):
+        cache = getattr(self, '_crm_tag_fields', {})
+        if entity not in cache:
+            fields = self.call('crm.' + entity + '.fields').get('result') or {}
+            found = [code for code, meta in fields.items() if any(
+                str(meta.get(label) or '').strip().casefold() in {'тег', 'теги'}
+                for label in ('title', 'formLabel', 'listLabel'))]
+            if len(found) != 1:
+                raise B24Error('Поле «Теги» для ' + entity + ' не определено однозначно')
+            cache[entity] = found[0]
+            self._crm_tag_fields = cache
+        return cache[entity]
+
     def fetch_crm_deals(self, employees, fcfg):
         """Текущий срез открытых сделок для воронки сделок."""
         self.log("Б24: сделки для воронки")
+        tags_field = self.crm_tag_field('deal')
         stages = self.deal_stages()
         flt = {"CLOSED": "N"}
         if fcfg.get("include_closed"):
@@ -774,7 +789,7 @@ class Bitrix24:
         deals = self.list_all("crm.deal.list", {
             "filter": flt, "order": {"ID": "ASC"},
             "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID", "OPPORTUNITY",
-                       "DATE_CREATE", "MOVED_TIME", "COMPANY_ID"]})
+                       "DATE_CREATE", "MOVED_TIME", "COMPANY_ID", tags_field]})
         companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals], ["ID", "TITLE"])
         users = self._user_names(d.get("ASSIGNED_BY_ID") for d in deals)
         snap = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -789,17 +804,23 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
                 "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
+                "tags": json.dumps(normalize_tags(d.get(tags_field)), ensure_ascii=False),
                 "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         return rows
 
-    def fetch_crm_fact(self, employees, since, dcfg):
+    def fetch_crm_fact(self, employees, since, dcfg, retained=()):
         """Переходы лидов и сделок по стадиям с даты since (ГГГГ-ММ-ДД) и карточки этих записей (в том числе закрытых):
         для «Воронки → Факт». Возвращает (переходы → stage_moves, записи → fact_records)."""
         self.log("Б24: история стадий лидов и сделок")
+        deal_tags, lead_tags = self.crm_tag_field('deal'), self.crm_tag_field('lead')
         stages, statuses = self.deal_stages(), self.lead_statuses()
         moves, owners = [], {"lead": set(), "deal": set()}
+        for identity in retained:
+            match = re.fullmatch(r'(lead|deal)(\d+)', identity)
+            if match:
+                owners[match[1]].add(match[2])
         for entity, type_id in (("lead", 1), ("deal", 2)):
             flt = {">=CREATED_TIME": since}
             if entity == "deal" and dcfg.get("category_ids"):
@@ -818,9 +839,9 @@ class Bitrix24:
                               "stage_sort": st.get("sort", 0), "semantic": h.get("STAGE_SEMANTIC_ID") or h.get("STATUS_SEMANTIC_ID"),
                               "ts": self.iso(h.get("CREATED_TIME"))})
         deals = self.by_ids("crm.deal.list", owners["deal"], ["ID", "TITLE", "ASSIGNED_BY_ID", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID",
-                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_ID"])
+                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_ID", deal_tags])
         leads = self.by_ids("crm.lead.list", owners["lead"], ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "STATUS_SEMANTIC_ID",
-                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID"])
+                                                               "OPPORTUNITY", "DATE_CREATE", "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID", lead_tags])
         companies = self.by_ids("crm.company.list", [d.get("COMPANY_ID") for d in deals.values()], ["ID", "TITLE"])
         users = self._user_names(d.get("ASSIGNED_BY_ID") for d in [*deals.values(), *leads.values()])
         snap = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -835,6 +856,7 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": cid, "category": cat["name"],
                 "stage_id": d.get("STAGE_ID"), "stage": st.get("name") or d.get("STAGE_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STAGE_SEMANTIC_ID"), "title": d.get("TITLE"),
+                "tags": json.dumps(normalize_tags(d.get(deal_tags)), ensure_ascii=False),
                 "client": companies.get(str(d.get("COMPANY_ID")), {}).get("TITLE", ""), "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
@@ -846,6 +868,7 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": "lead", "category": "Лиды",
                 "stage_id": d.get("STATUS_ID"), "stage": st.get("name") or d.get("STATUS_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "", "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
+                "tags": json.dumps(normalize_tags(d.get(lead_tags)), ensure_ascii=False),
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         known = {r["id"] for r in records}
@@ -854,12 +877,13 @@ class Bitrix24:
     def fetch_crm_leads(self, employees, fcfg):
         """Текущий срез открытых лидов для воронки лидов (хранится в той же таблице crm_deals, entity = lead)."""
         self.log("Б24: лиды для воронки")
+        tags_field = self.crm_tag_field('lead')
         statuses = self.lead_statuses()
         flt = {} if fcfg.get("include_closed") else {"STATUS_SEMANTIC_ID": "P"}
         leads = self.list_all("crm.lead.list", {
             "filter": flt, "order": {"ID": "ASC"},
             "select": ["ID", "TITLE", "ASSIGNED_BY_ID", "STATUS_ID", "STATUS_SEMANTIC_ID", "OPPORTUNITY", "DATE_CREATE",
-                       "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID"]})
+                       "MOVED_TIME", "COMPANY_TITLE", "COMPANY_ID", tags_field]})
         users = self._user_names(d.get("ASSIGNED_BY_ID") for d in leads)
         snap = time.strftime("%Y-%m-%dT%H:%M:%S")
         rows = []
@@ -871,6 +895,7 @@ class Bitrix24:
                 "responsible_id": rid, "responsible": users.get(rid, ""), "category_id": "lead", "category": "Лиды",
                 "stage_id": d.get("STATUS_ID"), "stage": st.get("name") or d.get("STATUS_ID"), "stage_sort": st.get("sort", 0),
                 "semantic": d.get("STATUS_SEMANTIC_ID"), "title": d.get("TITLE"), "client": d.get("COMPANY_TITLE") or "", "client_ref": "COMPANY:" + str(d["COMPANY_ID"]) if d.get("COMPANY_ID") else None,
+                "tags": json.dumps(normalize_tags(d.get(tags_field)), ensure_ascii=False),
                 "amount": self.num(d.get("OPPORTUNITY")) or 0, "created": self.iso(d.get("DATE_CREATE")),
                 "stage_since": self.iso(d.get("MOVED_TIME")) or self.iso(d.get("DATE_CREATE")), "snapshot": snap})
         return rows
