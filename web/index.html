@@ -1611,10 +1611,17 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       main.innerHTML = `<div class="head"><div><div class="eyebrow">${esc(d.department)} · ${esc(d.position_title)}</div><h1>${crmLink(d.name, d.url)}</h1>
         <div class="sub">${mLabel(d.month)} · Черновик KPI</div></div>${isMgr ? `<button class="btn" id="backBtn">К команде</button>` : ""}</div>
         <section class="panel"><div class="panel-h"><h2>Черновик · начисление премии отключено</h2></div><div class="panel-b">
-          <p>Правила сохранены из регламента. До уточнения настроек показатели не оцениваются и не входят в итоги команды. Оклад и размер премии не заданы.</p>
+          <p>Правила сохранены из регламента. До уточнения настроек показатели не оцениваются и не входят в итоги команды.</p>
           <ul>${d.setup_issues.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></div></section>
         <section class="cards">${d.items.map((i) => `<article class="panel"><div class="panel-h"><div><div class="eyebrow">KPI ${i.n} · ${Math.round(i.weight * 100)}% · Черновик</div><h2>${esc(i.title)}</h2></div></div>
-          <div class="panel-b"><div class="muted small">${esc(i.period)} · ${esc(i.target_text)}</div><p>${esc(i.description)}</p></div></article>`).join("")}</section>`;
+          <div class="panel-b"><div class="muted small">${esc(i.period)} · ${esc(i.target_text)}</div><p>${esc(i.description)}</p>
+            ${(i.components || []).map((c) => `<p class="small">${esc(c.name)} · <b>${fmtVal(c.fact, c.unit)}</b> · справочно</p>`).join("")}
+            ${i.extra?.length ? `<div class="extra">${i.extra.map((x) => `<div>${esc(x.label)} · <b>${fmtExtra(x)}</b></div>`).join("")}</div>` : ""}
+            ${i.details ? `<details class="more"><summary>Проверка поручений · ${i.details.rows.length} записей</summary><div class="more-b">
+              ${i.details.rows.length ? `<div class="dt-wrap"><table class="dt"><thead><tr>${i.details.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>
+                ${i.details.rows.map((row, ri) => `<tr>${row.map((value, ci) => `<td>${detailCell(i.details, ri, ci, value, isMgr)}</td>`).join("")}</tr>`).join("")}
+              </tbody></table></div>` : `<div class="muted small">Поручений за период нет в загруженных данных.</div>`}
+            </div></details>` : ""}</div></article>`).join("")}</section>`;
       const back = document.getElementById("backBtn");
       if (back) back.addEventListener("click", () => { state.view = "team"; location.hash = "team"; load(); });
       return;

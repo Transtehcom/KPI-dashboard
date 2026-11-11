@@ -51,6 +51,9 @@ class NavigationTest(unittest.TestCase):
     def test_brand_field_stays_behind_panels(self):
         self.run_script("test_brand_field.js")
 
+    def test_logistics_draft(self):
+        self.run_script("test_logistics_draft.js")
+
     def test_staff_directory(self):
         self.run_script("test_staff_directory.js")
 

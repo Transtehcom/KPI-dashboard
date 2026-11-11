@@ -10,6 +10,7 @@ from .common import (business_days_between, month_add, month_bounds, parse_date,
 from .call_analysis import secretary_marks
 from .employees import ABSENCE_KINDS
 from .onec_receivables import state_at
+from .onec_logistics import FORWARDER_STATUSES
 from .crm_links import record_url, employee_url
 from . import tender_followups
 
@@ -315,6 +316,29 @@ class Engine:
         return p.get("default_plan")
 
     # ------------------------------------------------------------------ calculators
+    def calc_logistics_discipline(self, e, ctx, p):
+        rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
+                      "AND NOT deleted ORDER BY dt,doc,id", e["login"],
+                      ctx["first"].isoformat(), ctx["last"].isoformat())
+        dates = (("dop", "ДОП"), ("dpp", "ДПП"), ("dof", "ДОФ"), ("dfp", "ДФП"))
+        details, complete = [], 0
+        for row in rows:
+            status = str(row["status"] or "").strip()
+            missing = ([] if status else ["Статус"]) + [label for field, label in dates
+                if parse_date(row[field]) in (None, dt.date.min)]
+            complete += not missing
+            details.append([row["doc"] or row["id"], row["dt"], FORWARDER_STATUSES.get(status, status) or "—",
+                            *[row[field] if parse_date(row[field]) not in (None, dt.date.min) else None for field, _ in dates],
+                            ", ".join(missing) or "—", "Заполнено" if not missing else "Не заполнено"])
+        known = not self._missing_datasets(ctx, ("forwarder_orders",))
+        fact = complete / len(rows) if known and rows else None
+        return {"components": [comp("Поручения со статусом и четырьмя датами", fact, 1.0, "%",
+                                     source=SRC_1C, informative=True)],
+                "extra": [{"label": "Полностью заполнены", "value": f"{complete} из {len(rows)}"},
+                          {"label": "Данные 1С", "value": "Загружены за период" if known else "Период загружен не полностью"}],
+                "details": {"columns": ["Поручение", "Дата", "Статус", "ДОП", "ДПП", "ДОФ", "ДФП", "Не заполнено", "Критерий"],
+                            "rows": details}}
+
     def _missing_datasets(self, ctx, required):
         state = {r["dataset"]: r for r in self.q("SELECT * FROM dataset_state")}
         first, asof = ctx["first"].isoformat(), min(ctx["last"], today()).isoformat()
@@ -1157,7 +1181,7 @@ class Engine:
                               "amount": round(bonus * it["weight"]), "pct": None, "status": "absent", "payout": 0, "components": []})
                 continue
             if draft:
-                r = {"components": []}
+                r = self.calc_logistics_discipline(e, ctx, it.get("params", {})) if it["code"] == "logistics_discipline" else {"components": []}
             else:
                 fn = getattr(self, "calc_" + it["code"])
                 r = fn(e, ctx, it.get("params", {}))

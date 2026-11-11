@@ -245,7 +245,7 @@ def run(con, config, force_demo=False):
                                     config.get("onec", {}).get("datasets", {}).get("supplier_orders", {}).get("source") == "supply_requests" else date_from
                                 replace_rows(con, table, rows, emps=None if table in ("crm_deals", "task_ledger", "task_people", "supply_contracts") else owners,
                                              date_field=date_field, date_from=window_from.isoformat(), commit=False)
-                            if src == "1С" and table in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties", "supply_contracts"):
+                            if src == "1С" and table in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties", "supply_contracts", "forwarder_orders"):
                                 con.execute("INSERT OR REPLACE INTO dataset_state VALUES (?,?,?,?)",
                                             (table, date_from.isoformat(), date_to.isoformat(), dt.datetime.now().isoformat()))
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки

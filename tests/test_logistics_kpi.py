@@ -1,5 +1,6 @@
 """The logistics draft is selectable, faithful to its source and financially inactive."""
 import unittest
+from unittest.mock import patch
 
 from app import employees
 from app.common import connect, load_rules
@@ -82,6 +83,46 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(overview["totals"], baseline)
         group = next(g for g in overview["groups"] if g["position"] == "logistics")
         self.assertTrue(group["employees"][0]["draft"])
+
+    def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
+        engine = self.engine_with_draft()
+        self.con.execute("INSERT INTO dataset_state(dataset,date_from,date_to,updated_at) VALUES(?,?,?,?)",
+                         ("forwarder_orders", "2026-09-01", "2026-11-30", "2026-11-11"))
+        rows = [
+            ("good", "logist", "2026-10-01", "Выдан", 0, "2026-10-02", "2026-10-03", "2026-10-02", "2026-10-03"),
+            ("missing", "logist", "2026-10-02", "ВПути", 0, "2026-10-02", "2026-10-03", None, "0001-01-01"),
+            ("deleted", "logist", "2026-10-03", None, 1, None, None, None, None),
+            ("other", "pm", "2026-10-03", None, 0, None, None, None, None),
+            ("outside", "logist", "2026-09-30", None, 0, None, None, None, None),
+            ("status", "logist", "2026-10-31", " ", 0, "2026-10-02", "2026-10-03", "2026-10-02", "2026-10-03"),
+        ]
+        self.con.executemany("INSERT INTO forwarder_orders(id,emp,dt,status,deleted,dop,dpp,dof,dfp) VALUES(?,?,?,?,?,?,?,?,?)", rows)
+        result = engine.compute("logist", "2026-10")
+        item = next(i for i in result["items"] if i["code"] == "logistics_discipline")
+        self.assertEqual(item["components"][0]["fact"], 1 / 3)
+        self.assertTrue(item["components"][0]["informative"])
+        self.assertEqual(len(item["details"]["rows"]), 3)
+        self.assertEqual(item["details"]["rows"][1][-2], "ДОФ, ДФП")
+        self.assertEqual(item["details"]["rows"][2][-2], "Статус")
+        self.assertEqual(item["status"], "draft")
+        self.assertIsNone(item["pct"])
+        self.assertEqual(item["payout"], 0)
+
+    def test_discipline_empty_or_unsynced_source_is_unknown(self):
+        engine = self.engine_with_draft()
+        item = next(i for i in engine.compute("logist", "2026-10")["items"] if i["code"] == "logistics_discipline")
+        self.assertIsNone(item["components"][0]["fact"])
+        self.assertEqual(item["details"]["rows"], [])
+
+    def test_sync_records_coverage_for_empty_forwarder_dataset(self):
+        from app import sync
+        config = {**self.config, "mode": "real", "onec": {"base_url": "https://example.test", "datasets": {}}}
+        with patch("app.sync.OneC") as source, patch("app.sync.onec_sales_register.fetch", return_value=[]), \
+                patch("app.sync.onec_money.fetch", return_value={"cash": [], "plan": []}):
+            source.return_value.fetch.return_value = {"forwarder_orders": []}
+            result = sync.run(self.con, config)
+        self.assertEqual(result["status"], "ok")
+        self.assertIsNotNone(self.con.execute("SELECT * FROM dataset_state WHERE dataset='forwarder_orders'").fetchone())
 
     def test_bootstrap_exposes_draft_rules_and_all_setup_issues(self):
         profile = self.profile()

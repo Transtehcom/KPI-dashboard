@@ -32,6 +32,7 @@ import datetime as dt
 import json
 
 from .onec import UNMAPPED
+from .onec_logistics import FORWARDER_STATUSES
 
 SUPPLY_STAGES = [("calc", "На расчёте"), ("handed", "Расчёт передан"), ("approve", "Закупка согласуется"),
                  ("placed", "Заказ размещён"), ("shipping", "Ожидается отгрузка")]
@@ -47,9 +48,6 @@ FORWARDER_STAGES = {"prepare": ({"ГотовКОтгрузке", "ПоискТС
                     "closed": ({"Выдан", "Завершено"}, None, None)}
 CLOSED_STAGES = {"closed"}  # конечные этапы: поручения периода, не очередь и не «в работе»
 LOGISTICS_SOURCED = {"calc", *FORWARDER_STAGES}  # этапы, для которых в 1С есть данные
-FORWARDER_STATUSES = {"ПредварительнаяЗаявка": "Предварительная заявка", "ГотовКОтгрузке": "Готов к отгрузке",
-                      "ПоискТС": "Поиск ТС", "НазначенаМашина": "Назначена машина", "ВПути": "В пути",
-                      "ГотовКВыдачи": "Готов к выдаче", "Выдан": "Выдан", "Завершено": "Завершено"}
 DEFAULTS = {"handed_days": 30, "approve_days": 30, "ship_soon_days": 7}
 # пояснения к этапам — под названием этапа на странице («{…}» — параметры из DEFAULTS / config.json)
 SUPPLY_NOTES = {
