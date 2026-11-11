@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from .crm_links import employee_url, portal_origin
 from . import call_feedback, call_recheck, operations, operations_views
+from . import tender_followups
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -844,6 +845,15 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest(str(e))
                 if method == "POST" and not is_mgr:
                     return JsonResponse({"error": "Изменять данные может только руководитель"}, 403)
+                if path == "/api/tender-followup-moves" and method == "POST":
+                    with db_lock():
+                        try:
+                            tender_followups.set_moves(app.con, str(b.get("id") or ""), b.get("value"), me["login"])
+                            app.con.commit()
+                        except ValueError as exc:
+                            app.con.rollback()
+                            raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True})
                 if path == "/api/client-approval" and method == "POST":
                     emp = self.employee_param(b.get("emp"))
                     month = self.month_param(b.get("month"))

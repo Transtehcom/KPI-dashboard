@@ -2,7 +2,7 @@
 import datetime as dt
 
 from .crm_activities import activity_datetime
-from .crm_links import reference_url, record_url, client_url
+from .crm_links import reference_url, record_url, client_url, activity_url
 
 
 def _now():
@@ -37,6 +37,8 @@ def _calls(engine, employee, ctx, item):
     rows = engine.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=? ORDER BY dt,id",
                     employee["login"], first, last)
     engine._mark_secretary(rows)
+    engine.mark_call_next_steps(employee["login"], rows)
+    tender_steps = engine.tender_followups_ready(employee["login"])
     recordings = {r["id"]: r for r in engine.q(
         "SELECT id,phone,crm_activity_id,client_ref FROM call_records WHERE emp=? AND dt>=? AND dt<=?", employee["login"], first, last)}
     phones = {key: row["phone"] for key,row in recordings.items()}
@@ -57,7 +59,13 @@ def _calls(engine, employee, ctx, item):
               if require_lpr else ["Информация об ЛПР для этого показателя не обязательна."])
     if require_lpr and company_lpr:
         rules.append("Сведения об ЛПР берутся именно из карточки компании, в том числе для звонка её контакту или лиду. Заполните поле ЛПР компании подтверждёнными данными.")
-    if not plain:
+    if not plain and tender_steps:
+        rules.extend([
+            "Следующий шаг — назначенное дело компании, связанной со звонком, созданное от момента звонка до истечения 24 часов включительно. Универсальное дело «Связаться с клиентом» подходит. Телефонные записи исключаются.",
+            "Зачёт дают выполненное дело или открытое дело с указанным непросроченным сроком. Выполненное дело учитывается и после его срока. При числе переносов больше пяти дело исключается из зачёта.",
+            "Из нескольких дел достаточно одного подходящего. Один звонок учитывается один раз. В расшифровке выполненное подходящее дело имеет приоритет над открытым.",
+            "Счётчик переносов начинается с первого загруженного среза и растёт при замеченном изменении срока. Несколько изменений между обновлениями различить невозможно. Администратор может указать точное число вручную. Последующие замеченные переносы прибавляются к этой корректировке."])
+    elif not plain:
         rules.append("Следующий шаг: открытое дело, кроме повторного звонка, в карточке компании, связанной со звонком. Срок дела должен быть указан и не просрочен на текущий момент. Дата создания и ответственный не ограничены; закрытые дела не учитываются.")
     else:
         rules.append("В этой версии показателя следующий шаг и ЛПР не обязательны: учитываются звонки нужной длительности не секретарю.")
@@ -66,9 +74,14 @@ def _calls(engine, employee, ctx, item):
     records = []
     for r in rows:
         seconds = r["duration"] or 0
-        if r.get("next_step_deadline"):
-            r["next_step"] = int(r["next_step_deadline"] >= dt.datetime.now().isoformat())
         step_action = "Создайте в карточке связанной компании открытое дело с непросроченным сроком, кроме повторного звонка, либо актуализируйте срок существующего дела. Затем обновите данные."
+        step_detail = "Открытое непросроченное дело в связанной компании найдено." if r["next_step"] else "Открытое непросроченное дело в связанной компании не найдено."
+        if tender_steps:
+            step_action = "Назначьте дело связанной компании в течение 24 часов после звонка и выполните его или сохраните актуальный срок. Проверьте число переносов. Для этого звонка дело, созданное позже окна, зачёт не даст."
+            step_detail = {"completed": "Назначено выполнено.", "open": "Назначено дело не выполнено, срок актуален.",
+                           "overdue": "Назначено просрочено или число переносов больше пяти.",
+                           "unknown": "Для этого звонка требуется обновление данных дел.",
+                           "missing": "Подходящего назначенного дела в течение 24 часов после звонка нет."}.get(r.get("followup_status"), "")
         row_lpr_action = lpr_action
         if str(r.get("contact") or "").startswith("DEAL:") and not r["is_lpr"]:
             row_lpr_action = "Звонок привязан к сделке: текущий источник не определяет ЛПР по этой привязке. Для этого звонка попросите проверить CRM-привязку; для следующих звонков используйте связанную карточку контакта, компании или лида с подтверждёнными сведениями об ЛПР."
@@ -81,7 +94,7 @@ def _calls(engine, employee, ctx, item):
                    secretary_action),
             _check("lpr", "Есть информация об ЛПР", bool(r["is_lpr"]), "Информация об ЛПР подтверждена в выгрузке." if r["is_lpr"] else "Подтверждения ЛПР в выгрузке нет.",
                    row_lpr_action, require_lpr),
-            _check("next_step", "Зафиксирован следующий шаг", bool(r["next_step"]), "Открытое непросроченное дело в связанной компании найдено." if r["next_step"] else "Открытое непросроченное дело в связанной компании не найдено.", step_action, not plain),
+            _check("next_step", "Зафиксирован следующий шаг", None if r["next_step"] is None else bool(r["next_step"]), step_detail, step_action, not plain),
         ]
         eligible = all(c["state"] in ("pass", "na") for c in checks)
         duplicate = bool(unique and eligible and r["id"] not in selected)
@@ -94,6 +107,11 @@ def _calls(engine, employee, ctx, item):
             r["id"] in selected, duplicate, record_url(engine.config,"activities",{**r,
                 "crm_activity_id": recordings.get(r["id"],{}).get("crm_activity_id") or r.get("crm_activity_id")}),
             client_link=client_url(engine.config,r) or client_url(engine.config,recordings.get(r["id"],{}))))
+        if tender_steps:
+            records[-1]["followups"] = [{**a, "url": activity_url(engine.config, a["id"], "COMPANY:" + str(r["company_id"]))}
+                                        for a in r.get("followups", [])]
+            if any(c["state"] == "unknown" for c in checks):
+                records[-1]["counted"] = None
     return records, rules, 0
 
 

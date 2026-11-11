@@ -92,6 +92,34 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_tender_followup_moves_require_admin_and_validate_integer_counts(self):
+        identity = "followup-http-test"
+        with db_lock():
+            self.con.execute("INSERT INTO crm_followups(id) VALUES(?)", (identity,))
+            self.con.commit()
+        def cleanup():
+            with db_lock():
+                self.con.execute("DELETE FROM crm_followups WHERE id=?", (identity,))
+                self.con.commit()
+        self.addCleanup(cleanup)
+        def update(login, value, ref=identity):
+            request = urllib.request.Request(self.base + "/api/tender-followup-moves", method="POST",
+                data=json.dumps({"id": ref, "value": value}).encode(),
+                headers={"Cookie": self.tokens[login], "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code
+        self.assertEqual(update("tender", 6), 403)
+        self.assertEqual(update("boss", "6"), 200)
+        self.assertEqual(self.con.execute("SELECT override_moves FROM crm_followups WHERE id=?", (identity,)).fetchone()[0], 6)
+        self.assertEqual(update("boss", -1), 400)
+        self.assertEqual(update("boss", 1, "missing-followup"), 400)
+        self.assertEqual(update("boss", None), 200)
+        self.assertIsNone(self.con.execute("SELECT override_moves FROM crm_followups WHERE id=?", (identity,)).fetchone()[0])
+
     def test_processing_jobs_admin_only_create_schedule_and_cancel(self):
         def post(login,path,body):
             req=urllib.request.Request(self.base+path,data=json.dumps(body).encode(),

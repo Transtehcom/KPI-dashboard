@@ -299,6 +299,8 @@ table { border-collapse: collapse; width: 100%; }
 .audit-result.unknown { color: var(--fg-2); }
 .audit-why { margin-top: 6px; }
 .audit-why ul { padding-left: 18px; }
+.followup-count { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; }
+.followup-record { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 @media (max-width: 700px) {
   .audit-record-head { grid-template-columns: minmax(0, 1fr); }
   .audit-checks { justify-content: flex-start; max-width: none; }
@@ -1314,6 +1316,22 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     return auditable ? `<details class="kpi-audit" data-code="${esc(code)}" data-kind="${esc(c.audit)}"><summary aria-label="${esc(c.name)} — показать записи и условия">${row}</summary><div class="audit-panel" aria-live="polite"></div></details>` : row;
   }
 
+  function auditFollowups(rows) {
+    if (!rows || !rows.length) return "";
+    const labels = { completed: "Выполнено", open: "Открыто, срок актуален", overdue: "Просрочено", excluded: "Более 5 переносов", undated: "Срок отсутствует" };
+    const manager = state.boot.me.role === "manager";
+    return `<details class="audit-why"><summary>Назначенные дела · ${nf(rows.length)}</summary>${rows.map((a) => `<div class="followup-record">
+      <b>${crmLink(a.subject, a.url)}</b><div>${esc(labels[a.state] || "Проверьте данные")}</div>
+      <div class="muted small">Создано ${esc(operationsMoment(a.created))} · срок ${a.deadline ? esc(operationsMoment(a.deadline)) : "—"}</div>
+      <div>Переносов ${nf(a.total_moves)} · замечено при обновлениях ${nf(a.moves)}${a.override_moves == null ? "" : " · ручная корректировка"}</div>
+      ${manager ? `<form class="inline-form" data-followup-id="${esc(a.id)}"><label>Точное число переносов<input name="moves" type="number" min="0" step="1" value="${a.override_moves == null ? "" : esc(a.total_moves)}" aria-label="Число переносов дела ${esc(a.subject)}"></label><button class="btn" type="submit">Сохранить</button><span class="muted small">Пустое значение возвращает автоматический счётчик.</span></form>` : ""}
+    </div>`).join("")}</details>`;
+  }
+
+  function followupSummary(summary) {
+    return `<div class="manual"><b>${esc(summary.title)}</b>${summary.rows.map((row) => `<div class="followup-count"><span>${esc(row[0])}</span><b>${nf(row[1])}</b></div>`).join("")}<div class="small muted">${esc(summary.hint)}</div>${summary.unknown ? `<div class="small muted">Ожидают обновления данных ${nf(summary.unknown)} звонков.</div>` : ""}</div>`;
+  }
+
   function auditRecord(r) {
     const words = { pass: "Выполнено", fail: "Не выполнено", unknown: "Нет подтверждения", na: "Не требуется" };
     const icons = { pass: "✓", fail: "✕", unknown: "?", na: "—" };
@@ -1327,6 +1345,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         return `<span class="audit-check ${state}" role="img" aria-label="${esc(c.label)}: ${words[state]}" title="${esc(c.detail)}"><b aria-hidden="true">${icons[state]}</b>${esc(c.label)}</span>`;
       }).join("")}</div></div><div class="audit-result ${tone}">${esc(result)}</div>
       ${r.note ? `<div class="muted small">${esc(r.note)}</div>` : ""}
+      ${auditFollowups(r.followups)}
       <details class="audit-why"><summary>${r.counted === true ? "Проверки и источники" : "Почему и что необходимо сделать"}</summary>
         <ul>${r.checks.map((c) => `<li><b>${esc(c.label)}: ${words[c.state] || words.unknown}.</b> ${esc(c.detail)}${c.action ? `<div>${esc(c.action)}</div>` : ""}</li>`).join("")}</ul></details></article>`;
   }
@@ -1350,6 +1369,19 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     };
     panel.oninput = (ev) => { if (ev.target.matches(".audit-search")) redraw(); };
     panel.onclick = (ev) => { const button = ev.target.closest("[data-audit-filter]"); if (button && panel.contains(button)) { panel._auditFilter = button.dataset.auditFilter; redraw(); } };
+    panel.onsubmit = async (event) => {
+      const form = event.target.closest("[data-followup-id]");
+      if (!form || !panel.contains(form)) return;
+      event.preventDefault();
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        const raw = form.elements.moves.value.trim();
+        await api("/api/tender-followup-moves", { id: form.dataset.followupId, value: raw === "" ? null : raw });
+        sideCache = {}; toast("Число переносов сохранено, KPI пересчитан"); load();
+      } catch (error) { if (error.message !== "auth") toast(error.message); }
+      finally { button.disabled = false; }
+    };
     redraw();
   }
 
@@ -1529,6 +1561,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
             <div class="card-score"><div class="p">${i.pct == null ? "—" : pct(i.pct)}</div><div class="r">${rub(i.payout)}</div></div>
             <h3>${esc(i.title)}</h3><div class="tgt"><span class="chip ${st[1]}">${st[0]}</span> &nbsp;${esc(i.target_text)}</div></div>
           <div class="card-b">${i.components.map((c) => compRow(c, inProg, i.code) + (i.aggregation === "equal_mean" ? `<div class="muted small">Выполнение пункта: ${pct(c.pct == null ? null : Math.min(1, Math.max(0, c.pct)), 2)} · вклад в KPI: ${c.pct == null ? "—" : nf(Math.min(1, Math.max(0, c.pct)) * 100 / 3, 2) + " п. п."} из 33,33</div>` : "")).join("")}
+            ${i.followup_summary ? followupSummary(i.followup_summary) : ""}
             ${i.aggregation === "equal_mean" ? `<div class="muted small">Звонки, КП и встречи — по ⅓ KPI (33,33%). Выполнение каждого пункта: факт / норма, максимум 100%. Общий процент — среднее трёх значений, округлённое сначала до десятых, затем до целого (5 вверх). Выплата — от итогового процента.</div>` : ""}
             ${i.plan && isMgr ? `<form class="inline-form" data-plan="${i.plan.metric}"><label for="plan-${i.n}">План на ${MONTHS[+d.month.slice(5) - 1].toLowerCase()}, ₽</label><input id="plan-${i.n}" type="number" min="0" step="10000" value="${i.plan.value ?? ""}"><button class="btn" type="submit">Сохранить план</button>${i.plan.is_default ? `<span class="muted">сейчас — план по умолчанию</span>` : ""}</form>` : ""}
             ${i.code === "conversion_sales" && i.baseline && isMgr ? `<form class="inline-form" data-baseline><label for="base-${i.n}">Средняя конверсия прошлого года, %</label><input id="base-${i.n}" type="number" min="0" max="100" step="0.1"><button class="btn" type="submit">Сохранить</button></form>` : ""}

@@ -30,6 +30,9 @@ class NavigationTest(unittest.TestCase):
     def test_monthly_supply_assessment(self):
         self.run_script("test_monthly_assessment.js")
 
+    def test_tender_followup_breakdown_and_manual_counter(self):
+        self.run_script("test_tender_followups.js")
+
     def test_call_feedback_forms(self):
         self.run_script("test_call_feedback.js")
 

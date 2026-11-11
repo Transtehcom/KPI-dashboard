@@ -8,6 +8,7 @@ import urllib.request
 
 from .common import parse_date
 from .client_qualification import qualify_client
+from . import tender_followups
 from .crm_directions import normalize_tags
 from .crm_activities import (activity_bindings, activity_datetime, activity_deadline, call_binding, followup_activity,
                              is_next_step_for_call, planned_activity)
@@ -137,11 +138,11 @@ class Bitrix24:
         """Любое дело, кроме самого звонка и повторного звонка."""
         return str(a.get("ID")) != str(call_activity_id) and followup_activity(a)
 
-    def next_step_index(self, activities, calls):
+    def next_step_index(self, activities, calls, include_completed=False):
         """Read explicit bindings for open dated non-call plans, including old plans."""
         candidates = {str(a["ID"]): a for a in activities
-                      if followup_activity(a) and str(a.get("COMPLETED") or "").upper() == "N"
-                      and activity_deadline(a)}
+                      if (followup_activity(a) and str(a.get("COMPLETED") or "").upper() == "N" and activity_deadline(a))
+                      or (include_completed and tender_followups.assigned_activity(a))}
         if not candidates:
             return {}
         bindings, errors = self.batch({"binding" + aid: ("crm.activity.binding.list", {"activityId": aid})
@@ -154,6 +155,20 @@ class Bitrix24:
             for owner in activity_bindings(row):
                 index.setdefault(owner, []).append(row)
         return index
+
+    def fetch_followups(self, date_from):
+        rows = self.list_all("crm.activity.list", {
+            "filter": {">=CREATED": date_from.isoformat(), "TYPE_ID": [1, 3, 6]},
+            "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "SUBJECT", "CREATED",
+                       "COMPLETED", "DEADLINE", "START_TIME"], "order": {"ID": "ASC"}})
+        index = self.next_step_index(rows, [], include_completed=True)
+        return self.followup_rows(index)
+
+    @staticmethod
+    def followup_rows(index):
+        rows = {str(row["ID"]): row for group in index.values() for row in group
+                if tender_followups.assigned_activity(row)}
+        return [tender_followups.normalize(row) for row in rows.values()]
 
     @staticmethod
     def lpr(v):
@@ -211,7 +226,7 @@ class Bitrix24:
                             **qualify_client(*(company.get(code) for code in resolved))})
         return out
 
-    def fetch(self, employees, date_from, record_employees=None):
+    def fetch(self, employees, date_from, record_employees=None, followup_from=None):
         """employees: {b24_user_id: login} — сотрудники с KPI. record_employees — те, чьи записи звонков нужны
         разделу «Звонки» (все сотрудники с ID в Б24; по умолчанию — employees). Возвращает словарь таблица → строки."""
         uids = [int(u) for u in employees]
@@ -239,8 +254,16 @@ class Bitrix24:
         open_acts = self.list_all("crm.activity.list", {
             "filter": {"COMPLETED": "N"},
             "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "SUBJECT",
-                       "COMPLETED", "DEADLINE", "START_TIME"], "order": {"ID": "ASC"}})
-        by_owner = self.next_step_index(open_acts, calls)
+                       "COMPLETED", "DEADLINE", "START_TIME", "CREATED"], "order": {"ID": "ASC"}})
+        historical_plans = []
+        if followup_from and followup_from < date_from:
+            historical_plans = self.list_all("crm.activity.list", {
+                "filter": {">=CREATED": followup_from.isoformat(), "<CREATED": df, "TYPE_ID": [1, 3, 6]},
+                "select": ["ID", "OWNER_TYPE_ID", "OWNER_ID", "TYPE_ID", "PROVIDER_ID", "SUBJECT", "CREATED",
+                           "COMPLETED", "DEADLINE", "START_TIME"], "order": {"ID": "ASC"}})
+        all_activities = {str(a["ID"]): a for a in [*open_acts, *historical_plans, *acts]}
+        by_owner = self.next_step_index(all_activities.values(), calls, include_completed=True)
+        out["crm_followups"] = self.followup_rows(by_owner)
         # к чему привязаны звонки и встречи: контакт, компания или лид
         bound = {"CONTACT": set(), "COMPANY": set(), "LEAD": set(), "DEAL": set()}
         for c in calls:
@@ -356,6 +379,8 @@ class Bitrix24:
                          "duration": int(c.get("CALL_DURATION") or 0), "is_lpr": is_lpr, "secretary": is_secr,
                          "next_step": nxt, "next_step_deadline": step_deadline.isoformat() if step_deadline else None, "status": "done", "subject": "", "client": client, "contact": contact,
                          "client_ref": client_reference(c.get("CRM_ENTITY_TYPE"), c.get("CRM_ENTITY_ID")),
+                         "company_id": company_id,
+                         "call_started_at": activity_datetime(c.get("CALL_START_DATE")).isoformat(),
                          "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None})
         out["call_records"] = records
         meeting_files = self._meeting_calendar_files(df)

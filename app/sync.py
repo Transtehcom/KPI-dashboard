@@ -7,7 +7,7 @@ from . import call_records, demo, employees, manual, workload, task_efficiency, 
 from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, merge_rows, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
-from . import b24_sales_register, onec_money, onec_sales_register, operations, onec_operations
+from . import b24_sales_register, onec_money, onec_sales_register, operations, onec_operations, tender_followups
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC, supplier_date_from
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -93,7 +93,14 @@ def run(con, config, force_demo=False):
                 try:
                     # записи звонков — по всем сотрудникам с ID в Б24 (раздел «Звонки»), KPI — только с должностью
                     everyone = {int(e["b24_user_id"]): e["login"] for e in config["employees"] if e.get("b24_user_id")}
-                    data = b24.fetch(by_uid, date_from, record_employees=everyone)
+                    tender_logins = [e["login"] for e in config["employees"] if e.get("position") == "tender"]
+                    followup_from = date_from
+                    if tender_logins:
+                        earliest = con.execute("SELECT MIN(dt) FROM activities WHERE kind='call' AND emp IN (" +
+                                               ",".join("?" for _ in tender_logins) + ")", tender_logins).fetchone()[0]
+                        if earliest:
+                            followup_from = min(date_from, dt.date.fromisoformat(earliest[:10]))
+                    data = b24.fetch(by_uid, date_from, record_employees=everyone, followup_from=followup_from)
                     if config.get("letters_sheet", {}).get("url"):
                         data.pop("kp_letters", None)  # письма с КП берутся из журнала исходящих (ниже)
                     for table, rows in data.items():
@@ -207,6 +214,9 @@ def run(con, config, force_demo=False):
                 with db_lock():
                     try:
                         for src, table, rows, date_field in writes:
+                            if table == "crm_followups":
+                                tender_followups.store(con, rows, followup_from.isoformat())
+                                continue
                             if table == "call_records":  # записи звонков копятся, а не перезаписываются
                                 call_records.upsert(con, rows, commit=False)
                                 continue

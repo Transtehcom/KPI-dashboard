@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS activities (
   has_protocol INTEGER, has_summary INTEGER, subject TEXT, client TEXT, closed_dt TEXT, contact TEXT);
 CREATE INDEX IF NOT EXISTS ix_act ON activities(emp, dt);
 
+CREATE TABLE IF NOT EXISTS crm_followups (
+  id TEXT PRIMARY KEY, created TEXT, deadline TEXT, completed INTEGER, subject TEXT, companies TEXT,
+  moves INTEGER NOT NULL DEFAULT 0, last_deadline TEXT, override_moves INTEGER, override_baseline INTEGER,
+  author TEXT, manual_updated TEXT, observed_at TEXT, present INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX IF NOT EXISTS ix_crm_followups_created ON crm_followups(created);
+
 CREATE TABLE IF NOT EXISTS tenders (
   id TEXT PRIMARY KEY, emp TEXT, title TEXT, client TEXT, created TEXT,
   in_work INTEGER, price_review INTEGER, submitted_date TEXT,
@@ -370,6 +376,9 @@ ADDED_COLUMNS["task_ledger"] = [("project_id", "TEXT")]
 ADDED_COLUMNS["clients"] = [("strategy_count", "INTEGER"), ("strategy_date_count", "INTEGER")]
 ADDED_COLUMNS["activities"].append(("crm_activity_id", "TEXT"))
 ADDED_COLUMNS["activities"].append(("next_step_deadline", "TEXT"))
+ADDED_COLUMNS["activities"].append(("company_id", "TEXT"))
+ADDED_COLUMNS["activities"].append(("call_started_at", "TEXT"))
+ADDED_COLUMNS["crm_followups"] = [("last_deadline", "TEXT")]
 ADDED_COLUMNS["call_processing_jobs"] = [("errors", "TEXT")]
 ADDED_COLUMNS["supplier_orders"] = [("customer_order_key", "TEXT"), ("customer_order_date", "TEXT"),
                                      ("customer_actual_date", "TEXT"), ("defect_fixed_date", "TEXT"),

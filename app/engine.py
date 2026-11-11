@@ -11,6 +11,7 @@ from .call_analysis import secretary_marks
 from .employees import ABSENCE_KINDS
 from .onec_receivables import state_at
 from .crm_links import record_url, employee_url
+from . import tender_followups
 
 SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руководителя"
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
@@ -222,10 +223,7 @@ class Engine:
                     out_.append(r)
             return out_
         out = [r for r in rows if r["direction"] in ("out", "in")]
-        now = dt.datetime.now().isoformat()
-        for r in rows:
-            if r.get("next_step_deadline"):
-                r["next_step"] = int(r["next_step_deadline"] >= now)
+        self.mark_call_next_steps(emp, rows)
         long_ = [r for r in out if (r["duration"] or 0) >= self.min_call]
         self._mark_secretary(long_)
         not_secr = [r for r in long_ if not r["secretary"]]
@@ -238,6 +236,41 @@ class Engine:
             funnel.append(("Есть информация о ЛПР", len(lpr)))
         funnel.append(("Зафиксирован след. шаг", len(result)))
         return result, funnel, not_secr
+
+    def tender_followups_ready(self, login):
+        return (self.employee(login) or {}).get("position") == "tender" and bool(
+            self.con.execute("SELECT 1 FROM dataset_state WHERE dataset='crm_followups'").fetchone())
+
+    def mark_call_next_steps(self, login, rows):
+        if self.tender_followups_ready(login):
+            tender_followups.mark_calls(self.con, rows)
+        else:
+            # Previously loaded call flags remain usable until the first complete
+            # follow-up refresh. Other positions retain their own next-step rule.
+            now = dt.datetime.now().isoformat()
+            for row in rows:
+                if row.get("next_step_deadline"):
+                    row["next_step"] = int(row["next_step_deadline"] >= now)
+
+    def tender_followup_summary(self, login, ctx, selected, unique):
+        if not self.tender_followups_ready(login):
+            return None
+        rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND duration>=? "
+                      "AND direction IN ('in','out') AND dt>=? AND dt<=?", login, self.min_call,
+                      ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")
+        self._mark_secretary(rows)
+        self.mark_call_next_steps(login, rows)
+        qualified = [r for r in rows if not r["secretary"] and r["is_lpr"]]
+        key = lambda r: (r["dt"][:10], r.get("contact") or r["id"]) if unique else r["id"]
+        counted_keys = {key(r) for r in selected}
+        overdue = {key(r) for r in qualified if r.get("followup_status") == "overdue" and key(r) not in counted_keys}
+        return {
+            "title": "Зафиксирован следующий шаг = Назначено дело не выполнено + Назначено выполнено",
+            "rows": [["Назначено дело не выполнено", sum(r.get("followup_status") == "open" for r in selected)],
+                     ["Назначено выполнено", sum(r.get("followup_status") == "completed" for r in selected)],
+                     ["Назначено просрочено", len(overdue)]],
+            "unknown": len({key(r) for r in qualified if r.get("followup_status") == "unknown" and key(r) not in counted_keys}),
+            "hint": "Дело создано в течение 24 часов после звонка. В последней строке также дела с более чем пятью переносами."}
 
     def _meetings(self, emp, ctx, need_protocol=False, same_day_close=False):
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='meeting' AND status='done' AND dt>=? AND dt<=?",
@@ -372,6 +405,7 @@ class Engine:
         emp = e["login"]
         result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True),
                                                                     p.get("one_call_per_contact_day", False))
+        followup_summary = self.tender_followup_summary(emp, ctx, result_calls, p.get("one_call_per_contact_day", False))
         meetings, _ = self._meetings(emp, ctx)
         comps, extra = [], []
         if "touches" in p:
@@ -389,7 +423,8 @@ class Engine:
                 name, counted = f"Звонки от {self.min_call // 60} мин, не секретарю", plain_calls
             else:
                 name, counted = "Результативные звонки", result_calls
-            comps.append(comp(f"{name} ({basis})", len(counted), t, "шт", source=SRC_B24,
+            fact = None if followup_summary and followup_summary["unknown"] else len(counted)
+            comps.append(comp(f"{name} ({basis})", fact, t, "шт", source=SRC_B24,
                               pace=n * so_far if ctx["in_progress"] else None, audit="calls"))
         if "meetings_min" in p:
             comps.append(comp("Встречи / ВКС", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
@@ -462,6 +497,7 @@ class Engine:
                                     "links": [[link["url"]] for link in links]}}
         return {
             "components": comps, "extra": extra,
+            "followup_summary": followup_summary,
             "funnel": {"title": "Как отбираются результативные звонки", "steps": call_funnel},
             "details": {"columns": ["Дата", "Клиент", "Длительность, мин", "Тема"],
                         "rows": [[r["dt"][:16].replace("T", " "), r["client"], round((r["duration"] or 0) / 60, 1),
