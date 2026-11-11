@@ -25,12 +25,14 @@ def timestamp():
 
 
 class JobQueue:
-    def __init__(self, con, config, workers=None):
+    def __init__(self, con, config, workers=None, recover=True):
         self.con, self.config = con, config
         self.workers = max(1, min(8, int(workers or config.get("call_records", {}).get("analysis_workers", 3))))
         self.active, self.call_locks = {}, {}
         self.wake, self.stopped = threading.Event(), threading.Event()
         self.scheduler = None
+        if not recover:
+            return  # A separate producer may enqueue without owning the running workers.
         with db_lock():
             con.execute("UPDATE call_processing_jobs SET status='interrupted', finished=?, "
                         "message='Прервано перезапуском сервиса; создайте новую задачу для продолжения' "

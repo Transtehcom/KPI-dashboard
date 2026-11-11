@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import urllib.request
+import uuid
 
 from .anonymize import restore
 from .call_analysis import secretary_marks
@@ -247,26 +248,29 @@ def resolve_bindings(con, b24):
 def _download(url, path):
     """Скачать файл через временный .part. Возвращает размер; страница ошибки вместо аудио — исключение."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".part"
-    with urllib.request.urlopen(url, timeout=120) as r:
-        ctype = (r.headers.get("Content-Type") or "").lower()
-        if "html" in ctype or "json" in ctype or ctype.startswith("text/"):
-            raise ValueError(f"вместо записи пришло {ctype}")
-        with open(tmp, "wb") as f:
-            while True:
-                chunk = r.read(1 << 16)
-                if not chunk:
-                    break
-                f.write(chunk)
-    size = os.path.getsize(tmp)
-    if not size:
-        os.remove(tmp)
-        raise ValueError("пустой файл")
-    os.replace(tmp, path)
-    return size
+    tmp = path + "." + uuid.uuid4().hex + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as r:
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "html" in ctype or "json" in ctype or ctype.startswith("text/"):
+                raise ValueError(f"вместо записи пришло {ctype}")
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        size = os.path.getsize(tmp)
+        if not size:
+            raise ValueError("пустой файл")
+        os.replace(tmp, path)
+        return size
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
-def download_pending(con, b24, config, log=print):
+def download_pending(con, b24, config, log=print, ids=None):
     """Скачать ещё не скачанные записи, новые первыми. Возвращает (скачано, ошибок)."""
     s = settings(config)
     q, args = "SELECT * FROM call_records WHERE file IS NULL AND purged IS NULL AND attempts < ?", [MAX_ATTEMPTS]
@@ -276,7 +280,14 @@ def download_pending(con, b24, config, log=print):
     if since:
         q += " AND dt >= ?"
         args.append(max(since))
-    rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT ?", args + [int(s["max_per_run"])])]
+    if ids is not None:
+        ids = list(ids)
+        if not ids:
+            return 0, 0
+        q += " AND id IN (" + ",".join("?" for _ in ids) + ")"
+        args.extend(ids)
+    limit = len(ids) if ids is not None else int(s["max_per_run"])
+    rows = [dict(r) for r in con.execute(q + " ORDER BY dt DESC LIMIT ?", args + [limit])]
     if not rows:
         return 0, 0
     # ссылка на скачивание с Диска Б24 временная — берём её непосредственно перед скачиванием

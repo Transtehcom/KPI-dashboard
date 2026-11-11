@@ -2,6 +2,7 @@
 
   python manage.py run                 — запустить веб-сервер
   python manage.py sync                — выгрузить данные из Битрикс24 и 1С (или пересоздать демо-данные)
+  python manage.py daily-calls --wait   — обновить и разобрать звонки за сегодня по UTC+5
   python manage.py password ЛОГИН      — задать пароль пользователю
   python manage.py check               — проверить подключение к Битрикс24 и 1С
   python manage.py stages              — показать стадии сделок и статусы лидов Б24 (для настройки deal_funnel и lead_funnel)
@@ -22,6 +23,9 @@ def main():
         from app import sync
         from app.common import connect, load_config
         print(sync.run(connect(), load_config())["message"])
+    elif cmd == "daily-calls":
+        from app.daily_calls import main as daily_calls
+        sys.exit(daily_calls(sys.argv[2:]))
     elif cmd == "password":
         from app import employees
         from app.common import connect, load_config, load_rules

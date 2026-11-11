@@ -115,6 +115,52 @@ class Bitrix24:
                 out[str(r["ID"])] = r
         return out
 
+    def fetch_recordings(self, employees, day):
+        """Read recordings for one calendar day in UTC+5 without loading KPI datasets."""
+        if not employees:
+            return []
+        timezone = dt.timezone(dt.timedelta(hours=5))
+        first = dt.datetime.combine(day, dt.time(), timezone)
+        last = first + dt.timedelta(days=1)
+        calls = self.list_all("voximplant.statistic.get", {
+            "FILTER": {">=CALL_START_DATE": first.isoformat(), "<CALL_START_DATE": last.isoformat(),
+                       "PORTAL_USER_ID": sorted(employees)}, "SORT": "CALL_START_DATE", "ORDER": "ASC"})
+        rows = []
+        for call in calls:
+            started = dt.datetime.fromisoformat(str(call["CALL_START_DATE"]).replace("Z", "+00:00"))
+            started = started.replace(tzinfo=timezone) if started.tzinfo is None else started.astimezone(timezone)
+            login = employees.get(int(call.get("PORTAL_USER_ID") or 0))
+            if not (login and first <= started < last and (call.get("RECORD_FILE_ID") or call.get("CALL_RECORD_URL"))):
+                continue
+            kind, identity = call.get("CRM_ENTITY_TYPE"), str(call.get("CRM_ENTITY_ID") or "")
+            reference = f"{kind}:{identity}" if kind in OWNER_TYPES and identity else None
+            rows.append({"id": "call" + str(call["ID"]), "call_id": call.get("CALL_ID"), "emp": login,
+                         "dt": started.replace(tzinfo=None).isoformat(timespec="seconds"),
+                         "direction": "out" if str(call.get("CALL_TYPE")) == "1" else "in",
+                         "duration": int(call.get("CALL_DURATION") or 0), "phone": call.get("PHONE_NUMBER"),
+                         "crm_entity": reference, "client_ref": reference, "client": "",
+                         "crm_activity_id": str(call.get("CRM_ACTIVITY_ID") or "") or None,
+                         "record_file_id": str(call.get("RECORD_FILE_ID") or "") or None,
+                         "record_url": call.get("CALL_RECORD_URL") or None})
+        for kind in OWNER_TYPES:
+            prefix = kind + ":"
+            related = [row for row in rows if (row["crm_entity"] or "").startswith(prefix)]
+            if not related:
+                continue
+            entities = self.by_ids("crm." + kind.lower() + ".list",
+                                   [row["crm_entity"].split(":", 1)[1] for row in related],
+                                   ["ID", "NAME", "LAST_NAME", "COMPANY_ID"] if kind == "CONTACT" else ["ID", "TITLE"])
+            companies = self.by_ids("crm.company.list", [entity.get("COMPANY_ID") for entity in entities.values()],
+                                    ["ID", "TITLE"]) if kind == "CONTACT" else {}
+            for row in related:
+                entity = entities.get(row["crm_entity"].split(":", 1)[1], {})
+                row["client"] = entity.get("TITLE") or " ".join(filter(None, [entity.get("NAME"), entity.get("LAST_NAME")]))
+                company = companies.get(str(entity.get("COMPANY_ID")), {})
+                if company.get("TITLE"):
+                    row["client"] = company["TITLE"]
+                    row["client_ref"] = "COMPANY:" + str(entity["COMPANY_ID"])
+        return rows
+
     # ---------- утилиты
     @staticmethod
     def flag(v):
