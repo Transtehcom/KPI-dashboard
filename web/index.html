@@ -320,6 +320,7 @@ table { border-collapse: collapse; width: 100%; }
 .payment-confirm h2 { margin: 0 0 14px; font-size: 19px; }
 .payment-confirm p { line-height: 1.6; }
 .payment-confirm .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.call-reprocess .actions { flex-wrap: wrap; }
 .call-auto-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .call-auto-switch input { appearance: none; width: 36px; min-width: 36px; height: 20px; padding: 2px; border-radius: 12px; background: var(--line-strong); }
 .call-auto-switch input::before { content: ""; display: block; width: 14px; height: 14px; border-radius: 50%; background: white; transition: transform .15s; }
@@ -2116,6 +2117,27 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       renderCalls(d, log);
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
+  function chooseCallReprocessing(summary) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "payment-confirm call-reprocess";
+      dialog.setAttribute("aria-labelledby", "call-repeat-title");
+      dialog.innerHTML = `<h2 id="call-repeat-title">Повторная обработка звонков</h2>
+        <p>У <b>${esc(nf(summary.processed))}</b> из <b>${esc(nf(summary.total))}</b> выбранных звонков уже есть готовый разбор.</p>
+        <p class="muted small">Без готового разбора — ${esc(nf(summary.pending))}. Повторная обработка обновит результаты и расходует лимит подписки.</p>
+        <div class="actions"><button type="button" class="btn ghost" data-reprocess-cancel>Отмена</button><button type="button" class="btn primary" data-reprocess="skip">Пропустить обработанные</button><button type="button" class="btn" data-reprocess="repeat">Обработать повторно</button></div>`;
+      let choice = null;
+      dialog.querySelectorAll("[data-reprocess]").forEach((button) => button.addEventListener("click", () => {
+        choice = button.dataset.reprocess === "repeat";
+        dialog.close();
+      }));
+      dialog.querySelector("[data-reprocess-cancel]").addEventListener("click", () => dialog.close());
+      dialog.addEventListener("close", () => { dialog.remove(); resolve(choice); }, {once: true});
+      document.body.append(dialog);
+      dialog.showModal();
+    });
+  }
+
   function chooseCallAuto(options) {
     return new Promise((resolve) => {
       const dialog = document.createElement("dialog");
@@ -2203,8 +2225,6 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const cmp = (a, b) => (typeof a === "number" ? a - b : String(a).localeCompare(String(b), "ru"));
     const calls = [...d.calls].sort((a, b) => sort.dir * cmp(SORT_KEYS[sort.key](a), SORT_KEYS[sort.key](b)) || cmp(b.dt, a.dt));
     const cpg = (state.cPg = state.cPg || {}), pgc = pgInfo(cpg, calls.length);
-    const needs = (c) => c.audio === "ready" && (!c.analysis || c.transcript !== "ready");  // звонок ждёт расшифровки или разбора
-    const todoAll = d.calls.filter(needs).length;
     if (!state.cSel) state.cSel = new Set();
     const ready = calls.filter((c) => c.audio === "ready");
     for (const id of [...state.cSel]) if (!ready.some((c) => c.id === id)) state.cSel.delete(id);  // выбор только среди звонков списка
@@ -2260,7 +2280,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div>
         ${isMgr && d.calls.length ? `<div style="margin-left:auto;text-align:right"><div style="display:flex;gap:8px;justify-content:flex-end">${modelMenu()}<details class="proc" id="cProc"><summary class="btn">Обработать…</summary><div class="proc-pop">
           ${picked ? `<button type="button" data-batch="sel">Выбранные <span class="muted small">· ${nf(picked)}</span></button>` : ""}
-          <button type="button" data-batch="all">Всё <span class="muted small">· ${nf(todoAll)} к обработке</span></button>
+          <button type="button" data-batch="all">Всё <span class="muted small">· ${nf(ready.length)} звонков</span></button>
           <button type="button" data-batch="yday">За прошлый день</button>
           <button type="button" id="cRngTog" aria-expanded="false">Выбрать период… ▸</button>
           <div class="rng" id="cRng" hidden><label for="cRngFrom">с<input type="date" id="cRngFrom" value="${esc(isoDay(new Date()))}"></label><label for="cRngTo">по<input type="date" id="cRngTo" value="${esc(isoDay(new Date()))}"></label><button class="btn" type="button" data-batch="range">Обработать</button></div>
@@ -2305,13 +2325,20 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const updateAuto = isMgr ? mountCallAuto(document.getElementById("cAutoPanel"), d.model_options) : null;
     const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
     const startProc = async (body, ask) => {
-      if (ask && !confirm(ask + (state.cRunAt ? ` Разовый запуск: ${dtLabel(state.cRunAt)} (время сервиса).` : ""))) return;
+      if (ask && !confirm(ask + (state.cRunAt ? ` Разовый запуск: ${dtLabel(state.cRunAt)} (время сервиса).` : ""))) return false;
       body = { ...body, run_at: state.cRunAt || null, fast:fastCalls(), model: pick("callModelV2", MODELS, "gpt-5.6-terra"), effort: pick("callEffortV2", modelEfforts(pick("callModelV2", MODELS, "gpt-5.6-terra")), "high") };
       try {
-        const r = await api(`/api/calls-process?${state.cQs}`, body);
+        const path = `/api/calls-process?${state.cQs || ""}`;
+        let r = await api(path, body);
+        if (r.needs_choice) {
+          const reprocess = await chooseCallReprocessing(r);
+          if (reprocess === null) return false;
+          r = await api(path, {...body, ids: r.ids, reprocess});
+        }
         toast(r.message);
         if (r.ok) { if (job) job.textContent = r.message; watchJob(); } else if (job) job.textContent = r.message;
-      } catch (e) { if (e.message !== "auth") toast(e.message); }
+        return Boolean(r.job);
+      } catch (e) { if (e.message !== "auth") toast(e.message); return false; }
     };
     const watchJob = async () => {
       clearTimeout(state.cJobT);
@@ -2384,21 +2411,21 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       const kind = btn.dataset.batch, risk = "Расшифровка идёт на этом компьютере, разбор — через Codex и расходует лимит подписки.";
       if (kind === "sel" || kind === "yday" || kind === "range") {
         let body, what;
-        if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${picked} (уже разобранные будут разобраны заново)`; }
+        if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${picked}`; }
         else {
           let a, b;
           if (kind === "yday") { const t = new Date(); t.setDate(t.getDate() - 1); a = b = isoDay(t); }
           else { a = document.getElementById("cRngFrom").value; b = document.getElementById("cRngTo").value; if (!a || !b) { toast("Укажите период"); return; } if (a > b) [a, b] = [b, a]; }
-          body = { mode: "range", date_from: a, date_to: b }; what = `звонков за ${periodLabel(a, b)} (необработанных)`;
+          body = { mode: "range", date_from: a, date_to: b }; what = `звонков за ${periodLabel(a, b)}`;
         }
         if (proc) proc.open = false;
-        startProc(body, `Обработать ${what}? ${risk}`).then(() => { if (kind === "sel") { state.cSel = new Set(); } });
+        startProc(body, `Обработать ${what}? ${risk}`).then((started) => { if (started && kind === "sel") { state.cSel = new Set(); } });
         return;
       }
       if (proc) proc.open = false;
       const all = btn.dataset.batch === "all", n = +btn.dataset.n || 0;
-      const count = all ? todoAll : [...d.calls].filter((c) => c.audio === "ready").sort((a, b) => cmp(b.dt, a.dt)).slice(0, n).filter(needs).length;
-      if (!count) { toast("Выбранные звонки уже обработаны"); return; }
+      const count = all ? ready.length : Math.min(n, ready.length);
+      if (!count) { toast("Нет звонков с доступной записью"); return; }
       startProc(all ? { mode: "all" } : { mode: "last", n },
         `Обработать звонков: ${count}? Расшифровка идёт на этом компьютере, разбор — через Codex и расходует лимит подписки.`);
     }));

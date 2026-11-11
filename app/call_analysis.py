@@ -478,17 +478,19 @@ def analyze_row(con, config, r, titles, log=print, model=MODEL, effort=EFFORT):
 
 # ---------- ручная обработка звонков из раздела «Звонки»: расшифровка (если нет) и разбор Codex, в любое время суток
 
-def todo(con, ids):
+def todo(con, ids, accept_old=False):
     """Из ids (новые первыми) — звонки с записью, у которых нет расшифровки текущей модели или разбора: {id: нужно_расшифровать}."""
     ids = list(ids)
     out = {}
+    version_filter = "" if accept_old else " AND version >= ?"
+    version_args = () if accept_old else (PROMPT_VERSION,)
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
         ph = ",".join("?" * len(chunk))
         have = {r["id"]: r["engine"] for r in con.execute(
             f"SELECT id, engine FROM call_transcripts WHERE segments IS NOT NULL AND id IN ({ph})", chunk)}
-        done = {r["id"] for r in con.execute(f"SELECT id FROM call_analysis WHERE result IS NOT NULL AND version >= ? "
-                                             f"AND id IN ({ph})", (PROMPT_VERSION, *chunk))}
+        done = {r["id"] for r in con.execute("SELECT id FROM call_analysis WHERE result IS NOT NULL" + version_filter +
+                                             f" AND id IN ({ph})", (*version_args, *chunk))}
         for rid in chunk:
             if rid not in done:
                 out[rid] = have.get(rid) != ENGINE

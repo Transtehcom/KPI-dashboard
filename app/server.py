@@ -527,7 +527,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        self.api("POST", u.path, {})
+        self.api("POST", u.path, {k: v[0] for k, v in parse_qs(u.query).items()})
 
     def operations_response(self, method, path, query, body, me):
         if me.get('role') != 'manager':
@@ -1084,12 +1084,18 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/calls-process" and method == "POST":  # обработать звонок / «всё» / последние N из текущего списка
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только руководителю"}, 403)
+                    if "reprocess" in b and type(b["reprocess"]) is not bool:
+                        raise BadRequest("Выберите, обрабатывать ли готовые разборы повторно")
+                    batch = not bool(b.get("id"))
+                    skip_processed = False
                     if b.get("id"):
                         if not call_records.get(app.con, str(b["id"])):
                             return JsonResponse({"error": "Звонок не найден"}, 404)
                         ids, force = [str(b["id"])], True  # один звонок — всегда заново
-                    elif b.get("ids"):  # выбранные галочками — повторная обработка тоже
-                        ids = [str(i) for i in b["ids"]][:1000]
+                    elif b.get("ids"):
+                        if not isinstance(b["ids"], list) or len(b["ids"]) > 10000:
+                            raise BadRequest("Выберите от 1 до 10 000 звонков")
+                        ids = list(dict.fromkeys(str(i) for i in b["ids"]))
                         if not all(call_records.get(app.con, i) for i in ids):
                             return JsonResponse({"error": "Звонок не найден"}, 404)
                         force = True
@@ -1118,11 +1124,26 @@ class Handler(BaseHTTPRequestHandler):
                     model, effort = b.get("model") or call_analysis.MODEL, b.get("effort") or call_analysis.EFFORT
                     try:
                         call_analysis.validate_selection(model, effort)
+                        call_analysis.validate_fast(b.get("fast", False))
                     except ValueError as exc:
                         raise BadRequest(str(exc)) from None
+                    if batch:
+                        with app.lock:
+                            pending = call_analysis.todo(app.con, ids, accept_old=True)
+                        processed = len(ids) - len(pending)
+                        if processed and "reprocess" not in b:
+                            return JsonResponse({"needs_choice": True, "ids": ids, "total": len(ids),
+                                                 "processed": processed, "pending": len(pending)})
+                        force = b.get("reprocess", False)
+                        skip_processed = not force
+                        if skip_processed:
+                            ids = list(pending)
+                        if not ids:
+                            return JsonResponse({"ok": True, "job": None, "message": "Выбранные звонки уже обработаны"})
                     try:
                         row = app.processing_jobs().create(ids, force, model, effort,
-                                                           run_at=b.get("run_at"), author=me["login"], fast=b.get("fast",False))
+                                                           run_at=b.get("run_at"), author=me["login"], fast=b.get("fast",False),
+                                                           skip_processed=skip_processed)
                     except ValueError as exc:
                         raise BadRequest(str(exc))
                     return JsonResponse({"ok": True, "job": row, "message": "Задача создана: " + str(row["total"]) + " звонков"})

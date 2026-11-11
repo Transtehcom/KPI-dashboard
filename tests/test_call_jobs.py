@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import threading
 import time
 import unittest
@@ -33,6 +34,31 @@ class CallJobsTest(unittest.TestCase):
         self.queue.tick()
         self.wait_status(job["id"],{"completed"})
         self.assertEqual(seen,[True])
+
+    def test_new_skip_policy_excludes_completed_analyses_from_any_version(self):
+        from app.call_analysis import PROMPT_VERSION
+        self.con.execute("INSERT INTO call_analysis(id,result,version) VALUES('old','{}',?)", (PROMPT_VERSION - 1,))
+        self.con.commit()
+        job = self.queue.create(['old', 'new'], skip_processed=True)
+        row = self.con.execute('SELECT ids,skip_processed,force FROM call_processing_jobs WHERE id=?', (job['id'],)).fetchone()
+        self.assertEqual(json.loads(row['ids']), ['new'])
+        self.assertEqual((row['skip_processed'], row['force']), (1, 0))
+
+    def test_skip_policy_checks_again_before_processing_a_call_completed_while_queued(self):
+        from app.call_analysis import PROMPT_VERSION
+        job = self.queue.create(['later'], skip_processed=True)
+        self.con.execute("INSERT INTO call_analysis(id,result,version) VALUES('later','{}',?)", (PROMPT_VERSION - 1,))
+        self.con.commit()
+        self.queue.tick()
+        finished = self.wait_status(job['id'], {'completed'})
+        self.assertEqual((finished['done'], finished['skipped']), (0, 1))
+
+    def test_new_jobs_do_not_change_existing_jobs_repeat_policy(self):
+        first = self.queue.create(['existing'], force=True)
+        before = dict(self.con.execute('SELECT * FROM call_processing_jobs WHERE id=?', (first['id'],)).fetchone())
+        self.queue.create(['new'], skip_processed=True)
+        after = dict(self.con.execute('SELECT * FROM call_processing_jobs WHERE id=?', (first['id'],)).fetchone())
+        self.assertEqual(after, before)
 
     def test_two_jobs_run_in_parallel_and_third_waits(self):
         gate=threading.Event(); entered=[]

@@ -90,9 +90,11 @@ class JobQueue:
                 "timezone": dt.datetime.now().astimezone().strftime("UTC%z")}
 
     def create(self, ids, force=False, model=call_analysis.MODEL, effort=call_analysis.EFFORT,
-               run_at=None, author="", feedback=None, fast=False):
+               run_at=None, author="", feedback=None, fast=False, skip_processed=False):
         call_analysis.validate_selection(model, effort)
         call_analysis.validate_fast(fast)
+        if type(skip_processed) is not bool:
+            raise ValueError("Укажите, пропускать ли готовые разборы")
         if not isinstance(ids, (list, tuple)) or not ids or len(ids) > 10000:
             raise ValueError("Выберите от 1 до 10 000 звонков")
         ids = list(dict.fromkeys(str(rid) for rid in ids))
@@ -119,7 +121,7 @@ class JobQueue:
                     raise ValueError("Нет незакрытого замечания для повторной проверки")
                 feedback, force = current, True
             if not force:
-                ids = list(call_analysis.todo(self.con, ids))
+                ids = list(call_analysis.todo(self.con, ids, accept_old=skip_processed))
             if not ids:
                 raise ValueError("Все выбранные звонки уже обработаны")
             count = self.con.execute("SELECT COUNT(*) FROM call_processing_jobs WHERE status IN "
@@ -132,7 +134,8 @@ class JobQueue:
                              (jid, json.dumps(ids), int(force), model, effort, author, now,
                               scheduled.isoformat(timespec="seconds") if scheduled else now,
                               "queued", len(ids), "Ожидает указанного времени" if scheduled else "В очереди"))
-            self.con.execute("UPDATE call_processing_jobs SET fast=? WHERE id=?", (int(fast), jid))
+            self.con.execute("UPDATE call_processing_jobs SET fast=?,skip_processed=? WHERE id=?",
+                             (int(fast), int(skip_processed), jid))
             if feedback is not None:
                 from . import call_recheck
                 call_recheck.enqueue(self.con, jid, ids[0], feedback, author, now)
@@ -207,7 +210,7 @@ class JobQueue:
 
     def process_call(self, rid, force, cancel):
         with db_lock():
-            plan = call_analysis.todo(self.con, [rid])
+            plan = call_analysis.todo(self.con, [rid], accept_old=getattr(self.current, "skip_processed", False))
             if not force and rid not in plan:
                 return "skipped"
             row = self.con.execute("SELECT engine FROM call_transcripts WHERE id=? AND segments IS NOT NULL",
@@ -258,6 +261,7 @@ class JobQueue:
         errors = []
         try:
             self.current.config = {**self.config, "codex_fast": bool(job.get("fast", 0))}
+            self.current.skip_processed = bool(job.get("skip_processed", 0))
             self.current.model, self.current.effort, self.current.job_id = job["model"], job["effort"], jid
             for index, rid in enumerate(json.loads(job["ids"]), 1):
                 if cancel.is_set():

@@ -180,6 +180,50 @@ class ListenTest(unittest.TestCase):
         self.assertFalse(disabled['enabled'])
         self.assertEqual(post('boss', {'enabled': True, 'revision': disabled['revision']})[0], 400)
 
+    def test_batch_processing_requests_repeat_choice_and_respects_it(self):
+        from app.call_analysis import PROMPT_VERSION
+        created = []
+        def cleanup():
+            with db_lock():
+                self.con.execute("DELETE FROM call_analysis WHERE id='call1'")
+                self.con.executemany('DELETE FROM call_processing_jobs WHERE id=?', [(identity,) for identity in created])
+                self.con.commit()
+        self.addCleanup(cleanup)
+        def post(body):
+            request = urllib.request.Request(self.base + '/api/calls-process?date_from=2026-10-01&date_to=2026-10-31',
+                data=json.dumps(body).encode(), headers={'Cookie': self.tokens['boss'], 'Content-Type': 'application/json'}, method='POST')
+            try:
+                with urllib.request.urlopen(request) as response:
+                    result = json.load(response)
+                    if result.get('job'):
+                        created.append(result['job']['id'])
+                    return response.status, result
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code, json.load(error)
+        with db_lock():
+            self.con.execute("INSERT OR REPLACE INTO call_analysis(id,result,version) VALUES('call1','{}',?)", (PROMPT_VERSION - 1,))
+            self.con.commit()
+        code, preview = post({'mode': 'all'})
+        self.assertEqual(code, 200)
+        self.assertIn('needs_choice', preview)
+        self.assertTrue(preview['needs_choice'])
+        self.assertEqual((preview['processed'], preview['pending'], preview['total']), (1, 1, 2))
+        self.assertEqual(created, [])
+        future = (__import__('datetime').datetime.now() + __import__('datetime').timedelta(days=1)).isoformat(timespec='minutes')
+        code, skipped = post({'ids': preview['ids'], 'reprocess': False, 'run_at': future})
+        self.assertEqual(code, 200)
+        row = self.con.execute('SELECT ids,force,skip_processed FROM call_processing_jobs WHERE id=?', (skipped['job']['id'],)).fetchone()
+        self.assertEqual(json.loads(row['ids']), ['call3'])
+        self.assertEqual((row['force'], row['skip_processed']), (0, 1))
+        code, repeated = post({'ids': preview['ids'], 'reprocess': True, 'run_at': future})
+        self.assertEqual(code, 200)
+        self.assertEqual((repeated['job']['total'], repeated['job']['force'], repeated['job']['skip_processed']), (2, 1, 0))
+        code, empty = post({'ids': ['call1'], 'reprocess': False})
+        self.assertEqual(code, 200)
+        self.assertIsNone(empty['job'])
+        self.assertEqual(post({'ids': ['call1'], 'reprocess': 'yes'})[0], 400)
+
     def test_feedback_recheck_admin_revision_schedule_and_privacy(self):
         from app import call_feedback
         with db_lock():
