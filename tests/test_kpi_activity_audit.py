@@ -56,13 +56,16 @@ class KPIActivityAuditTest(unittest.TestCase):
         self.assertEqual(self.states(self.row(r, "ctender6"))["next_step"], "fail")
         self.assertTrue(self.row(r, "ctender6")["actions"])
 
-    def test_pm_lpr_is_not_required_and_manual_secretary_override_is_used(self):
-        self.put("activities", [call(1, "pm", "2026-10-05", lpr=0, secretary=1)])
+    def test_pm_requires_lpr_and_preserves_manual_secretary_override(self):
+        self.put("activities", [call(1, "pm", "2026-10-05", lpr=0, secretary=1),
+                                call(2, "pm", "2026-10-05", lpr=1, secretary=1)])
         self.con.execute("INSERT INTO call_marks VALUES ('cpm1',0,'boss','2026-10-06')")
+        self.con.execute("INSERT INTO call_marks VALUES ('cpm2',0,'boss','2026-10-06')")
         r = self.audit("calls", "pm")
         row = self.row(r, "cpm1")
-        self.assertTrue(row["counted"])
-        self.assertEqual(self.states(row)["lpr"], "na")
+        self.assertFalse(row["counted"])
+        self.assertEqual(self.states(row)["lpr"], "fail")
+        self.assertTrue(self.row(r, "cpm2")["counted"])
         self.assertEqual(self.states(row)["not_secretary"], "pass")
         self.assertIn("руководитель", " ".join(c["detail"] for c in row["checks"]))
 

@@ -128,12 +128,12 @@ class EngineTest(unittest.TestCase):
                     self.assertTrue(funnel["kpi"].startswith(f"KPI {number}."))
                     self.assertEqual(self.calc(login, code, "2026-11")["components"][0]["fact"], int(dated))
 
-    def test_pm_calls_do_not_require_lpr_but_tender_calls_do(self):
+    def test_sales_and_tender_calls_require_lpr(self):
         insert(self.con, "activities", [call(1, "pm", "2026-09-10", lpr=0), call(2, "pm", "2026-09-11", lpr=1),
                                         call(3, "pm", "2026-09-11", secretary=1),
                                         call(4, "tender", "2026-09-10", lpr=0), call(5, "tender", "2026-09-11", lpr=1)])
         pm = self.calc("pm", "operational_activity", "2026-09")["components"][0]
-        self.assertEqual(pm["fact"], 2)
+        self.assertEqual(pm["fact"], 1)
         tender = self.calc("tender", "base_development", "2026-09")["components"][0]
         self.assertEqual(tender["fact"], 1)
 
@@ -175,7 +175,7 @@ class EngineTest(unittest.TestCase):
         d1, d2 = dt.date(2026, 10, 1), dt.date(2026, 10, 19)
         pm = self.engine.call_funnel("pm", d1, d2)
         self.assertEqual(pm["steps"], [("Входящие и исходящие звонки", 2), ("От 2 мин", 1), ("Не секретарь", 1),
-                                       ("Зафиксирован след. шаг", 1)])  # ЛПР не нужен; звонок 20-го вне периода
+                                       ("Есть информация о ЛПР", 0), ("Зафиксирован след. шаг", 0)])  # звонок 20-го вне периода
         self.assertTrue(pm["kpi"].startswith("KPI "))
         tender = self.engine.call_funnel("tender", d1, d2)
         self.assertEqual(tender["steps"][0], ("Входящие и исходящие звонки", 2))  # два звонка контакту 7 в один день — один

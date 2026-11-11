@@ -207,8 +207,7 @@ class Engine:
                 r["secretary"], r["secretary_src"] = 1, "разбор Codex"
 
     def _result_calls(self, emp, ctx, require_lpr=True, one_per_contact_day=False):
-        """Результативные звонки. require_lpr — нужна информация о ЛПР (тендерные регламенты);
-        у ПМ регламент требует только ответ на квалифицирующий вопрос и следующий шаг.
+        """Результативные звонки. require_lpr — нужна подтверждённая информация о ЛПР.
         Возвращает (результативные звонки, воронку отбора, звонки от min_call не секретарю)."""
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=? ORDER BY dt,id",
                       emp, ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59")
@@ -237,12 +236,12 @@ class Engine:
         funnel.append(("Зафиксирован след. шаг", len(result)))
         return result, funnel, not_secr
 
-    def tender_followups_ready(self, login):
-        return (self.employee(login) or {}).get("position") == "tender" and bool(
+    def call_followups_ready(self, login):
+        return (self.employee(login) or {}).get("position") in ("tender", "pm") and bool(
             self.con.execute("SELECT 1 FROM dataset_state WHERE dataset='crm_followups'").fetchone())
 
     def mark_call_next_steps(self, login, rows):
-        if self.tender_followups_ready(login):
+        if self.call_followups_ready(login):
             tender_followups.mark_calls(self.con, rows)
         else:
             # Previously loaded call flags remain usable until the first complete
@@ -252,8 +251,8 @@ class Engine:
                 if row.get("next_step_deadline"):
                     row["next_step"] = int(row["next_step_deadline"] >= now)
 
-    def tender_followup_summary(self, login, ctx, selected, unique):
-        if not self.tender_followups_ready(login):
+    def call_followup_summary(self, login, ctx, selected, unique):
+        if not self.call_followups_ready(login):
             return None
         rows = self.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND duration>=? "
                       "AND direction IN ('in','out') AND dt>=? AND dt<=?", login, self.min_call,
@@ -394,10 +393,10 @@ class Engine:
                 item = it
                 break
         p = item.get("params", {}) if item else {}
-        require_lpr = p.get("require_lpr", item["code"] == "base_development") if item else False
+        require_lpr = p.get("require_lpr", True) if item else False
         result, steps, _ = self._result_calls(login, {"first": date_from, "last": date_to}, require_lpr,
                                               p.get("one_call_per_contact_day", False))
-        followup_summary = self.tender_followup_summary(login, {"first": date_from, "last": date_to}, result,
+        followup_summary = self.call_followup_summary(login, {"first": date_from, "last": date_to}, result,
                                                         p.get("one_call_per_contact_day", False))
         return {"login": login, "name": e["name"], "steps": steps, "result": len(result),
                 "followup_summary": followup_summary,
@@ -408,7 +407,7 @@ class Engine:
         emp = e["login"]
         result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True),
                                                                     p.get("one_call_per_contact_day", False))
-        followup_summary = self.tender_followup_summary(emp, ctx, result_calls, p.get("one_call_per_contact_day", False))
+        followup_summary = self.call_followup_summary(emp, ctx, result_calls, p.get("one_call_per_contact_day", False))
         meetings, _ = self._meetings(emp, ctx)
         comps, extra = [], []
         if "touches" in p:
@@ -737,7 +736,9 @@ class Engine:
     def calc_operational_activity(self, e, ctx, p):
         emp = e["login"]
         first, last = ctx["first"].isoformat(), ctx["last"].isoformat()
-        result_calls, call_funnel, _ = self._result_calls(emp, ctx, p.get("require_lpr", False))
+        result_calls, call_funnel, _ = self._result_calls(emp, ctx, p.get("require_lpr", True))
+        followup_summary = self.call_followup_summary(emp, ctx, result_calls, False)
+        calls_fact = None if followup_summary and followup_summary["unknown"] else len(result_calls)
         wd = len(self._work_dates(e, ctx))  # рабочие дни месяца без дней уважительного отсутствия
         if "result_calls_per_day" in p:
             calls_target = p["result_calls_per_day"] * wd
@@ -788,12 +789,13 @@ class Engine:
         return {
             "aggregation": "equal_mean",
             "components": [
-                comp(calls_name, len(result_calls), calls_target, "шт", source=SRC_B24, pace=self._pace(ctx, calls_target), audit="calls"),
+                comp(calls_name, calls_fact, calls_target, "шт", source=SRC_B24, pace=self._pace(ctx, calls_target), audit="calls"),
                 kp_comp,
                 comp("Встречи с протоколом и резюме", len(meetings), p["meetings_min"], "шт", source=SRC_B24,
                      pace=self._pace(ctx, p["meetings_min"]), audit="meetings"),
             ],
             "funnel": {"title": "Как отбираются результативные звонки", "steps": call_funnel},
+            "followup_summary": followup_summary,
             "extra": extra,
             "details": {"columns": ["Дата", "Клиент", "Тип", "Комментарий"], "rows": det},
         }

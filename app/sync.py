@@ -93,11 +93,11 @@ def run(con, config, force_demo=False):
                 try:
                     # записи звонков — по всем сотрудникам с ID в Б24 (раздел «Звонки»), KPI — только с должностью
                     everyone = {int(e["b24_user_id"]): e["login"] for e in config["employees"] if e.get("b24_user_id")}
-                    tender_logins = [e["login"] for e in config["employees"] if e.get("position") == "tender"]
+                    followup_logins = [e["login"] for e in config["employees"] if e.get("position") in ("tender", "pm")]
                     followup_from = date_from
-                    if tender_logins:
+                    if followup_logins:
                         earliest = con.execute("SELECT MIN(dt) FROM activities WHERE kind='call' AND emp IN (" +
-                                               ",".join("?" for _ in tender_logins) + ")", tender_logins).fetchone()[0]
+                                               ",".join("?" for _ in followup_logins) + ")", followup_logins).fetchone()[0]
                         if earliest:
                             followup_from = min(date_from, dt.date.fromisoformat(earliest[:10]))
                     data = b24.fetch(by_uid, date_from, record_employees=everyone, followup_from=followup_from)

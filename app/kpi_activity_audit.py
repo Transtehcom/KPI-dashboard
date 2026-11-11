@@ -29,16 +29,16 @@ def _crm_url(engine, contact):
 def _calls(engine, employee, ctx, item):
     p, code = item.get("params", {}), item["code"]
     plain = code == "base_development" and p.get("calls_plain", False)
-    require_lpr = p.get("require_lpr", code == "base_development") and not plain
+    require_lpr = p.get("require_lpr", True) and not plain
     unique = code == "base_development" and p.get("one_call_per_contact_day", False)
-    result, _, simple = engine._result_calls(employee["login"], ctx, p.get("require_lpr", code == "base_development"), unique)
+    result, _, simple = engine._result_calls(employee["login"], ctx, p.get("require_lpr", True), unique)
     selected = {r["id"] for r in (simple if plain else result)}
     first, last = ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59"
     rows = engine.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=? ORDER BY dt,id",
                     employee["login"], first, last)
     engine._mark_secretary(rows)
     engine.mark_call_next_steps(employee["login"], rows)
-    tender_steps = engine.tender_followups_ready(employee["login"])
+    planned_steps = engine.call_followups_ready(employee["login"])
     recordings = {r["id"]: r for r in engine.q(
         "SELECT id,phone,crm_activity_id,client_ref FROM call_records WHERE emp=? AND dt>=? AND dt<=?", employee["login"], first, last)}
     phones = {key: row["phone"] for key,row in recordings.items()}
@@ -59,7 +59,7 @@ def _calls(engine, employee, ctx, item):
               if require_lpr else ["Информация об ЛПР для этого показателя не обязательна."])
     if require_lpr and company_lpr:
         rules.append("Сведения об ЛПР берутся именно из карточки компании, в том числе для звонка её контакту или лиду. Заполните поле ЛПР компании подтверждёнными данными.")
-    if not plain and tender_steps:
+    if not plain and planned_steps:
         rules.extend([
             "Следующий шаг — назначенное дело компании, связанной со звонком, созданное от момента звонка до истечения 24 часов включительно. Универсальное дело «Связаться с клиентом» подходит. Телефонные записи исключаются.",
             "Зачёт дают выполненное дело или открытое дело с указанным непросроченным сроком. Выполненное дело учитывается и после его срока. При числе переносов больше пяти дело исключается из зачёта.",
@@ -76,7 +76,7 @@ def _calls(engine, employee, ctx, item):
         seconds = r["duration"] or 0
         step_action = "Создайте в карточке связанной компании открытое дело с непросроченным сроком, кроме повторного звонка, либо актуализируйте срок существующего дела. Затем обновите данные."
         step_detail = "Открытое непросроченное дело в связанной компании найдено." if r["next_step"] else "Открытое непросроченное дело в связанной компании не найдено."
-        if tender_steps:
+        if planned_steps:
             step_action = "Назначьте дело связанной компании в течение 24 часов после звонка и выполните его или сохраните актуальный срок. Проверьте число переносов. Для этого звонка дело, созданное позже окна, зачёт не даст."
             step_detail = {"completed": "Назначено выполнено.", "open": "Назначено дело не выполнено, срок актуален.",
                            "overdue": "Назначено просрочено или число переносов больше пяти.",
@@ -107,7 +107,7 @@ def _calls(engine, employee, ctx, item):
             r["id"] in selected, duplicate, record_url(engine.config,"activities",{**r,
                 "crm_activity_id": recordings.get(r["id"],{}).get("crm_activity_id") or r.get("crm_activity_id")}),
             client_link=client_url(engine.config,r) or client_url(engine.config,recordings.get(r["id"],{}))))
-        if tender_steps:
+        if planned_steps:
             records[-1]["followups"] = [{**a, "url": activity_url(engine.config, a["id"], "COMPANY:" + str(r["company_id"]))}
                                         for a in r.get("followups", [])]
             if any(c["state"] == "unknown" for c in checks):

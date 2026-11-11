@@ -156,14 +156,14 @@ class TenderFollowupRulesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             tender_followups.set_moves(self.con, "404", 1, "boss")
 
-    def test_engine_and_audit_share_rule_while_sales_uses_its_existing_rule(self):
+    def test_engine_and_audit_share_planned_activity_rule_for_sales_and_tender(self):
         self.store(self.plan(COMPLETED="Y"))
         rows = [{**dashboard_call(1, login, "2026-11-03", next_step=0), "company_id": "42"}
                 for login in ("tender", "pm")]
         replace_rows(self.con, "activities", rows)
         engine = Engine(self.con, load_rules(), CONFIG)
         self.assertEqual(len(engine._result_calls("tender", engine._ctx("2026-11"))[0]), 1)
-        self.assertEqual(len(engine._result_calls("pm", engine._ctx("2026-11"))[0]), 0)
+        self.assertEqual(len(engine._result_calls("pm", engine._ctx("2026-11"))[0]), 1)
         audit = engine.activity_audit("tender", "2026-11", "base_development", "calls")
         self.assertEqual(audit["fact"], 1)
         self.assertTrue(audit["records"][0]["counted"])
@@ -172,6 +172,43 @@ class TenderFollowupRulesTest(unittest.TestCase):
         self.assertEqual([r[1] for r in item["followup_summary"]["rows"]], [0, 1, 0])
         funnel = engine.call_funnel("tender", dt.date(2026, 11, 1), dt.date(2026, 11, 30))
         self.assertEqual(funnel.get("followup_summary", {}).get("rows"), item["followup_summary"]["rows"])
+
+    def test_sales_summary_and_audit_use_lpr_window_status_and_manual_moves(self):
+        self.store(self.plan(COMPLETED="Y"),
+                   self.plan(ID="202", OWNER_ID="43", CREATED="2026-11-01T10:30:00"),
+                   self.plan(ID="203", OWNER_ID="44", DEADLINE="2000-11-03T12:00:00"),
+                   self.plan(ID="204", OWNER_ID="45", COMPLETED="Y"),
+                   self.plan(ID="205", OWNER_ID="46"))
+        tender_followups.set_moves(self.con, "204", 6, "boss")
+        rows = [{**dashboard_call(i, "pm", "2026-11-03"), "company_id": str(41 + i),
+                 "direction": "in" if i % 2 else "out"} for i in range(1, 6)]
+        rows.append({**dashboard_call(6, "pm", "2026-11-03", lpr=0), "company_id": "42"})
+        replace_rows(self.con, "activities", rows)
+        engine = Engine(self.con, load_rules(), CONFIG)
+        report = engine.compute("pm", "2026-11")
+        item = next(row for row in report["items"] if row["code"] == "operational_activity")
+        self.assertEqual(item["components"][0]["fact"], 2)
+        self.assertEqual([r[1] for r in item["followup_summary"]["rows"]], [1, 1, 2])
+        funnel = engine.call_funnel("pm", dt.date(2026, 11, 1), dt.date(2026, 11, 30))
+        self.assertTrue(funnel["require_lpr"])
+        self.assertEqual(funnel["result"], 2)
+        self.assertEqual([r[1] for r in funnel["followup_summary"]["rows"]], [1, 1, 2])
+        audit = engine.activity_audit("pm", "2026-11", "operational_activity", "calls")
+        self.assertEqual(audit["fact"], 2)
+        self.assertEqual(sum(r["counted"] is True for r in audit["records"]), 2)
+        no_lpr = next(row for row in audit["records"] if row["id"] == "cpm6")
+        self.assertEqual(next(c["state"] for c in no_lpr["checks"] if c["key"] == "lpr"), "fail")
+        moved = next(row for row in audit["records"] if row["id"] == "cpm4")
+        self.assertEqual(moved["followups"][0]["total_moves"], 6)
+
+    def test_sales_missing_company_keeps_call_fact_unknown(self):
+        self.store(self.plan(COMPLETED="Y"))
+        replace_rows(self.con, "activities", [dashboard_call(1, "pm", "2026-11-03")])
+        engine = Engine(self.con, load_rules(), CONFIG)
+        item = next(row for row in engine.compute("pm", "2026-11")["items"]
+                    if row["code"] == "operational_activity")
+        self.assertIsNone(item["components"][0]["fact"])
+        self.assertEqual(item["followup_summary"]["unknown"], 1)
 
     def test_daily_cap_does_not_show_a_successful_contact_as_overdue(self):
         self.store(self.plan(CREATED="2026-11-03T09:00:00", DEADLINE="2026-11-03T12:00:00"),

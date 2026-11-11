@@ -1,4 +1,4 @@
-"""Tender KPI 2 follow-ups and deadline changes observed during source refreshes."""
+"""Tender and sales call follow-ups and deadline changes observed during refreshes."""
 import datetime as dt
 import json
 
