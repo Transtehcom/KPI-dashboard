@@ -713,6 +713,45 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 .brand-field--front { z-index: 2; }
 @media print { .brand-field { display: none !important; } }
 
+/* Short feedback for navigation, controls and disclosures. */
+.tabs { position: relative; }
+.motion-tab-indicator { position: absolute; height: 3px; background: var(--teal); border-radius: 2px; pointer-events: none; }
+.tabs[data-motion-tabs] > a.on, .tabs[data-motion-tabs] > .tab-menu.on > summary { box-shadow: none; }
+.btn, .nav-item, .tabs a, .tab-menu summary, .weights .seg, .sp-seg button {
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 160ms ease, transform 140ms ease;
+}
+select, input, textarea { transition: border-color 140ms ease, box-shadow 140ms ease, background-color 160ms ease; }
+.card, .op-stat { transition: border-color 160ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.track .fill, .funnel .fb { transition: width 240ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  .card:hover { border-color: color-mix(in srgb, var(--teal) 50%, var(--line)); box-shadow: 0 5px 18px rgba(28,30,51,.09); }
+  .op-stat:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(28,30,51,.12); }
+  .tabs > a:hover, .tab-menu > summary:hover { background-color: var(--accent-soft); }
+  .weights .seg:hover { box-shadow: inset 0 0 0 1px var(--teal); }
+}
+.btn:not(:disabled):active, .op-stat:active { transform: translateY(1px); }
+@keyframes motion-menu { from { opacity: .3; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes motion-dialog { from { opacity: .3; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes motion-backdrop { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-toast { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes motion-spinner { to { transform: rotate(360deg); } }
+.tab-menu[open] > .tab-menu-pop, .proc[open] > .proc-pop { animation: motion-menu 140ms ease-out; }
+details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms ease-out; }
+.payment-confirm[open] { animation: motion-dialog 180ms ease-out; }
+.payment-confirm::backdrop { animation: motion-backdrop 160ms ease-out; }
+.drawer > div { animation: motion-menu 180ms ease-out; }
+.toast:not([hidden]) { animation: motion-toast 160ms ease-out; }
+.motion-loading::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 10px; vertical-align: -3px;
+  border: 2px solid var(--line-strong); border-top-color: var(--teal); border-radius: 50%; animation: motion-spinner 850ms linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media print {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .motion-tab-indicator, .motion-loading::before { display: none !important; }
+  .btn, .op-stat { transform: none !important; }
+}
+
 /* --- печать: документ собирается из блока .print-only, всё остальное скрыто */
 @page { size: A4; margin: 8mm 10mm; }
 @media print {
@@ -2305,7 +2344,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         <div class="panel-b muted small">${isMgr ? "Каждое прослушивание записывается в журнал: кто, какой звонок, когда и с какого адреса." : `Вы видите ${multi ? "звонки своего отдела" : "только свои звонки"}. Прослушивания записываются в журнал, его видит администратор.`}
           Записи появляются после синхронизации с Битрикс24${d.keep_from ? `. Сейчас хранятся записи с ${ruDay(d.keep_from)}: текущий и прошлый месяц, более старые удаляются 10-го числа` : ""}.</div></section>
       ${callsChart()}
-      ${isMgr ? `<section class="panel"><details class="more" id="cLog" ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
+      ${isMgr ? `<section class="panel"><details class="more" id="cLog" data-motion-native ${state.cLogOpen ? "open" : ""}><summary>Журнал прослушиваний${log ? ` · ${log.rows.length}` : ""}</summary><div class="more-b">
         <form class="inline-form" id="cLogForm"><label for="cLogFrom">С</label><input id="cLogFrom" type="date" value="${esc(log ? log.date_from : state.cLogFrom || "")}">
           <label for="cLogTo">по</label><input id="cLogTo" type="date" value="${esc(log ? log.date_to : state.cLogTo || "")}"><button class="btn" type="submit">Показать</button></form>
         ${log && log.rows.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt"><thead><tr><th>Когда</th><th>Кто</th><th>Чей звонок</th><th>Звонок</th><th>Клиент</th><th>IP</th><th>Результат</th></tr></thead><tbody>
@@ -4098,3 +4137,4 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 })();
 </script>
 <script src="/assets/brand-field.js?v=4" defer></script>
+<script src="/assets/interface-motion.js?v=2" defer></script>
