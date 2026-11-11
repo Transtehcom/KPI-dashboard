@@ -364,7 +364,7 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 
 .staff-list td, .staff-list th { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
 .staff-list th { border-top: 0; color: var(--fg-3); font-weight: 600; font-size: 12px; white-space: nowrap; }
-.staff-list tbody tr { cursor: pointer; }
+.staff-list tbody tr[data-edit] { cursor: pointer; }
 .staff-list tbody tr:hover, .staff-list tbody tr:focus-visible { background: var(--surface-2); outline: none; }
 .staff-list tr.sel { background: var(--accent-soft); }
 .staff-list td.nw { white-space: nowrap; }
@@ -722,14 +722,31 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 }
 select, input, textarea { transition: border-color 140ms ease, box-shadow 140ms ease, background-color 160ms ease; }
 .card, .op-stat { transition: border-color 160ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.card, .panel, .stat, .op-stat { position: relative; }
+.card::after, .panel::after, .stat::after, .op-stat::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+  background: radial-gradient(160px circle at var(--pointer-x, 50%) var(--pointer-y, 50%), rgba(75,187,184,.14), transparent 100%);
+  transition: opacity 160ms ease;
+}
+.motion-pointer::after { opacity: 1; }
+.staff-list tbody tr { transition: background-color 140ms ease; }
+.crm-link { transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease; border-radius: 3px; }
+.crm-link:focus-visible, .btn:focus-visible, .tabs a:focus-visible, .nav-item:focus-visible {
+  outline: 2px solid var(--teal); outline-offset: 3px;
+}
 .track .fill, .funnel .fb { transition: width 240ms ease; }
 @media (hover: hover) and (pointer: fine) {
   .card:hover { border-color: color-mix(in srgb, var(--teal) 50%, var(--line)); box-shadow: 0 5px 18px rgba(28,30,51,.09); }
   .op-stat:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(28,30,51,.12); }
   .tabs > a:hover, .tab-menu > summary:hover { background-color: var(--accent-soft); }
   .weights .seg:hover { box-shadow: inset 0 0 0 1px var(--teal); }
+  .btn:not(:disabled):hover { box-shadow: 0 3px 10px rgba(58,65,133,.18); border-color: var(--teal); transform: translateY(-1px); }
+  .crm-link:hover { color: var(--teal); background-color: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .staff-list tbody tr:hover { background-color: var(--accent-soft); }
 }
-.btn:not(:disabled):active, .op-stat:active { transform: translateY(1px); }
+.btn:not(:disabled):active, .op-stat:active, .nav-item:active, .tabs a:active, .tab-menu summary:active, .weights .seg:active {
+  transform: translateY(1px) scale(.98); box-shadow: inset 0 2px 5px rgba(28,30,51,.16);
+}
 @keyframes motion-menu { from { opacity: .3; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes motion-dialog { from { opacity: .3; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes motion-backdrop { from { opacity: 0; } to { opacity: 1; } }
@@ -744,6 +761,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 .motion-loading::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 10px; vertical-align: -3px;
   border: 2px solid var(--line-strong); border-top-color: var(--teal); border-radius: 50%; animation: motion-spinner 850ms linear infinite; }
 @media (prefers-reduced-motion: reduce) {
+  .motion-pointer::after { display: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 @media print {
@@ -1044,8 +1062,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
     else if (h === "gpt" && !PREVIEW) { state.view = "gpt"; }
     else if (h === "workload" && isMgr && !PREVIEW) { state.view = "workload"; }
+    else if (h === "staff" && !PREVIEW) { state.view = "staff"; }
     else if (!isMgr) { state.view = isFunnelHash(h) ? "funnel" : "emp"; state.login = b.me.login; }
-    else if (h === "staff") { state.view = "staff"; }
     else if (h === "money" && !PREVIEW) { state.view = "money"; }
     else if (h.split("?")[0] === "suppliers" && !PREVIEW) { state.view = "suppliers"; supFromHash(h); }
     else if (h.startsWith("emp-") && b.employees.some((e) => e.login === h.slice(4))) { state.view = "emp"; state.login = h.slice(4); }
@@ -1136,14 +1154,14 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${!PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">ttkGPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${!PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">ttkGPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${!PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
           <select id="month" ${noMonth ? "hidden" : ""}>${months.map((m) => `<option value="${m}" ${m === state.month ? "selected" : ""}>${mLabel(m)}</option>`).join("")}</select>
           <button class="btn" id="rulesBtn" type="button">Методика</button>
           ${isMgr && !PREVIEW ? `<button class="btn" id="syncBtn" type="button">Обновить данные</button>` : ""}
-          <span class="small muted">${esc(b.me.name)}</span>
+          <span class="small muted">${crmLink(b.me.name, b.me.url)}</span>
           ${PREVIEW ? "" : `<button class="btn ghost" id="logoutBtn" type="button">Выйти</button>`}
         </div></header>
       <div class="shell ${isMgr && !noSide ? "" : "single"}">${isMgr && !noSide ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
@@ -3971,36 +3989,37 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       </div></section>`;
   }
 
-  // ---------- сотрудники (только администратор)
+  // ---------- сотрудники
   function renderStaff(d, editLogin) {
     const main = document.getElementById("main");
+    const isMgr = state.boot.me.role === "manager";
     const posTitle = (k) => (d.positions.find((p) => p.key === k) || {}).title || "—";
     const depTitle = (k) => (d.departments.find((x) => x.key === k) || {}).title || k || "—";
-    const editing = editLogin === "" ? {} : d.employees.find((e) => e.login === editLogin);
+    const editing = isMgr ? (editLogin === "" ? {} : d.employees.find((e) => e.login === editLogin)) : null;
     const surname = (s) => (s || "").trim().split(/\s+/);
     main.innerHTML = `
-      <div class="head"><div><div class="eyebrow">Администрирование</div><h1>Сотрудники</h1>
-        <div class="sub">Кто входит в дашборд, чей KPI считается и кто видит всю команду</div></div>
-        <button class="btn primary" type="button" id="addEmp">+ Добавить сотрудника</button></div>
+      <div class="head"><div><div class="eyebrow">${isMgr ? "Администрирование" : "Команда"}</div><h1>Сотрудники</h1>
+        <div class="sub">${isMgr ? "Кто входит в дашборд, чей KPI считается и кто видит всю команду" : "Отделы, должности и профили сотрудников в Битрикс24"}</div></div>
+        ${isMgr ? `<button class="btn primary" type="button" id="addEmp">+ Добавить сотрудника</button>` : ""}</div>
       ${editing ? `<section class="panel" id="empFormPanel"><div class="panel-h"><h2>${editing.login ? esc(editing.name) : "Новый сотрудник"}</h2></div>
         <div class="panel-b">${staffForm(d, editing)}</div></section>` : ""}
       <section class="panel"><div class="panel-h"><h2>Все пользователи</h2><span class="muted small">${d.employees.length}</span></div>
-        <div class="scroll"><table class="staff-list"><thead><tr><th>Имя и фамилия</th><th>Отдел</th><th>Должность</th><th>KPI</th>
-          <th>Б24 ID</th><th>Видимость</th><th>Администратор</th><th>Логин</th><th>Пароль</th></tr></thead><tbody>
-          ${d.employees.map((e) => `<tr tabindex="0" data-edit="${esc(e.login)}" class="${editing && editing.login === e.login ? "sel" : ""}">
-            <td>${esc(e.name)}${e.onec_manager && surname(e.onec_manager)[0] !== surname(e.name).slice(-1)[0] ? `<div class="muted small">в 1С: ${esc(e.onec_manager)}</div>` : ""}${awayNow(d, e)}</td>
-            <td>${esc(depTitle(e.department))}</td><td>${esc(e.title || "—")}</td><td>${esc(e.position ? posTitle(e.position) : "—")}</td>
-            <td class="nw">${e.b24_user_id || "—"}</td>
+        <div class="scroll"><table class="staff-list"><thead><tr><th>Имя и фамилия</th><th>Отдел</th><th>Должность</th>${isMgr ? `<th>KPI</th>
+          <th>Б24 ID</th><th>Видимость</th><th>Администратор</th><th>Логин</th><th>Пароль</th>` : ""}</tr></thead><tbody>
+          ${d.employees.map((e) => `<tr ${isMgr ? `tabindex="0" data-edit="${esc(e.login)}"` : ""} class="${editing && editing.login === e.login ? "sel" : ""}">
+            <td>${crmLink(e.name, e.url)}${isMgr ? `${e.onec_manager && surname(e.onec_manager)[0] !== surname(e.name).slice(-1)[0] ? `<div class="muted small">в 1С: ${esc(e.onec_manager)}</div>` : ""}${awayNow(d, e)}` : ""}</td>
+            <td>${esc(isMgr ? depTitle(e.department) : e.department || "—")}</td><td>${esc(e.title || "—")}</td>${isMgr ? `<td>${esc(e.position ? posTitle(e.position) : "—")}</td>
+            <td class="nw">${crmLink(e.b24_user_id || "—", e.url)}</td>
             <td><span class="chip ${e.visible ? "s-met" : "s-nodata"}">${e.visible ? "Открытый" : "Закрытый"}</span></td>
             <td>${e.admin ? "Да" : e.listen_dept ? `<span class="muted small">звонки отдела</span>` : "—"}</td><td class="nw">${esc(e.login)}</td>
-            <td>${e.has_password ? "задан" : `<span style="color:var(--bad)">не задан</span>`}</td></tr>`).join("")}
+            <td>${e.has_password ? "задан" : `<span style="color:var(--bad)">не задан</span>`}</td>` : ""}</tr>`).join("")}
         </tbody></table></div>
-        <div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается, если KPI выбран. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки, слушает все звонки и управляет этим списком. «Слушает звонки своего отдела» — доступ к записям звонков коллег по отделу (без доступа к их KPI). Нажмите на строку, чтобы изменить сотрудника.</div></section>`;
-    document.getElementById("addEmp").addEventListener("click", () => { renderStaff(d, ""); document.getElementById("f_name").focus(); });
+        ${isMgr ? `<div class="panel-b muted small">Открытый — сотрудник виден в «KPI сотрудников», и его KPI считается, если KPI выбран. Закрытый — не виден (например, руководитель без своего KPI). Администратор видит всю команду, ставит оценки, слушает все звонки и управляет этим списком. «Слушает звонки своего отдела» — доступ к записям звонков коллег по отделу (без доступа к их KPI). Нажмите на строку, чтобы изменить сотрудника.</div>` : ""}</section>`;
+    document.getElementById("addEmp")?.addEventListener("click", () => { renderStaff(d, ""); document.getElementById("f_name").focus(); });
     main.querySelectorAll("[data-edit]").forEach((tr) => {
       const open = () => { renderStaff(d, tr.dataset.edit); window.scrollTo(0, 0); };
-      tr.addEventListener("click", open);
-      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+      tr.addEventListener("click", (ev) => { if (!ev.target.closest("a")) open(); });
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) open(); });
     });
     if (editing) bindStaffForm(d, editing);
   }
@@ -4117,7 +4136,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
     if (state.boot.me.role !== "manager") {
-      const view = isFunnelHash(h) ? "funnel" : h === "calls" && !PREVIEW ? "calls" : h === "gpt" && !PREVIEW ? "gpt" : "emp";
+      const view = isFunnelHash(h) ? "funnel" : h === "calls" && !PREVIEW ? "calls" : h === "gpt" && !PREVIEW ? "gpt" : h === "staff" && !PREVIEW ? "staff" : "emp";
       const fm = h === "funnel-fact" ? "fact" : "date";
       if (view !== state.view || (view === "funnel" && state.fMode !== fm)) { state.view = view; if (view === "funnel") state.fMode = fm; renderShell(); load(); }
       return;
@@ -4137,4 +4156,4 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 })();
 </script>
 <script src="/assets/brand-field.js?v=4" defer></script>
-<script src="/assets/interface-motion.js?v=2" defer></script>
+<script src="/assets/interface-motion.js?v=3" defer></script>

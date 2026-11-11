@@ -45,6 +45,16 @@ class EmployeesTest(unittest.TestCase):
         self.assertEqual(by["pm"]["title"], self.rules["positions"]["pm"]["title"])
         self.assertEqual([e["login"] for e in Engine(self.con, self.rules, self.config).employees()], ["pm"])
 
+    def test_public_directory_has_only_names_departments_titles_and_profile_links(self):
+        config = {"bitrix24": {"webhook": "https://crm.example.test/rest/1/secret/"}}
+        directory = employees.directory(self.con, self.rules, config)
+        self.assertEqual(set(directory), {"employees"})
+        self.assertEqual(len(directory["employees"]), 2)
+        for row in directory["employees"]:
+            self.assertEqual(set(row), {"name", "department", "title", "url"})
+        self.assertEqual(directory["employees"][1]["url"], "https://crm.example.test/company/personal/user/56/")
+        self.assertIsNone(directory["employees"][0]["url"])
+
     def test_create_parses_b24_link_and_sets_password(self):
         self.save()
         employees.apply(self.con, self.config, self.rules)

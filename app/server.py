@@ -821,9 +821,11 @@ class Handler(BaseHTTPRequestHandler):
                     for r in rows:
                         r["name"], r["emp_name"] = names.get(r["login"], r["login"]), names.get(r["emp"], r["emp"])
                     return JsonResponse({"date_from": date_from, "date_to": date_to, "rows": rows})
-                if path == "/api/staff":  # раздел «Сотрудники»: только администраторы
+                if path == "/api/staff":
                     if not is_mgr:
-                        return JsonResponse({"error": "Доступно только администратору"}, 403)
+                        if method != "GET":
+                            return JsonResponse({"error": "Доступно только администратору"}, 403)
+                        return JsonResponse(employees.directory(app.con, app.rules, app.config))
                     if method == "POST":
                         try:
                             if b.get("action") == "delete":
@@ -835,7 +837,10 @@ class Handler(BaseHTTPRequestHandler):
                         except employees.EmployeeError as e:
                             raise BadRequest(str(e))
                         employees.apply(app.con, app.config, app.rules)
-                    return JsonResponse(employees.listing(app.con, app.rules))
+                    listing = employees.listing(app.con, app.rules)
+                    for employee in listing["employees"]:
+                        employee["url"] = employee_url(app.config, employee["login"])
+                    return JsonResponse(listing)
                 if path == "/api/call-feedback" and method == "POST":
                     row = call_records.get(app.con, str(b.get("id") or ""))
                     if not row:

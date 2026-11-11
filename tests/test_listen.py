@@ -92,6 +92,37 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_staff_directory_is_public_to_employees_but_writes_remain_admin_only(self):
+        with db_lock():
+            self.con.execute("INSERT INTO employees(login,name,department,title,b24_user_id) VALUES(?,?,?,?,?)",
+                             ("staff-http", "Тест Сотрудник", "ОС", "Специалист", 56))
+            self.con.commit()
+        def cleanup():
+            with db_lock():
+                self.con.execute("DELETE FROM employees WHERE login='staff-http'")
+                self.con.commit()
+        self.addCleanup(cleanup)
+        status, _, body = self.get("pm", "/api/staff")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(set(data), {"employees"})
+        row = next(r for r in data["employees"] if r["name"] == "Тест Сотрудник")
+        self.assertEqual(set(row), {"name", "department", "title", "url"})
+        self.assertEqual(row["url"], "https://portal.example.test/company/personal/user/56/")
+        for action in ("create", "update", "delete"):
+            request = urllib.request.Request(self.base + "/api/staff", method="POST",
+                data=json.dumps({"action": action, "login": "staff-http", "name": "Changed"}).encode(),
+                headers={"Cookie": self.tokens["pm"], "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request)
+            self.assertEqual(caught.exception.code, 403)
+            caught.exception.close()
+        self.assertEqual(self.con.execute("SELECT name FROM employees WHERE login='staff-http'").fetchone()[0],
+                         "Тест Сотрудник")
+        status, _, body = self.get("boss", "/api/staff")
+        self.assertEqual(status, 200)
+        self.assertIn("positions", json.loads(body))
+
     def test_tender_followup_moves_require_admin_and_validate_integer_counts(self):
         identity = "followup-http-test"
         with db_lock():

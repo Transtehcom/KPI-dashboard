@@ -22,6 +22,7 @@ assert.equal(loads,previousLoads,'the hash event following a tab click must not 
 location.hash='#funnel-fact';hashChange();assert.equal(state.view,'funnel');assert.equal(state.fMode,'fact');
 location.hash='#calls';hashChange();assert.equal(state.view,'calls');
 location.hash='#workload';hashChange();assert.equal(state.view,'emp','employee cannot open Workload by URL');
+location.hash='#staff';hashChange();assert.equal(state.view,'staff','employee can open read-only staff directory by URL');
 state.boot.me.role='manager';state.view='team';location.hash='#calls';hashChange();assert.equal(state.view,'calls');
 location.hash='#workload';hashChange();assert.equal(state.view,'workload');
 assert.ok(renders && loads);

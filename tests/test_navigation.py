@@ -48,6 +48,9 @@ class NavigationTest(unittest.TestCase):
     def test_interface_motion(self):
         self.run_script("test_interface_motion.js")
 
+    def test_staff_directory(self):
+        self.run_script("test_staff_directory.js")
+
     def test_gpt_chat_rendering(self):
         self.run_script("test_gpt.js")
 

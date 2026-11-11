@@ -14,6 +14,38 @@
   const scopes = new Set(), changedValues = new Set();
   let frame = 0, printing = false, previousTab = null;
   const disabled = () => reduced.matches || document.hidden || printing;
+  let pointerFrame = 0, pointerNode = null, pointerEvent = null;
+
+  function clearPointer() {
+    cancelAnimationFrame(pointerFrame);
+    pointerFrame = 0;
+    pointerEvent = null;
+    pointerNode?.classList.toggle("motion-pointer", false);
+    pointerNode = null;
+  }
+
+  document.addEventListener("pointermove", (event) => {
+    if (disabled() || event.pointerType !== "mouse") { clearPointer(); return; }
+    pointerEvent = event;
+    if (pointerFrame) return;
+    pointerFrame = requestAnimationFrame(() => {
+      pointerFrame = 0;
+      const event = pointerEvent;
+      const node = event.target.closest?.(".card, .stat, .op-stat, .panel");
+      if (!node || !root.contains(node)) { clearPointer(); return; }
+      if (pointerNode !== node) {
+        pointerNode?.classList.toggle("motion-pointer", false);
+        pointerNode = node;
+        node.classList.toggle("motion-pointer", true);
+      }
+      const rect = node.getBoundingClientRect();
+      node.style.setProperty("--pointer-x", `${event.clientX - rect.left}px`);
+      node.style.setProperty("--pointer-y", `${event.clientY - rect.top}px`);
+    });
+  }, {passive: true});
+  document.addEventListener("pointerleave", clearPointer);
+  document.addEventListener("scroll", clearPointer, {passive: true, capture: true});
+  window.addEventListener("blur", clearPointer);
 
   function play(node, keyframes, options, finish = () => {}) {
     if (disabled() || !node.isConnected) { finish(); return null; }
@@ -165,6 +197,7 @@
   });
 
   function stop() {
+    clearPointer();
     for (const animation of [...active]) animation.cancel();
     for (const node of pending.keys()) observer?.unobserve(node);
     pending.clear();

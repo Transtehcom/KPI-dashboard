@@ -9,7 +9,7 @@ function fixture() {
   class Node {
     constructor(kind, text = '') {
       this.kind = kind; this.textContent = text; this.nodeType = 1; this.isConnected = true;
-      this.style = {overflow: 'visible'}; this.dataset = {}; this.nodes = [];
+      this.style = {overflow: 'visible', setProperty(name, value) { this[name] = value; }}; this.dataset = {}; this.nodes = [];
       this.classes = new Set();
       this.classList = {toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name)};
     }
@@ -22,6 +22,7 @@ function fixture() {
       return false;
     }
     closest(selector) {
+      if (selector.includes('.op-stat') && this.kind === 'card') return this;
       if (selector.includes('#cJobsList') && this.kind === 'poll') return this;
       if (selector === 'summary') return this.kind === 'summary' ? this : null;
       if (selector === 'details') return this.parentElement?.kind === 'details' ? this.parentElement : null;
@@ -79,6 +80,14 @@ function fixture() {
 }
 
 const f = fixture();
+f.document.listeners.pointermove({target:f.card, pointerType:'mouse', clientX:30, clientY:20});
+f.flush();
+assert.ok(f.card.classes.has('motion-pointer'));
+assert.equal(f.card.style['--pointer-x'], '30px');
+assert.equal(f.card.style['--pointer-y'], '20px');
+f.document.listeners.pointermove({target:f.root, pointerType:'mouse', clientX:30, clientY:20});
+f.flush();
+assert.ok(!f.card.classes.has('motion-pointer'), 'pointer highlight leaves the previous card');
 f.flush();
 assert.ok(f.intersections[0].nodes.has(f.card));
 assert.ok(f.intersections[0].nodes.has(f.bar));

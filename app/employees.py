@@ -11,6 +11,7 @@ import json
 import re
 
 from .common import db_lock
+from .crm_links import object_url
 
 LOGIN_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
 # категории отсутствия; прогул от норм не освобождает, остальные — освобождают (app/engine.py)
@@ -126,6 +127,15 @@ def listing(con, rules):
                       for k, p in rules["positions"].items()],
         "absence_kinds": [{"key": k, "title": t} for k, t in ABSENCE_KINDS.items()],
     }
+
+
+def directory(con, rules, config):
+    """Read-only employee directory with an explicit public field allowlist."""
+    with db_lock():
+        rows = con.execute("SELECT name, department, title, b24_user_id FROM employees ORDER BY sort, name").fetchall()
+    departments = rules.get("departments", {})
+    return {"employees": [{"name": r["name"], "department": departments.get(r["department"], r["department"]),
+                           "title": r["title"], "url": object_url(config, "user", r["b24_user_id"])} for r in rows]}
 
 
 def save(con, rules, data, me, is_new, hash_password):
