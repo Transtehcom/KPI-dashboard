@@ -706,11 +706,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) body::after { opacity: .1; } }
 @media (max-width: 760px) { body::after { width: 340px; height: 226px; } .stat .v { font-size: 28px; } }
 
-/* The outline logo field sits behind the app, with a much quieter layer over card surfaces. */
+/* The outline logo field sits behind the app, visible in the space between its surfaces. */
 #root { position: relative; z-index: 1; }
 .brand-field { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
 .brand-field--back { z-index: 0; }
-.brand-field--front { z-index: 2; }
 @media print { .brand-field { display: none !important; } }
 
 /* Short feedback for navigation, controls and disclosures. */
@@ -722,13 +721,6 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 }
 select, input, textarea { transition: border-color 140ms ease, box-shadow 140ms ease, background-color 160ms ease; }
 .card, .op-stat { transition: border-color 160ms ease, box-shadow 180ms ease, transform 180ms ease; }
-.card, .panel, .stat, .op-stat { position: relative; }
-.card::after, .panel::after, .stat::after, .op-stat::after {
-  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
-  background: radial-gradient(160px circle at var(--pointer-x, 50%) var(--pointer-y, 50%), rgba(75,187,184,.14), transparent 100%);
-  transition: opacity 160ms ease;
-}
-.motion-pointer::after { opacity: 1; }
 .staff-list tbody tr { transition: background-color 140ms ease; }
 .crm-link { transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease; border-radius: 3px; }
 .crm-link:focus-visible, .btn:focus-visible, .tabs a:focus-visible, .nav-item:focus-visible {
@@ -761,7 +753,6 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 .motion-loading::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 10px; vertical-align: -3px;
   border: 2px solid var(--line-strong); border-top-color: var(--teal); border-radius: 50%; animation: motion-spinner 850ms linear infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .motion-pointer::after { display: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 @media print {
@@ -4155,5 +4146,5 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   start();
 })();
 </script>
-<script src="/assets/brand-field.js?v=4" defer></script>
-<script src="/assets/interface-motion.js?v=3" defer></script>
+<script src="/assets/brand-field.js?v=5" defer></script>
+<script src="/assets/interface-motion.js?v=4" defer></script>

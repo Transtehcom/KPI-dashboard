@@ -11,9 +11,9 @@
     document.body.appendChild(canvas);
     return { canvas, ctx: canvas.getContext("2d") };
   };
-  const back = createLayer("back"), front = createLayer("front");
-  if (!back.ctx || !front.ctx) {
-    back.canvas.remove(); front.canvas.remove(); return;
+  const back = createLayer("back");
+  if (!back.ctx) {
+    back.canvas.remove(); return;
   }
   // The exact paths from the approved original mark; fills are intentionally absent.
   const blue = new Path2D("M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z");
@@ -26,8 +26,8 @@
   const waveDuration = 1250, waveRadius = 155;
   // Cache the dense neutral grid; only the small active area needs individual redraws.
   const pattern = document.createElement("canvas"), patternCtx = pattern.getContext("2d");
-  let width = 0, height = 0, ratio = 1, marks = [], surfaces = [], waves = [], trail = [];
-  let frame = 0, activeUntil = 0, lastTime = 0, surfacesDirty = true, patternDirty = true, dark = false;
+  let width = 0, height = 0, ratio = 1, marks = [], waves = [], trail = [];
+  let frame = 0, activeUntil = 0, lastTime = 0, patternDirty = true, dark = false;
 
   function readTheme() {
     const theme = document.documentElement.dataset.theme;
@@ -37,10 +37,8 @@
   function resize() {
     width = window.innerWidth; height = window.innerHeight;
     ratio = Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(4000000 / Math.max(1, width * height)));
-    for (const { canvas, ctx } of [back, front]) {
-      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    }
+    back.canvas.width = Math.round(width * ratio); back.canvas.height = Math.round(height * ratio);
+    back.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     pattern.width = Math.round(width * ratio); pattern.height = Math.round(height * ratio);
     patternCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
     patternDirty = true;
@@ -52,13 +50,7 @@
                      size: 18 + ((row + col + 12) % 3) });
       }
     }
-    surfacesDirty = true; wake();
-  }
-  function readSurfaces() {
-    // Only large card surfaces get the quieter upper layer; controls and popovers stay clear.
-    surfaces = [...root.querySelectorAll(".panel")].map(el => el.getBoundingClientRect())
-      .filter(r => r.width > 100 && r.height > 45 && r.bottom > 0 && r.top < height);
-    surfacesDirty = false;
+    wake();
   }
   function wake(duration = 900) {
     activeUntil = performance.now() + duration;
@@ -86,7 +78,6 @@
     const elapsed = Math.min(50, now - (lastTime || now)); lastTime = now;
     const approach = reduced.matches ? 1 : 1 - Math.exp(-elapsed / 75);
     cursor.strength += ((pointer.visible ? 1 : 0) - cursor.strength) * approach;
-    if (surfacesDirty) readSurfaces();
     if (patternDirty) {
       patternCtx.clearRect(0, 0, width, height);
       for (const item of marks) mark(patternCtx, item, 0, 0, 1, 1, 0, 0);
@@ -94,17 +85,10 @@
     }
     waves = reduced.matches ? [] : waves.filter(w => now - w.at < waveDuration);
     trail = reduced.matches ? [] : trail.filter(p => now - p.at < trailDuration);
-    for (const { ctx } of [back, front]) ctx.clearRect(0, 0, width, height);
-    const modal = !!root.querySelector(".drawer");
-    front.ctx.save();
-    front.ctx.beginPath();
-    if (!modal) surfaces.forEach(r => front.ctx.rect(r.left + 2, r.top + 2, r.width - 4, r.height - 4));
-    front.ctx.clip();
-    const backIdle = dark ? 0.19 : 0.16, frontIdle = dark ? 0.055 : 0.045;
-    for (const [layer, alpha] of [[back, backIdle], [front, frontIdle]]) {
-      layer.ctx.save(); layer.ctx.globalAlpha = alpha;
-      layer.ctx.drawImage(pattern, 0, 0, width, height); layer.ctx.restore();
-    }
+    back.ctx.clearRect(0, 0, width, height);
+    const backIdle = dark ? 0.19 : 0.16;
+    back.ctx.save(); back.ctx.globalAlpha = backIdle;
+    back.ctx.drawImage(pattern, 0, 0, width, height); back.ctx.restore();
 
     for (const item of marks) {
       const distance = Math.hypot(item.x - pointer.x, item.y - pointer.y);
@@ -141,25 +125,18 @@
       const color = Math.min(1, light * 1.7);
       const scale = reduced.matches ? 1 : 1 + hover * 0.04 + Math.min(waveLight, 1) * 0.04;
       const markHeight = item.size * 875 / 1306;
-      for (const { ctx } of [back, front]) {
-        ctx.clearRect(item.x - item.size / 2 - 4, item.y - markHeight / 2 - 4, item.size + 8, markHeight + 8);
-      }
+      back.ctx.clearRect(item.x - item.size / 2 - 4, item.y - markHeight / 2 - 4, item.size + 8, markHeight + 8);
       mark(back.ctx, item, offsetX, offsetY, scale, backIdle + light * (dark ? 0.61 : 0.56), light * 3, color);
-      // Low opacity on cards keeps labels, tables and charts readable during the effect.
-      mark(front.ctx, item, offsetX * 0.5, offsetY * 0.5, scale, frontIdle + light * (dark ? 0.135 : 0.105), 0, color);
     }
     for (const wave of waves) {
       const progress = (now - wave.at) / waveDuration, radius = progress * waveRadius;
-      for (const [layer, alpha] of [[back, 0.18], [front, 0.035]]) {
-        const ctx = layer.ctx;
-        ctx.save();
-        ctx.beginPath(); ctx.arc(wave.x, wave.y, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = "#4BBBB8"; ctx.lineWidth = 1.2;
-        ctx.globalAlpha = Math.pow(1 - progress, 1.25) * alpha; ctx.stroke();
-        ctx.restore();
-      }
+      const ctx = back.ctx;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(wave.x, wave.y, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = "#4BBBB8"; ctx.lineWidth = 1.2;
+      ctx.globalAlpha = Math.pow(1 - progress, 1.25) * 0.18; ctx.stroke();
+      ctx.restore();
     }
-    front.ctx.restore();
     if (!reduced.matches && (now < activeUntil || waves.length || trail.length)) frame = requestAnimationFrame(draw);
   }
 
@@ -186,12 +163,10 @@
     wake(waveDuration + 80);
   }, { passive: true });
   window.addEventListener("resize", resize, { passive: true });
-  window.addEventListener("scroll", () => { surfacesDirty = true; wake(150); }, { passive: true, capture: true });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) { cancelAnimationFrame(frame); frame = 0; lastTime = 0; trail = []; }
-    else { surfacesDirty = true; wake(); }
+    else wake();
   });
-  new MutationObserver(() => { surfacesDirty = true; wake(150); }).observe(root, { childList: true, subtree: true });
   new MutationObserver(() => { readTheme(); wake(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   colorScheme.addEventListener("change", () => { readTheme(); wake(); });
   reduced.addEventListener("change", () => { waves = []; trail = []; wake(); });
