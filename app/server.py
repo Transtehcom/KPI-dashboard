@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from .crm_links import employee_url, portal_origin
 from . import call_feedback, call_recheck, operations, operations_views
-from . import tender_followups
+from . import tender_followups, daily_calls
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -784,7 +784,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/calls-job":  # ход ручной обработки звонков (кнопка «Обработать…» в разделе «Звонки»)
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только руководителю"}, 403)
-                    return JsonResponse({**app.processing_jobs().listing(), "busy": call_records.status()["running"]})
+                    return JsonResponse({**app.processing_jobs().listing(), "busy": call_records.status()["running"],
+                                         "auto": daily_calls.get_settings(app.con)})
+                if path == "/api/calls-auto" and method == "GET":
+                    if not is_mgr:
+                        return JsonResponse({"error": "Доступно только администратору"}, 403)
+                    return JsonResponse(daily_calls.get_settings(app.con))
                 if path == "/api/call-transcript":  # расшифровка — те же права, что на прослушивание, и запись в журнал
                     row = call_records.get(app.con, q.get("id") or "")
                     if not row:
@@ -845,6 +850,13 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest(str(e))
                 if method == "POST" and not is_mgr:
                     return JsonResponse({"error": "Изменять данные может только руководитель"}, 403)
+                if path == "/api/calls-auto" and method == "POST":
+                    try:
+                        return JsonResponse(daily_calls.set_settings(app.con, b, me["login"]))
+                    except daily_calls.SettingsConflict as exc:
+                        return JsonResponse({"error": str(exc)}, 409)
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
                 if path == "/api/tender-followup-moves" and method == "POST":
                     with db_lock():
                         try:

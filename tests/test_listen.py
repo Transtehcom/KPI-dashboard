@@ -143,6 +143,43 @@ class ListenTest(unittest.TestCase):
         self.assertEqual((code,response["job"]["status"]),(200,"cancelled"))
         self.assertEqual(post("boss","/api/calls-job-cancel",{"id":"missing"})[0],400)
 
+    def test_call_auto_settings_are_admin_only_and_require_new_enable_parameters(self):
+        def clear():
+            with db_lock():
+                self.con.execute('DELETE FROM call_auto_settings')
+                self.con.commit()
+        clear()
+        self.addCleanup(clear)
+        def post(login, body):
+            request = urllib.request.Request(self.base + '/api/calls-auto', method='POST',
+                data=json.dumps(body).encode(), headers={'Cookie': self.tokens[login], 'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, json.load(response)
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code, json.load(error)
+        self.assertEqual(self.get('pm', '/api/calls-auto')[0], 403)
+        self.assertEqual(post('pm', {'enabled': False, 'revision': 0})[0], 403)
+        code, _, body = self.get('boss', '/api/calls-auto')
+        self.assertEqual(code, 200)
+        self.assertFalse(json.loads(body)['enabled'])
+        enable = {'enabled': True, 'revision': 0, 'model': 'gpt-6.1-sol', 'effort': 'high',
+                  'fast': True, 'period': 'yesterday'}
+        self.assertEqual(post('boss', {k: v for k, v in enable.items() if k != 'effort'})[0], 400)
+        self.assertEqual(post('boss', {**enable, 'model': []})[0], 400)
+        code, saved = post('boss', enable)
+        self.assertEqual(code, 200)
+        self.assertTrue(saved['enabled'])
+        self.assertEqual(saved['period'], 'yesterday')
+        self.assertEqual(post('boss', {'enabled': False, 'revision': 0})[0], 409)
+        jobs = json.loads(self.get('boss', '/api/calls-job')[2])
+        self.assertEqual(jobs['auto']['revision'], saved['revision'])
+        code, disabled = post('boss', {'enabled': False, 'revision': saved['revision']})
+        self.assertEqual(code, 200)
+        self.assertFalse(disabled['enabled'])
+        self.assertEqual(post('boss', {'enabled': True, 'revision': disabled['revision']})[0], 400)
+
     def test_feedback_recheck_admin_revision_schedule_and_privacy(self):
         from app import call_feedback
         with db_lock():

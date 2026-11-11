@@ -320,6 +320,15 @@ table { border-collapse: collapse; width: 100%; }
 .payment-confirm h2 { margin: 0 0 14px; font-size: 19px; }
 .payment-confirm p { line-height: 1.6; }
 .payment-confirm .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.call-auto-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.call-auto-switch input { appearance: none; width: 36px; min-width: 36px; height: 20px; padding: 2px; border-radius: 12px; background: var(--line-strong); }
+.call-auto-switch input::before { content: ""; display: block; width: 14px; height: 14px; border-radius: 50%; background: white; transition: transform .15s; }
+.call-auto-switch input:checked { background: var(--teal); }
+.call-auto-switch input:checked::before { transform: translateX(16px); }
+.call-auto-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.call-auto-fields label { display: flex; flex-direction: column; gap: 6px; }
+.call-auto-fields select { width: 100%; min-width: 0; }
+@media (max-width: 520px) { .call-auto-fields { grid-template-columns: minmax(0, 1fr); } }
 .zero-note { padding: 8px 10px; border-radius: 3px; background: var(--bad-soft); color: var(--bad); font-size: 12px; font-weight: 500; }
 details.more { border-top: 1px solid var(--line); }
 details.more > summary { list-style: none; padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; display: flex; gap: 8px; }
@@ -2107,6 +2116,73 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
       renderCalls(d, log);
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
+  function chooseCallAuto(options) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "payment-confirm";
+      dialog.setAttribute("aria-labelledby", "call-auto-title");
+      dialog.innerHTML = `<form><h2 id="call-auto-title">Настройки авторазбора</h2>
+        <p class="muted small">Выберите параметры для этого включения. Ежедневный запуск в 17:30 UTC+5.</p>
+        <div class="call-auto-fields">
+          <label>Модель<select name="model" required><option value="" disabled selected>Выберите модель</option>${Object.entries(options.models).map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("")}</select></label>
+          <label>Уровень мышления<select name="effort" required disabled><option value="" disabled selected>Выберите уровень</option></select></label>
+          <label>Скорость<select name="fast" required><option value="" disabled selected>Выберите режим</option><option value="false">Обычная</option><option value="true">Fast</option></select></label>
+          <label>День звонков<select name="period" required><option value="" disabled selected>Выберите день</option><option value="today">Текущий день</option><option value="yesterday">Предыдущий день</option></select></label>
+        </div><div class="actions"><button type="button" class="btn ghost" data-auto-cancel>Отмена</button><button type="submit" class="btn primary">Включить</button></div></form>`;
+      const form = dialog.querySelector("form"), model = dialog.querySelector("[name=model]"), effort = dialog.querySelector("[name=effort]");
+      let selection = null;
+      model.addEventListener("change", () => {
+        effort.innerHTML = `<option value="" disabled selected>Выберите уровень</option>${Object.entries(options.model_efforts[model.value] || {}).map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("")}`;
+        effort.value = "";
+        effort.disabled = false;
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        selection = {model: model.value, effort: effort.value, fast: dialog.querySelector("[name=fast]").value === "true",
+          period: dialog.querySelector("[name=period]").value};
+        dialog.close();
+      });
+      dialog.querySelector("[data-auto-cancel]").addEventListener("click", () => dialog.close());
+      dialog.addEventListener("close", () => { dialog.remove(); resolve(selection); }, {once: true});
+      document.body.append(dialog);
+      dialog.showModal();
+    });
+  }
+
+  function mountCallAuto(panel, options) {
+    panel.innerHTML = `<div class="panel-h"><h2>Ежедневный разбор звонков</h2><label class="call-auto-switch"><input type="checkbox" role="switch" data-auto-toggle disabled><span>Автозапуск</span></label></div>
+      <div class="panel-b"><div data-auto-state class="small">Загрузка настроек…</div><div class="muted small" style="margin-top:6px">Ежедневно в 17:30 UTC+5. Для запуска должны работать Codex и дашборд.</div></div>`;
+    const toggle = panel.querySelector("[data-auto-toggle]"), label = panel.querySelector("[data-auto-state]");
+    let current = null, pending = false;
+    toggle.disabled = true;
+    const update = (value) => {
+      if (!value || current && value.revision < current.revision) return;
+      current = value;
+      if (pending) return;
+      toggle.checked = value.enabled;
+      toggle.disabled = false;
+      label.textContent = value.enabled ? `Включён · За ${value.period === "yesterday" ? "предыдущий" : "текущий"} день · ${options.models[value.model] || value.model} · ${options.efforts[value.effort] || value.effort}${value.fast ? " · Fast" : ""}` : "Авторазбор выключен";
+    };
+    toggle.addEventListener("change", async () => {
+      if (!current || pending) return;
+      const revision = current.revision, enabling = !current.enabled;
+      toggle.checked = current.enabled;
+      toggle.disabled = pending = true;
+      try {
+        const selection = enabling ? await chooseCallAuto(options) : {};
+        if (selection) update(await api("/api/calls-auto", {enabled: enabling, revision, ...selection}));
+      } catch (error) {
+        if (error.message !== "auth") toast(error.message);
+        try { update(await api("/api/calls-auto")); } catch (e) {}
+      } finally {
+        pending = false;
+        update(current);
+      }
+    });
+    return update;
+  }
+
   function renderCalls(d, log) {
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
     const audio = (c) => {
@@ -2191,7 +2267,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
           <button type="button" id="cLastTog" aria-expanded="false">Последние… ▸</button>
           ${[20, 50, 100].map((n) => `<button type="button" class="sub" data-batch="last" data-n="${n}" hidden>${n} звонков</button>`).join("")}
         </div></details></div><label class="muted small" style="display:block;margin-top:8px" for="cRunAt">Запустить один раз (пусто — сразу; время сервиса)<input type="datetime-local" id="cRunAt" value="${esc(state.cRunAt || "")}" style="display:block;margin-top:4px;margin-left:auto"></label><div class="muted small" id="cJob" style="margin-top:4px"></div></div>` : ""}</div>
-      ${isMgr ? `<section class="panel"><div class="panel-h"><h2>Задачи обработки</h2><button type="button" class="btn" id="cJobsRefresh">Обновить звонки</button></div><div class="panel-b"><div class="muted small" id="cJobsHint">Загрузка очереди…</div><div id="cJobsList" style="max-height:360px;overflow:auto"></div><div class="muted small">Отмена завершает текущий звонок и останавливает следующие. Готовые результаты сохраняются. Новая задача использует выбранные звонки и модель на момент создания.</div></div></section>` : ""}
+      ${isMgr ? `<section class="panel" id="cAutoPanel"></section><section class="panel"><div class="panel-h"><h2>Задачи обработки</h2><button type="button" class="btn" id="cJobsRefresh">Обновить звонки</button></div><div class="panel-b"><div class="muted small" id="cJobsHint">Загрузка очереди…</div><div id="cJobsList" style="max-height:360px;overflow:auto"></div><div class="muted small">Отмена завершает текущий звонок и останавливает следующие. Готовые результаты сохраняются. Новая задача использует выбранные звонки и модель на момент создания.</div></div></section>` : ""}
       <section class="panel"><div class="panel-h"><div class="filters">
           ${d.deal != null ? "" : periodHtml(state.cPer, "c")}
           ${multi ? `<label for="cLogin">Сотрудник <select id="cLogin"><option value="">Все</option>${emps.map((e) => `<option value="${esc(e.login)}" ${e.login === d.login ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></label>` : ""}
@@ -2226,6 +2302,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     }));
     pgBind(main, cpg, () => renderCalls(d, log));
     // ручная обработка: один звонок, «Всё» или последние N из текущего списка (по периоду и фильтрам)
+    const updateAuto = isMgr ? mountCallAuto(document.getElementById("cAutoPanel"), d.model_options) : null;
     const job = document.getElementById("cJob"), proc = document.getElementById("cProc");
     const startProc = async (body, ask) => {
       if (ask && !confirm(ask + (state.cRunAt ? ` Разовый запуск: ${dtLabel(state.cRunAt)} (время сервиса).` : ""))) return;
@@ -2246,6 +2323,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
         return;
       }
       if (state.view !== "calls" || request !== state.cJobRequest) return;
+      if (st.auto) updateAuto(st.auto);
       const labels = { queued: "В очереди", running: "Обрабатывается", cancelling: "Отменяется", completed: "Завершено", completed_with_errors: "Завершено с ошибками", cancelled: "Отменено", failed: "Ошибка", blocked: "Лимит подписки", interrupted: "Прервано перезапуском" };
       const hint = document.getElementById("cJobsHint"), list = document.getElementById("cJobsList");
       if (hint) hint.textContent = `Параллельно задач: до ${st.workers}. Расшифровка аудио — по очереди. Время сервиса: ${st.timezone}.`;

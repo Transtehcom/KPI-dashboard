@@ -39,6 +39,9 @@ class NavigationTest(unittest.TestCase):
     def test_call_processing_jobs(self):
         self.run_script("test_call_jobs.js")
 
+    def test_daily_call_auto_controls(self):
+        self.run_script("test_call_auto.js")
+
     def test_gpt_chat_rendering(self):
         self.run_script("test_gpt.js")
 

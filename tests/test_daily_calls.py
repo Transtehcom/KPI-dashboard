@@ -3,7 +3,9 @@ import json
 import io
 import tempfile
 import threading
+import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -42,6 +44,86 @@ class DailyCallsTest(unittest.TestCase):
         self.assertEqual(json.loads(job['ids']), ['call2'])
         self.assertEqual((job['model'], job['effort'], job['fast'], job['force']),
                          ('gpt-6.1-sol', 'high', 1, 0))
+
+    def test_enable_requires_explicit_parameters_every_time(self):
+        self.assertFalse(daily_calls.get_settings(self.con)['enabled'])
+        payload = {'enabled': True, 'model': 'gpt-6.1-sol', 'effort': 'medium',
+                   'fast': False, 'period': 'yesterday', 'revision': 0}
+        for field in ('model', 'effort', 'fast', 'period'):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                daily_calls.set_settings(self.con, {k: v for k, v in payload.items() if k != field}, 'boss')
+        enabled = daily_calls.set_settings(self.con, payload, 'boss')
+        self.assertTrue(enabled['enabled'])
+        disabled = daily_calls.set_settings(self.con, {'enabled': False, 'revision': enabled['revision']}, 'boss')
+        with self.assertRaises(ValueError):
+            daily_calls.set_settings(self.con, {'enabled': True, 'revision': disabled['revision']}, 'boss')
+        self.assertFalse(daily_calls.get_settings(self.con)['enabled'])
+
+    def test_settings_validate_model_effort_fast_period_and_conflicting_updates(self):
+        payload = {'enabled': True, 'model': 'gpt-6.1-sol', 'effort': 'high',
+                   'fast': True, 'period': 'today', 'revision': 0}
+        for field, value in (('model', 'unknown'), ('effort', 'unknown'), ('fast', 'yes'),
+                             ('period', 'last_month'), ('enabled', 'yes'), ('revision', True)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                daily_calls.set_settings(self.con, {**payload, field: value}, 'boss')
+        saved = daily_calls.set_settings(self.con, payload, 'boss')
+        with self.assertRaises(daily_calls.SettingsConflict):
+            daily_calls.set_settings(self.con, {'enabled': False, 'revision': 0}, 'another_admin')
+        self.assertEqual(daily_calls.get_settings(self.con)['revision'], saved['revision'])
+
+    def test_yesterday_and_model_are_fixed_for_scheduled_enqueue(self):
+        self.recording(1, '2026-11-11')
+        self.recording(2, '2026-11-12')
+        saved = daily_calls.set_settings(self.con, {'enabled': True, 'model': 'gpt-6-luna',
+            'effort': 'medium', 'fast': False, 'period': 'yesterday', 'revision': 0}, 'boss')
+        now = dt.datetime(2026, 11, 12, 17, 30, tzinfo=daily_calls.TIMEZONE)
+        result = daily_calls.enqueue(self.con, self.config, now=now, selection=saved,
+                                     scheduled_revision=saved['revision'])
+        row = self.con.execute('SELECT * FROM call_processing_jobs').fetchone()
+        self.assertEqual(result['day'], '2026-11-11')
+        self.assertEqual(json.loads(row['ids']), ['call1'])
+        self.assertEqual((row['model'], row['effort'], row['fast']), ('gpt-6-luna', 'medium', 0))
+
+    def test_disabling_during_refresh_prevents_old_scheduled_snapshot_from_enqueueing(self):
+        self.recording(1, '2026-11-11')
+        saved = daily_calls.set_settings(self.con, {'enabled': True, 'model': 'gpt-6.1-sol',
+            'effort': 'high', 'fast': True, 'period': 'today', 'revision': 0}, 'boss')
+        daily_calls.set_settings(self.con, {'enabled': False, 'revision': saved['revision']}, 'boss')
+        result = daily_calls.enqueue(self.con, self.config,
+            now=dt.datetime(2026, 11, 11, 17, 30, tzinfo=daily_calls.TIMEZONE),
+            selection=saved, scheduled_revision=saved['revision'])
+        self.assertIsNone(result['job'])
+        self.assertTrue(result['skipped'])
+        self.assertEqual(self.con.execute('SELECT COUNT(*) FROM call_processing_jobs').fetchone()[0], 0)
+
+    def test_disabled_scheduled_cli_does_no_external_work(self):
+        with mock.patch('app.common.connect', return_value=self.con), \
+             mock.patch('app.common.load_config', return_value=self.config), \
+             mock.patch('app.daily_calls.refresh') as refresh, mock.patch('builtins.print'):
+            result = daily_calls.main(['--scheduled', '--wait'])
+        self.assertEqual(result, 0)
+        refresh.assert_not_called()
+
+    def test_manual_cli_keeps_today_and_original_model_after_auto_settings_change(self):
+        self.recording(1, '2026-11-11')
+        self.recording(2, '2026-11-12')
+        daily_calls.set_settings(self.con, {'enabled': True, 'model': 'gpt-6-luna', 'effort': 'medium',
+            'fast': False, 'period': 'yesterday', 'revision': 0}, 'boss')
+        path = str(Path(self.directory.name, 'manual.sqlite'))
+        with closing(sqlite3.connect(path)) as target:
+            self.con.backup(target)
+        config = {**self.config, 'employees': [], 'bitrix24': {'webhook': 'https://crm.example.test/rest/1/test/'}}
+        source = connect(path)
+        with mock.patch('app.common.connect', return_value=source), \
+             mock.patch('app.common.load_config', return_value=config), \
+             mock.patch('app.daily_calls.refresh', return_value={}), \
+             mock.patch('app.daily_calls.dt.datetime', wraps=dt.datetime) as clock, mock.patch('builtins.print'):
+            clock.now.return_value = dt.datetime(2026, 11, 12, 17, 30, tzinfo=daily_calls.TIMEZONE)
+            self.assertEqual(daily_calls.main([]), 0)
+        with closing(sqlite3.connect(path)) as verify:
+            row = verify.execute('SELECT ids,model,effort,fast FROM call_processing_jobs').fetchone()
+        self.assertEqual(json.loads(row[0]), ['call2'])
+        self.assertEqual(row[1:], ('gpt-6.1-sol', 'high', 1))
 
     def test_repeated_enqueue_reuses_job_and_preserves_running_jobs(self):
         self.recording(1, '2026-11-11')

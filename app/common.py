@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS call_processing_jobs (
  total INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
  skipped INTEGER NOT NULL DEFAULT 0, current TEXT, message TEXT);
 CREATE INDEX IF NOT EXISTS ix_call_jobs_due ON call_processing_jobs(status,run_at);
+CREATE TABLE IF NOT EXISTS call_auto_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
+ model TEXT NOT NULL, effort TEXT NOT NULL, fast INTEGER NOT NULL, period TEXT NOT NULL,
+ revision INTEGER NOT NULL, author TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS call_feedback_rechecks (
  id TEXT PRIMARY KEY, record TEXT NOT NULL, author TEXT NOT NULL, revision INTEGER NOT NULL,
  requested_by TEXT, created TEXT, finished TEXT, status TEXT, feedback TEXT,
