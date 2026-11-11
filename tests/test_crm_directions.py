@@ -38,12 +38,12 @@ class FunnelDirectionsTest(unittest.TestCase):
              'stage': 'В работе', 'category_id': '0', 'category': 'Продажи', 'semantic': 'P',
              'ts': '2026-11-05T12:00:00'} for row in rows])
 
-    def test_direction_union_all_and_kpi_bpla_exception_in_both_modes(self):
-        cases = [(['bpla'], {'1', '2', '3', '4', '10'}),
+    def test_tag_direction_union_and_all_in_both_modes(self):
+        cases = [(['bpla'], {'2', '3'}),
                  (['kpi', 'bpla'], {'1', '2', '3', '5'}),
                  (['kpi', 'bpla', 'epc'], {'1', '2', '3', '5', '6', '10'}),
                  (['epc', 'investments'], {'6', '7', '10'}),
-                 (['epc', 'bpla'], {'1', '2', '3', '4', '6', '10'}),
+                 (['epc', 'bpla'], {'2', '3', '6', '10'}),
                  ('tagged', {'1', '2', '3', '5', '6', '7', '8', '10'}),
                  ('all', {str(i) for i in range(1, 11)}),
                  ([], {str(i) for i in range(1, 11)})]
@@ -92,12 +92,12 @@ class FunnelDirectionsTest(unittest.TestCase):
 
     def test_fact_filters_closed_records_and_preserves_transition_date(self):
         self.load_rows('deals', 'fact')
-        self.con.execute("UPDATE fact_records SET semantic='S' WHERE id='deal1'")
-        self.con.execute("UPDATE stage_moves SET semantic='S',stage='Успех' WHERE rid='deal1'")
+        self.con.execute("UPDATE fact_records SET semantic='S' WHERE id='deal2'")
+        self.con.execute("UPDATE stage_moves SET semantic='S',stage='Успех' WHERE rid='deal2'")
         result = deal_funnel(self.con, self.config, mode='fact', directions=['bpla'],
                              date_from='2026-11-01', date_to='2026-11-30')
         closed = next(section for section in result['sections'] if section['key'] == '_won')
-        self.assertEqual([r['id'] for r in closed['deals']], ['deal1'])
+        self.assertEqual([r['id'] for r in closed['deals']], ['deal2'])
         self.assertEqual(result['applied']['date_from'], '2026-11-01')
 
 

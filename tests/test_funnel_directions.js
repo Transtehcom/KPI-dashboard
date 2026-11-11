@@ -30,7 +30,8 @@ for (const mode of ['date','fact']) {
   state.fMode=mode;
   context.renderFunnel(data);
   assert.ok(main.innerHTML.includes('id="fDirections"'));
-  assert.ok(main.innerHTML.includes('БПЛА учитывается по названию или тегу'));
+  assert.ok(main.innerHTML.includes('Отбор по тегам'));
+  assert.ok(!main.innerHTML.includes('БПЛА учитывается по названию или тегу'));
   assert.ok(main.innerHTML.includes('Факторинг'));
 }
 boxes.find(box=>box.value==='bpla').checked=true;

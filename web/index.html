@@ -3519,8 +3519,6 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const directionLabel = !directionNames.length ? "Все" : directionNames.length === 1 ? directionNames[0] : `Выбрано ${directionNames.length}`;
     const directionRule = !selectedDirections.length ? "Все карточки без отбора по направлениям."
       : selectedDirections.includes("tagged") ? "Карточки хотя бы с одним из пяти тегов направлений."
-      : selectedDirections.includes("bpla") && !selectedDirections.includes("kpi")
-      ? "БПЛА учитывается по названию или тегу. Выбранные направления объединяются."
       : "Отбор по тегам. Выбранные направления объединяются.";
 
     // --- графика: ширина (длина) — количество, насыщенность цвета и толщина полосы — сумма

@@ -1,4 +1,4 @@
-"""Направления CRM из тегов карточки и согласованного правила БПЛА."""
+"""Направления CRM из тегов карточки."""
 import json
 import re
 
@@ -44,7 +44,4 @@ def matches_directions(row, chosen):
     if chosen is None:
         return True
     tags = set(normalize_tags(row.get('tags')))
-    if any(DIRECTIONS[key] in tags for key in chosen):
-        return True
-    strict = 'kpi' in chosen and 'bpla' in chosen
-    return 'bpla' in chosen and not strict and 'бпла' in str(row.get('title') or '').casefold()
+    return any(DIRECTIONS[key] in tags for key in chosen)
