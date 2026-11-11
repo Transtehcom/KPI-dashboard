@@ -397,7 +397,10 @@ class Engine:
         require_lpr = p.get("require_lpr", item["code"] == "base_development") if item else False
         result, steps, _ = self._result_calls(login, {"first": date_from, "last": date_to}, require_lpr,
                                               p.get("one_call_per_contact_day", False))
+        followup_summary = self.tender_followup_summary(login, {"first": date_from, "last": date_to}, result,
+                                                        p.get("one_call_per_contact_day", False))
         return {"login": login, "name": e["name"], "steps": steps, "result": len(result),
+                "followup_summary": followup_summary,
                 "kpi": f"KPI {item.get('n')}. {item['title']}" if item else None,
                 "one_per_contact_day": bool(p.get("one_call_per_contact_day")), "require_lpr": require_lpr}
 

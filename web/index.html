@@ -299,7 +299,12 @@ table { border-collapse: collapse; width: 100%; }
 .audit-result.unknown { color: var(--fg-2); }
 .audit-why { margin-top: 6px; }
 .audit-why ul { padding-left: 18px; }
-.followup-count { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; }
+.manual.followup-summary { width: 100%; max-width: 380px; padding: 7px 9px; gap: 3px; font-size: 11px; line-height: 1.3; align-self: flex-start; }
+.followup-summary > b { font-size: 11.5px; }
+.followup-count { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+.followup-note { color: var(--fg-3); font-size: 10px; }
+.followup-note summary { cursor: pointer; }
+.followup-note .small { margin-top: 4px; font-size: 10px; }
 .followup-record { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 @media (max-width: 700px) {
   .audit-record-head { grid-template-columns: minmax(0, 1fr); }
@@ -332,6 +337,15 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .cf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px 28px; }
 .cf-p { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .cf-p h3 { margin: 0; font-size: 14px; }
+.cf-with-summary { grid-column: 1 / -1; }
+.cf-overview { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 20px; align-items: start; }
+.cf-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cf-side { min-width: 0; }
+.cf-side .followup-summary { max-width: none; }
+@media (max-width: 720px) {
+  .cf-overview { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .cf-side { width: 100%; max-width: 380px; justify-self: end; }
+}
 .funnel .row { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 48px; gap: 8px; align-items: center; font-size: 12px; }
 .funnel .row span:first-child { color: var(--fg-2); }
 .funnel .fb { height: 14px; border-radius: 3px; background: var(--bar-2); }
@@ -718,6 +732,10 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   .pr-calls { break-inside: avoid; }
   .pr-sec .cf-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6pt 12pt; }
   .pr-sec .cf-p h3 { font-size: 9.5pt; margin: 0; }
+  .pr-sec .cf-with-summary { grid-column: auto; }
+  .pr-sec .cf-overview { grid-template-columns: minmax(0, 1fr); gap: 4pt; }
+  .pr-sec .manual.followup-summary { max-width: 100%; padding: 4pt; gap: 2pt; font-size: 7pt; }
+  .pr-sec .followup-summary > b { font-size: 7pt; }
   .pr-sec .funnel .row { font-size: 8pt; grid-template-columns: minmax(0, 80pt) minmax(0, 1fr) 26px; gap: 4pt; }
   .pr-sec .funnel .row b { font-size: 8pt; }
   .pr-sec .panel { box-shadow: none; break-inside: avoid; }
@@ -1329,7 +1347,19 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   }
 
   function followupSummary(summary) {
-    return `<div class="manual"><b>${esc(summary.title)}</b>${summary.rows.map((row) => `<div class="followup-count"><span>${esc(row[0])}</span><b>${nf(row[1])}</b></div>`).join("")}<div class="small muted">${esc(summary.hint)}</div>${summary.unknown ? `<div class="small muted">Ожидают обновления данных ${nf(summary.unknown)} звонков.</div>` : ""}</div>`;
+    return `<div class="manual followup-summary"><b>${esc(summary.title)}</b>${summary.rows.map((row) => `<div class="followup-count"><span>${esc(row[0])}</span><b>${nf(row[1])}</b></div>`).join("")}<details class="followup-note"><summary>Условия учёта</summary><div class="small muted">${esc(summary.hint)}</div></details>${summary.unknown ? `<div class="small muted">Ожидают обновления данных ${nf(summary.unknown)} звонков.</div>` : ""}</div>`;
+  }
+
+  function callFunnelPerson(person) {
+    const name = person.name || (state.fRespNames && state.fRespNames.get(person.login)) || person.login;
+    if (person.error) return `<div class="cf-p"><h3>${esc(name)}</h3><div class="muted small">${esc(person.error)}</div></div>`;
+    const summary = person.followup_summary;
+    const steps = summary ? person.steps.slice(0, -1) : person.steps;
+    const maximum = Math.max(1, ...steps.map((step) => step[1]));
+    return `<div class="cf-p${summary ? " cf-with-summary" : ""}"><div class="${summary ? "cf-overview" : "cf-main"}"><div class="cf-main"><h3>${esc(name)}</h3>
+      <div class="muted small">${person.kpi ? `Отбор по правилам: ${esc(person.kpi)}` : "В KPI сотрудника звонки не оцениваются — воронка для справки"}${person.one_per_contact_day ? " · не больше одного звонка в день одному контакту" : ""}</div>
+      <div class="funnel">${steps.map((step) => `<div class="row"><span>${esc(step[0])}</span><div class="fb" style="width:${Math.max(1, (step[1] / maximum) * 100)}%"></div><b>${nf(step[1])}</b></div>`).join("")}</div></div>
+      ${summary ? `<aside class="cf-side">${followupSummary(summary)}</aside>` : ""}</div></div>`;
   }
 
   function auditRecord(r) {
@@ -3604,15 +3634,7 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
     const cf = d.calls, cfPeople = cf ? cf.people.filter(Boolean) : [];
     const cfPer = !cf ? "" : (cf.date_from === cf.date_to ? ruDay(cf.date_from) : `${ruDay(cf.date_from)} – ${ruDay(cf.date_to)}`) +
       (dFrom || dTo ? "" : " (период не выбран — текущий месяц)");
-    const cfBlock = (p) => {
-      const name = p.name || (state.fRespNames && state.fRespNames.get(p.login)) || p.login;
-      if (p.error) return `<div class="cf-p"><h3>${esc(name)}</h3><div class="muted small">${esc(p.error)}</div></div>`;
-      const mx = Math.max(1, ...p.steps.map((s) => s[1]));
-      return `<div class="cf-p"><h3>${esc(name)}</h3>
-        <div class="muted small">${p.kpi ? `Отбор по правилам: ${esc(p.kpi)}` : "В KPI сотрудника звонки не оцениваются — воронка для справки"}${p.one_per_contact_day ? " · не больше одного звонка в день одному контакту" : ""}</div>
-        <div class="funnel">${p.steps.map((s) => `<div class="row"><span>${esc(s[0])}</span><div class="fb" style="width:${Math.max(1, (s[1] / mx) * 100)}%"></div><b>${nf(s[1])}</b></div>`).join("")}</div></div>`;
-    };
-    const cfHtml = cfPeople.length ? cfPeople.map(cfBlock).join("") : "";
+    const cfHtml = cfPeople.length ? cfPeople.map(callFunnelPerson).join("") : "";
 
     const now = new Date();
     const printHtml = `<div class="print-only">

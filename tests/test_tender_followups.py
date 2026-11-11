@@ -170,6 +170,8 @@ class TenderFollowupRulesTest(unittest.TestCase):
         self.assertEqual(audit["records"][0]["followups"][0]["total_moves"], 0)
         item = engine.calc_base_development(engine.employee("tender"), engine._ctx("2026-11"), {"result_calls_per_day": 3})
         self.assertEqual([r[1] for r in item["followup_summary"]["rows"]], [0, 1, 0])
+        funnel = engine.call_funnel("tender", dt.date(2026, 11, 1), dt.date(2026, 11, 30))
+        self.assertEqual(funnel.get("followup_summary", {}).get("rows"), item["followup_summary"]["rows"])
 
     def test_daily_cap_does_not_show_a_successful_contact_as_overdue(self):
         self.store(self.plan(CREATED="2026-11-03T09:00:00", DEADLINE="2026-11-03T12:00:00"),
