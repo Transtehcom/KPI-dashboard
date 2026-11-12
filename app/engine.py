@@ -458,6 +458,53 @@ class Engine:
                             "budget_inclusion": {"column": 8, "rows": checks},
                             "money_cols": [2, 3, 4], "rows": details}}
 
+    def calc_logistics_request_speed(self, e, ctx, p):
+        from .operations import local_datetime
+
+        rows = self.q("SELECT * FROM transport_requests WHERE emp=? AND dt>=? AND dt<=? "
+                      "AND NOT COALESCE(deleted,0) ORDER BY dt,doc,id", e["login"],
+                      ctx["first"].isoformat(), ctx["last"].isoformat())
+        details, timed = [], 0
+        for row in rows:
+            try:
+                history = json.loads(row["history"] or "[]")
+            except (TypeError, ValueError):
+                history = []
+            dates = {"Поступила": [], "Отработана": []}
+            for event in history if isinstance(history, list) else []:
+                if not isinstance(event, list) or len(event) != 2 or not isinstance(event[0], str):
+                    continue
+                if event[0] in dates:
+                    moment = local_datetime(event[1])
+                    if moment:
+                        dates[event[0]].append(moment)
+            received = min(dates["Поступила"], default=None)
+            finished = max(dates["Отработана"], default=None)
+            if received is None and finished is None:
+                duration = "Нет дат статусов"
+            elif received is None:
+                duration = "Нет даты «Поступила»"
+            elif finished is None:
+                duration = "Нет даты «Отработана»"
+            elif finished < received:
+                duration = "«Отработана» раньше «Поступила»"
+            else:
+                hours, remainder = divmod(int((finished - received).total_seconds()), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration = f"{hours} ч {minutes:02} мин {seconds:02} с"
+                timed += 1
+            status = {"ВРаботе": "В работе", "ЗапросИнформации": "Запрос информации"}.get(row["status"], row["status"])
+            details.append([row["doc"] or row["id"], row["dt"], e.get("onec_manager") or e["name"], status,
+                            received.isoformat(timespec="seconds") if received else None,
+                            finished.isoformat(timespec="seconds") if finished else None, duration])
+        known = not self._missing_datasets(ctx, ("transport_requests",))
+        return {"components": [],
+                "extra": [{"label": "Заявок за месяц", "value": len(rows)},
+                          {"label": "С рассчитанным временем", "value": timed},
+                          {"label": "Данные 1С", "value": "Загружены за период" if known else "Период загружен не полностью"}],
+                "details": {"columns": ["Заявка", "Дата заявки", "Ответственный логист", "Статус",
+                                        "Поступила", "Отработана", "Время обработки"], "rows": details}}
+
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
                       "AND NOT deleted ORDER BY dt,doc,id", e["login"],
@@ -1318,7 +1365,8 @@ class Engine:
                               "amount": round(bonus * it["weight"]), "pct": None, "status": "absent", "payout": 0, "components": []})
                 continue
             if item_draft:
-                r = self.calc_logistics_discipline(e, ctx, it.get("params", {})) if it["code"] == "logistics_discipline" else {"components": []}
+                r = (getattr(self, "calc_" + it["code"])(e, ctx, it.get("params", {}))
+                     if it["code"] in ("logistics_discipline", "logistics_request_speed") else {"components": []})
             else:
                 fn = getattr(self, "calc_" + it["code"])
                 r = fn(e, ctx, it.get("params", {}))

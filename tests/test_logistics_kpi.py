@@ -1,4 +1,5 @@
 """Confirmed logistics delivery rules pay while unresolved items remain drafts."""
+import json
 import unittest
 from unittest.mock import patch
 
@@ -119,15 +120,65 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertIsNone(item["components"][0]["fact"])
         self.assertEqual(item["details"]["rows"], [])
 
-    def test_sync_records_coverage_for_empty_forwarder_dataset(self):
+    def test_request_speed_previews_first_arrival_to_last_completion_without_payout(self):
+        engine = self.engine_with_draft()
+        history = [["Отработана", "2026-08-05T07:58:32"],
+                   ["Поступила", "2026-08-04T19:18:33"],
+                   ["Отработана", "2026-08-04T20:00:00"],
+                   ["Поступила", "2026-08-04T19:30:00"]]
+        self.con.execute("INSERT INTO transport_requests(id,emp,dt,doc,status,deleted,history) VALUES(?,?,?,?,?,?,?)",
+                         ("request", "logist", "2026-08-04", "000001973", "Отработана", 0, json.dumps(history)))
+        self.con.execute("INSERT INTO dataset_state VALUES(?,?,?,?)",
+                         ("transport_requests", "2026-08-01", "2026-11-30", "2026-11-12"))
+        for ref, emp, date, deleted in (("other", "pm", "2026-08-04", 0),
+                                         ("outside", "logist", "2026-07-31", 0),
+                                         ("deleted", "logist", "2026-08-04", 1)):
+            self.con.execute("INSERT INTO transport_requests(id,emp,dt,deleted,history) VALUES(?,?,?,?,?)",
+                             (ref, emp, date, deleted, json.dumps(history)))
+        item = next(i for i in engine.compute("logist", "2026-08")["items"]
+                    if i["code"] == "logistics_request_speed")
+        self.assertIn("details", item)
+        self.assertEqual(item["details"]["columns"],
+                         ["Заявка", "Дата заявки", "Ответственный логист", "Статус", "Поступила", "Отработана", "Время обработки"])
+        self.assertEqual(item["details"]["rows"], [["000001973", "2026-08-04", "Логист", "Отработана",
+                         "2026-08-04T19:18:33", "2026-08-05T07:58:32", "12 ч 39 мин 59 с"]])
+        self.assertEqual(item["status"], "draft")
+        self.assertIsNone(item["pct"])
+        self.assertEqual(item["payout"], 0)
+
+    def test_request_speed_missing_or_invalid_dates_stay_unknown(self):
+        engine = self.engine_with_draft()
+        cases = [([], "Нет дат статусов"),
+                 ([["Поступила", "2026-11-01T08:00:00"]], "Нет даты «Отработана»"),
+                 ([["Отработана", "2026-11-01T08:00:00"]], "Нет даты «Поступила»"),
+                 ([["Поступила", "0001-01-01T00:00:00"], ["Отработана", "bad"]], "Нет дат статусов"),
+                 ([["Поступила", "2026-11-01T09:00:00"], ["Отработана", "2026-11-01T08:00:00"]],
+                  "«Отработана» раньше «Поступила»"),
+                 ([["Поступила", "2026-11-01T08:00:00"], ["Отработана", "2026-11-01T08:00:00"]],
+                  "0 ч 00 мин 00 с")]
+        for index, (history, _) in enumerate(cases):
+            self.con.execute("INSERT INTO transport_requests(id,emp,dt,doc,history) VALUES(?,?,?,?,?)",
+                             (str(index), "logist", "2026-11-01", str(index), json.dumps(history)))
+        self.con.execute("INSERT INTO transport_requests(id,emp,dt,doc,history) VALUES(?,?,?,?,?)",
+                         ("broken", "logist", "2026-11-01", "broken", "invalid json"))
+        item = next(i for i in engine.compute("logist", "2026-11")["items"]
+                    if i["code"] == "logistics_request_speed")
+        self.assertIn("details", item)
+        self.assertEqual([r[-1] for r in item["details"]["rows"]],
+                         [expected for _, expected in cases] + ["Нет дат статусов"])
+        self.assertEqual(item["extra"][-1]["value"], "Период загружен не полностью")
+        self.assertEqual(item["payout"], 0)
+
+    def test_sync_records_coverage_for_empty_logistics_datasets(self):
         from app import sync
         config = {**self.config, "mode": "real", "onec": {"base_url": "https://example.test", "datasets": {}}}
         with patch("app.sync.OneC") as source, patch("app.sync.onec_sales_register.fetch", return_value=[]), \
                 patch("app.sync.onec_money.fetch", return_value={"cash": [], "plan": []}):
-            source.return_value.fetch.return_value = {"forwarder_orders": []}
+            source.return_value.fetch.return_value = {"forwarder_orders": [], "transport_requests": []}
             result = sync.run(self.con, config)
         self.assertEqual(result["status"], "ok")
         self.assertIsNotNone(self.con.execute("SELECT * FROM dataset_state WHERE dataset='forwarder_orders'").fetchone())
+        self.assertIsNotNone(self.con.execute("SELECT * FROM dataset_state WHERE dataset='transport_requests'").fetchone())
 
     def test_bootstrap_exposes_draft_rules_and_all_setup_issues(self):
         profile = self.profile()
