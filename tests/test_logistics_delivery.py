@@ -37,7 +37,8 @@ class LogisticsDeliveryTest(unittest.TestCase):
                 self.assertEqual(item['components'][0]['fact'], good / 100)
                 self.assertEqual(item['payout'], expected)
                 self.assertEqual(report['payout'], expected)
-                self.assertTrue(all(row['status'] == 'draft' and row['payout'] == 0 for row in report['items'][1:]))
+                self.assertEqual(report['items'][1]['payout'], 0)
+                self.assertTrue(all(row['status'] == 'draft' and row['payout'] == 0 for row in report['items'][2:]))
 
     def test_one_customer_counts_once_across_documents_and_uses_document_month(self):
         self.add('first', customer='customer')

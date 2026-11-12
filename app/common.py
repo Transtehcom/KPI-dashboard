@@ -222,7 +222,10 @@ CREATE TABLE IF NOT EXISTS forwarder_orders (
 
 CREATE TABLE IF NOT EXISTS logistics_deliveries (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, source_kind TEXT, source_key TEXT, source_doc TEXT,
-  order_key TEXT, order_doc TEXT, order_date TEXT, client TEXT, planned_date TEXT, actual_date TEXT);
+  order_key TEXT, order_doc TEXT, order_date TEXT, client TEXT, planned_date TEXT, actual_date TEXT,
+  order_status TEXT, quote_key TEXT, quote_doc TEXT, quote_date TEXT, delivery_novat REAL,
+  comparison_kind TEXT, comparison_key TEXT, comparison_doc TEXT, comparison_date TEXT,
+  comparison_amount REAL, comparison_issue TEXT);
 
 -- панель «Метрики → Отдел продаж» (макет «Метрики ОП.xlsx»): реестр объектов и действия вводятся вручную
 CREATE TABLE IF NOT EXISTS sales_objects (
@@ -374,6 +377,10 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
                  "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL"), ("due_at", "TEXT")],
                  "forwarder_orders": [("fact_sum", "REAL"), ("dop", "TEXT"), ("dof", "TEXT"), ("dpp", "TEXT"), ("dfp", "TEXT")],
+                 "logistics_deliveries": [("order_status", "TEXT"), ("quote_key", "TEXT"), ("quote_doc", "TEXT"),
+                                          ("quote_date", "TEXT"), ("delivery_novat", "REAL"), ("comparison_kind", "TEXT"),
+                                          ("comparison_key", "TEXT"), ("comparison_doc", "TEXT"), ("comparison_date", "TEXT"),
+                                          ("comparison_amount", "REAL"), ("comparison_issue", "TEXT")],
                  "sales_objects": [("source", "TEXT"), ("status_1c", "TEXT"), ("amount", "REAL"), ("stage_auto", "INTEGER")]}
 
 for _crm_table in ("activities", "call_records", "tenders", "deals", "crm_deals", "fact_records", "deal_failures"):

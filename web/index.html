@@ -1684,6 +1684,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   }
 
   function detailCell(details, rowIndex, column, value, isMgr) {
+    if ((details.money_cols || []).includes(column)) return value == null ? "—" : nf(value, 2);
     if (details.lead_approval?.column === column) {
       const approval = details.lead_approval.rows[rowIndex];
       return approvalControl(approval.ref,details.rows[rowIndex][0],approval.value,"lead",isMgr);

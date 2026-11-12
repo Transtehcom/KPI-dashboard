@@ -31,7 +31,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
         self.assertFalse(p["draft"])
-        self.assertTrue(all(item.get("draft") for item in p["items"][1:]))
+        self.assertTrue(all(item.get("draft") for item in p["items"][2:]))
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
@@ -74,7 +74,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertEqual(len(r["items"]), 6)
                 self.assertTrue(r["warnings"])
                 self.assertIsNone(r["items"][0]["pct"])
-                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in r["items"][1:]))
+                self.assertEqual(r["items"][1]["payout"], 0)
+                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in r["items"][2:]))
                 self.assertEqual(engine.summary("logist", month)["payout"], 0)
 
     def test_partially_active_profile_enters_team_fund(self):
