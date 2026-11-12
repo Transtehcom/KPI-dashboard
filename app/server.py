@@ -300,7 +300,7 @@ class App:
         first, last = month_bounds(month)
         entry_minimums = {rule["code"]: rule["params"]["threshold"]
                           for rule in self.engine.items_for(self.rules["positions"][r["position"]], month)
-                          if rule["code"] == "deferred_payment"}
+                          if rule["code"] in ("deferred_payment", "competitive_purchases")}
         for it in r["items"]:
             if it["code"] == "receivables_overdue" and self.engine.has_1c_receivables():
                 pass  # сроки и оплаты пришли из 1С — ручной ввод не нужен

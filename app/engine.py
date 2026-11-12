@@ -11,6 +11,7 @@ from .call_analysis import secretary_marks
 from .employees import ABSENCE_KINDS
 from .onec_receivables import state_at
 from .onec_logistics import FORWARDER_STATUSES
+from .supply_purchases import qualifying_purchase_groups
 from .crm_links import record_url, employee_url
 from . import tender_followups
 
@@ -1076,21 +1077,12 @@ class Engine:
         лотом не считается: несколько заказов по 150 тыс. попадут в KPI только при общем лоте от порога."""
         rows = self.q("SELECT * FROM supplier_orders WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt, doc",
                       e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
-        grouped = {}
-        for r in rows:
-            lot = (r["lot"] or "").strip()
-            key = ("lot", lot.casefold()) if lot else ("order", r["id"])
-            grouped.setdefault(key, []).append(r)
-
         def flag(items, field):
             values = [r[field] for r in items if r[field] is not None]
             return int(any(values)) if values else 0
 
         purchases = []
-        for key, items in grouped.items():
-            amount = sum(r["amount_novat"] or 0 for r in items)
-            if amount < p["threshold"]:
-                continue
+        for key, items, amount in qualifying_purchase_groups(rows, p["threshold"]):
             counts = [r["kp_count"] for r in items if r["kp_count"] is not None]
             purchase = {
                 "key": key, "items": items, "amount": amount,

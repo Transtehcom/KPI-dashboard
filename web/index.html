@@ -1519,10 +1519,12 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   // ручной ввод к записям из 1С: срок и дата оплаты реализаций, брак, отсрочка, признаки конкурентной закупки
   function entryBlock(d, it) {
     const en = it.entry, isMgr = state.boot.me.role === "manager";
-    if (!en.rows.length) return `<div class="manual"><div class="eyebrow">Данные для ввода</div><div class="small muted">За ${MONTHS[+d.month.slice(5) - 1].toLowerCase()} записей из 1С нет.</div></div>`;
+    const lotCandidates = isMgr && !en.readonly ? en.lot_candidates || [] : [];
+    const lotKey = `${d.login}:${d.month}:${it.code}`;
+    if (!en.rows.length && !lotCandidates.length) return `<div class="manual"><div class="eyebrow">Данные для ввода</div><div class="small muted">За ${MONTHS[+d.month.slice(5) - 1].toLowerCase()} записей из 1С нет.</div></div>`;
     const show = (f, v) => v == null ? "—" : f.type === "delivery_delta"
       ? `<span class="delivery-delta ${v < 0 ? "late" : "on-time"}">${v > 0 ? "+" : ""}${nf(v)} дн.</span>`
-      : f.type === "bool" ? (v ? "да" : "нет") : f.type === "pct" ? nf(v * 100, 0) + "%" : f.type === "date" ? fmtCell(v, "", false) : nf(v);
+      : f.type === "bool" ? (v ? "да" : "нет") : f.type === "pct" ? nf(v * 100, 0) + "%" : f.type === "date" ? fmtCell(v, "", false) : f.type === "text" ? esc(v || "—") : nf(v);
     const input = (r, f) => {
       const v = r.values[f.key], lbl = `${esc(f.title)}, ${esc(r.cells[0])}`;
       const data = `data-entry data-table="${en.table}" data-ref="${esc(r.edit_ref || r.ref)}" data-field="${f.key}" aria-label="${lbl}"`;
@@ -1539,13 +1541,15 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     })() : typeof c === "number" ? nf(Math.round(c)) : fmtCell(c, en.columns[ci] || "", false)}</td>`).join("") + en.fields.map((f) =>
       `<td${r.manual?.includes(f.key) ? ' class="manual-set" title="Введено вручную"' : ""}>${f.visible_if && !r.values[f.visible_if] ? "—" : isMgr && !f.readonly && (f.parent_edit ? parent : !parent) ? input(r, f) : show(f, r.values[f.key])}</td>`).join("");
     const header = (columns) => `<thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}${en.fields.map((f) => `<th>${esc(f.title)}</th>`).join("")}</tr></thead>`;
+    const table = (content) => `<div class="scroll"><table>${header(en.columns)}<tbody>${content}</tbody></table></div>`;
     const body = en.groups ? en.groups.map((g) => {
       const open = state.deliveryOpen?.has(`${d.login}:${d.month}:${g.ref}`);
       return `<tr>${cells(g, true)}</tr><tr data-delivery-children${open ? "" : " hidden"}><td colspan="${en.columns.length + en.fields.length}"><div class="scroll"><table>${header(["Заказ поставщику", "Поставщик", "Сумма без НДС, ₽"])}<tbody>${g.rows.map((r) => `<tr>${cells(r)}</tr>`).join("")}</tbody></table></div></td></tr>`;
     }).join("") : en.rows.map((r) => `<tr>${cells(r)}</tr>`).join("");
     return `<div class="manual"><div class="eyebrow">${en.title ? esc(en.title) : en.groups ? "Поставки по заказам клиента" : isMgr ? "Ввод руководителя к данным 1С" : "Данные, введённые руководителем"}</div>
-      <div class="scroll"><table><thead><tr>${en.columns.map((c) => `<th>${esc(c)}</th>`).join("")}${en.fields.map((f) => `<th>${esc(f.title)}</th>`).join("")}</tr></thead><tbody>
-      ${body}</tbody></table></div>${en.groups ? `<div class="small muted">Месяц определяется конечной датой поставки заказа клиента в 1С — она показана как плановая. Нажмите на заказ клиента, чтобы увидеть заказы поставщикам. Отклонение — план минус факт: минус означает просрочку, плюс — поставку раньше срока, ноль — в срок. При пустой фактической дате просрочка начинается со следующего дня после плановой даты и считается до сегодняшнего дня. Фактическая дата поставки обновляется из заказа клиента в 1С; ручная дата имеет приоритет в KPI. Очистите её или нажмите «Из 1С», чтобы вернуть дату из источника. Один заказ клиента считается одной поставкой. Отметьте брак во вложенной строке поставщика и укажите дату исправления: не позже плановой даты поставки — нарушения нет; позже или ещё не исправлен — нарушение.</div>` : ""}${en.note ? `<div class="small muted">${esc(en.note)}</div>` : ""}${isMgr && !en.readonly ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
+      ${en.rows.length ? table(body) : `<div class="small muted">Подходящих закупок за выбранный месяц — 0.</div>`}
+      ${lotCandidates.length ? `<details class="more" data-lot-candidates data-lot-key="${esc(lotKey)}" data-motion-native ${state.lotCandidatesOpen?.has(lotKey) ? "open" : ""}><summary>Объединение в единый лот · ${lotCandidates.length}</summary><div class="more-b"><p class="small muted">Укажите одинаковый лот у связанных заказов. Единый лот включается в KPI при общей сумме от ${nf(en.lot_threshold)} ₽ без НДС.</p>${table(lotCandidates.map((r) => `<tr>${cells(r)}</tr>`).join(""))}</div></details>` : ""}
+      ${en.groups ? `<div class="small muted">Месяц определяется конечной датой поставки заказа клиента в 1С — она показана как плановая. Нажмите на заказ клиента, чтобы увидеть заказы поставщикам. Отклонение — план минус факт: минус означает просрочку, плюс — поставку раньше срока, ноль — в срок. При пустой фактической дате просрочка начинается со следующего дня после плановой даты и считается до сегодняшнего дня. Фактическая дата поставки обновляется из заказа клиента в 1С; ручная дата имеет приоритет в KPI. Очистите её или нажмите «Из 1С», чтобы вернуть дату из источника. Один заказ клиента считается одной поставкой. Отметьте брак во вложенной строке поставщика и укажите дату исправления: не позже плановой даты поставки — нарушения нет; позже или ещё не исправлен — нарушение.</div>` : ""}${en.note ? `<div class="small muted">${esc(en.note)}</div>` : ""}${isMgr && !en.readonly ? `<div class="small muted">Сохраняется сразу. Подчёркнутые значения введены вручную и не стираются при обновлении из 1С; пустое поле — значение из 1С или нет данных.</div>` : ""}</div>`;
   }
 
   // штрафы за нарушение финансовой дисциплины: вносит руководитель; «штрафов нет» — явная отметка за месяц
@@ -1687,6 +1691,11 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
     bindChart(document.getElementById("payChart"), d.trend, b.current_month);
     bindAudits(main, d);
+    main.querySelectorAll("details[data-lot-candidates]").forEach((details) => details.addEventListener("toggle", () => {
+      state.lotCandidatesOpen ??= new Set();
+      if (details.open) state.lotCandidatesOpen.add(details.dataset.lotKey);
+      else state.lotCandidatesOpen.delete(details.dataset.lotKey);
+    }));
     main.querySelectorAll("[data-client-approval], [data-lead-approval]").forEach((select) => select.addEventListener("change", async () => {
       const previous = [...select.options].find((option) => option.defaultSelected)?.value || "";
       select.disabled = true;

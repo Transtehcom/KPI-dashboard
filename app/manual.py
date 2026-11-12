@@ -9,6 +9,7 @@ import datetime as dt
 import math
 
 from .supply_delivery import delivery_groups, delivery_key, delivery_overrides, delivery_deviation
+from .supply_purchases import qualifying_purchase_groups
 
 
 def set_month_score(con, emp, month, criterion, score, comment, author):
@@ -236,9 +237,10 @@ def entry(con, code, emp, month_first, month_last, minimum_amount_novat=None):
             rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND planned_date BETWEEN ? AND ? "
                                "ORDER BY dt", (emp, first, last)).fetchall()
         else:  # отсрочка и конкурентность считаются по заказам, размещённым в месяце
+            row_minimum = None if code == "competitive_purchases" else minimum_amount_novat
             rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND dt BETWEEN ? AND ? "
                                "AND (? IS NULL OR amount_novat>=?) ORDER BY dt",
-                               (emp, first, last, minimum_amount_novat, minimum_amount_novat)).fetchall()
+                               (emp, first, last, row_minimum, row_minimum)).fetchall()
         columns = ["Заказ", "Дата", "Поставщик", "Сумма без НДС, ₽"]
         cells = [[r["doc"], r["dt"], r["supplier"], r["amount_novat"]] for r in rows]
     manual = {}
@@ -250,6 +252,11 @@ def entry(con, code, emp, month_first, month_last, minimum_amount_novat=None):
         "rows": [{"ref": r["id"], "cells": c, "values": {f: r[f] for f in fields},
                   "manual": sorted(manual.get(r["id"], set()) & set(fields))} for r, c in zip(rows, cells)],
     }
+    if code == "competitive_purchases" and minimum_amount_novat is not None:
+        eligible = {row["id"] for _, items, _ in qualifying_purchase_groups(rows, minimum_amount_novat) for row in items}
+        result["lot_candidates"] = [row for row in result["rows"] if row["ref"] not in eligible]
+        result["rows"] = [row for row in result["rows"] if row["ref"] in eligible]
+        result["lot_threshold"] = minimum_amount_novat
     if code == "on_time_delivery":
         result["fields"].insert(1, {"key": "customer_actual_date", "type": "date",
                                     "title": "Фактическая дата поставки", "parent_edit": True})

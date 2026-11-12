@@ -1,0 +1,45 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const html = fs.readFileSync('web/index.html', 'utf8');
+const source = html.slice(html.indexOf('  function entryBlock('), html.indexOf('  // штрафы за нарушение'));
+const context = {state:{boot:{me:{role:'manager'}}}, MONTHS:Array(12).fill('ноябрь'),
+  esc:value=>String(value??''), nf:value=>String(value), fmtCell:value=>String(value??'—')};
+vm.createContext(context);
+vm.runInContext(source, context);
+const row = (ref, amount) => ({ref, cells:[ref,'2026-11-10','Поставщик',amount],values:{lot:''},manual:[]});
+const item = {code:'competitive_purchases',entry:{table:'supplier_orders', columns:['Заказ','Дата','Поставщик','Сумма без НДС, ₽'],
+  fields:[{key:'lot',title:'Лот',type:'text'}],rows:[row('large',600000)],
+  lot_candidates:[row('small',20000)],lot_threshold:500000}};
+const render = () => context.entryBlock({login:'supply',month:'2026-11'},item);
+let markup=render();
+const split=markup.indexOf('<details class="more" data-lot-candidates ');
+assert.ok(split>0,'lot candidates need their own closed disclosure');
+assert.ok(!markup.slice(split,markup.indexOf('>',split)).includes(' open'));
+assert.ok(markup.slice(0,split).includes('large'));
+assert.ok(!markup.slice(0,split).includes('data-ref="small"'));
+assert.ok(markup.slice(split).includes('data-ref="small"'));
+assert.ok(markup.slice(split).includes('500000'));
+item.entry.rows=[];
+markup=render();
+assert.ok(markup.includes('data-lot-candidates'),'small orders can still be grouped when there are no qualifying purchases');
+assert.ok(markup.includes('data-ref="small"'));
+const bindingStart=html.indexOf('    main.querySelectorAll("details[data-lot-candidates]")');
+const bindingEnd=html.indexOf('    main.querySelectorAll("[data-client-approval]',bindingStart);
+const details={open:true,dataset:{lotKey:'supply:2026-11:competitive_purchases'},addEventListener(name,handler){this.toggle=handler;}};
+context.main={querySelectorAll:()=>[details]};
+vm.runInContext(html.slice(bindingStart,bindingEnd),context);
+details.toggle();
+assert.ok(render().includes('data-motion-native open'),'editing keeps the lot section open');
+details.open=false; details.toggle();
+assert.ok(!render().includes('data-motion-native open'));
+context.state.boot.me.role='employee';
+item.entry.rows=[row('large',600000)];
+item.entry.rows[0].values.lot='Lot-500';
+markup=render();
+assert.ok(markup.includes('large'));
+assert.ok(markup.includes('Lot-500'),'employees can read the explicit lot name');
+assert.ok(!markup.includes('data-lot-candidates'));
+assert.ok(!markup.includes('data-ref="small"'));
+assert.ok(!markup.includes('<input'));
+console.log('Competitive KPI shows qualifying purchases and keeps lot creation in a closed admin section');
