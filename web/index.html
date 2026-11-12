@@ -1685,6 +1685,12 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 
   function detailCell(details, rowIndex, column, value, isMgr) {
     if ((details.money_cols || []).includes(column)) return value == null ? "—" : nf(value, 2);
+    if (details.budget_inclusion?.column === column) {
+      const inclusion = details.budget_inclusion.rows[rowIndex];
+      if (!isMgr) return inclusion.value ? "Да" : "Нет";
+      return `<select data-logistics-budget-inclusion data-ref="${esc(inclusion.ref)}" aria-label="Учёт заказа ${esc(details.rows[rowIndex][0])}">
+        <option value="1" ${inclusion.value ? "selected" : ""}>Да</option><option value="0" ${inclusion.value ? "" : "selected"}>Нет</option></select>`;
+    }
     if (details.lead_approval?.column === column) {
       const approval = details.lead_approval.rows[rowIndex];
       return approvalControl(approval.ref,details.rows[rowIndex][0],approval.value,"lead",isMgr);
@@ -1810,6 +1816,17 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         await save(`/api/${kind}-approval`, {emp:d.login,month:d.month,ref:select.dataset.ref,
           value:select.value === "" ? null : Number(select.value)});
         sideCache = {}; toast("Согласование сохранено, KPI пересчитан"); refreshKpi(d);
+      } catch (e) { select.value = previous; if (e.message !== "auth") toast(e.message); }
+      finally { select.disabled = false; }
+    }));
+    main.querySelectorAll("[data-logistics-budget-inclusion]").forEach((select) => select.addEventListener("change", async () => {
+      const previous = [...select.options].find((option) => option.defaultSelected)?.value || "1";
+      const submittedValue = select.value;
+      select.disabled = true;
+      try {
+        await save("/api/logistics-budget-inclusion", {emp:d.login,month:d.month,ref:select.dataset.ref,value:Number(submittedValue)});
+        globalThis.DashboardUI?.saved(select, submittedValue);
+        sideCache = {}; toast("Учёт заказа сохранён, KPI пересчитан"); refreshKpi(d);
       } catch (e) { select.value = previous; if (e.message !== "auth") toast(e.message); }
       finally { select.disabled = false; }
     }));

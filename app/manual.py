@@ -63,6 +63,22 @@ def set_lead_approval(con, emp, month, ref, value, author):
         con.execute("INSERT OR REPLACE INTO lead_approvals VALUES (?,?,?,?,?,datetime('now'))",
                     (emp,month,ref,value,author))
 
+
+def logistics_budget_inclusions(con, emp, month):
+    return {r["ref"]: r["included"] for r in con.execute(
+        "SELECT ref,included FROM logistics_budget_inclusions WHERE emp=? AND month=?", (emp,month))}
+
+
+def set_logistics_budget_inclusion(con, emp, month, ref, value, author):
+    if type(value) is not int or value not in (0, 1):
+        raise ValueError("Учёт заказа должен быть «Да» или «Нет»")
+    dt.date.fromisoformat(month + "-01")
+    if not con.execute("SELECT 1 FROM logistics_deliveries WHERE emp=? AND substr(dt,1,7)=? "
+                       "AND order_key=? AND order_status='ТТК_ВЗакуп' LIMIT 1", (emp,month,ref)).fetchone():
+        raise ValueError("Заказ не найден в KPI 2 выбранного сотрудника за месяц")
+    con.execute("INSERT OR REPLACE INTO logistics_budget_inclusions VALUES (?,?,?,?,?,datetime('now'))",
+                (emp,month,ref,value,author))
+
 # таблица → поле → (тип, подпись)
 FIELDS = {
     "receivables": {"due_date": ("date", "Срок оплаты"), "paid_date": ("date", "Оплачено полностью")},

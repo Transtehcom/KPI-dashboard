@@ -6,6 +6,7 @@ from unittest.mock import patch
 from app.common import connect, load_rules, replace_rows
 from app.engine import Engine
 from app.onec import OneC
+from app import manual
 from app.onec_logistics_delivery import delivery_costs, fetch_customer_deliveries
 
 
@@ -18,10 +19,10 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.con.execute('INSERT INTO dataset_state VALUES(?,?,?,?)',
                          ('logistics_deliveries', '2026-11-01', '2026-11-30', '2026-11-12'))
 
-    def add(self, identity, customer=None, expected=254000, actual=60174.94, status='ТТК_ВЗакуп'):
+    def add(self, identity, customer=None, expected=208196.72, actual=60174.94, status='ТТК_ВЗакуп'):
         self.con.execute('INSERT INTO logistics_deliveries '
             '(id,emp,dt,source_kind,source_key,source_doc,order_key,order_doc,order_status,'
-            'expected_delivery_vat,actual_delivery_vat) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            'expected_delivery_novat,actual_delivery_vat) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
             (identity, 'logist', '2026-11-10', 'forwarder', identity, identity, customer or identity,
              customer or identity, status, expected, actual))
 
@@ -33,17 +34,17 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.add('00ЦБ-000152')
         item = self.result()
         self.assertEqual(item['payout'], 2000)
-        self.assertEqual(item['details']['rows'][0][2:5], [254000, 60174.94, 193825.06])
-        self.assertEqual(item['details']['rows'][0][-1], 'Засчитан')
+        self.assertEqual(item['details']['rows'][0][2:5], [208196.72, 49323.72, 158873])
+        self.assertEqual(item['details']['rows'][0][-2], 'Засчитан')
         self.assertEqual(item['details']['money_cols'], [2, 3, 4])
 
-    def test_equal_cost_qualifies_and_excess_fails_without_vat_conversion(self):
-        self.add('equal', expected=100, actual=100)
-        self.add('excess', expected=100, actual=100.01)
+    def test_net_cost_comparison_rounds_to_kopecks(self):
+        self.add('equal', expected=100, actual=122)
+        self.add('excess', expected=100, actual=122.01)
         item = self.result()
         self.assertEqual(item['components'][0]['fact'], .5)
         self.assertEqual(item['payout'], 1000)
-        self.assertEqual(item['details']['rows'][1][-1], 'Не засчитан')
+        self.assertEqual(item['details']['rows'][1][-2], 'Не засчитан')
 
     def test_unique_customer_orders_in_procurement_do_not_require_quote_basis(self):
         self.add('first', customer='same')
@@ -60,7 +61,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         item = self.result()
         self.assertIsNone(item['components'][0]['fact'])
         self.assertEqual(item['payout'], 0)
-        self.assertIn('Фактическая МП', item['details']['rows'][0][-1])
+        self.assertIn('Фактическая МП', item['details']['rows'][0][-2])
 
     def test_zero_is_valid_and_missing_expected_or_coverage_waits(self):
         self.add('zero', expected=0, actual=0)
@@ -74,7 +75,7 @@ class LogisticsBudgetTest(unittest.TestCase):
     def test_imported_mp_amounts_are_normalized(self):
         self.add('imported')
         raw = dict(self.con.execute('SELECT * FROM logistics_deliveries').fetchone())
-        raw.update({'manager': 'Логист', 'expected_delivery_vat': '254 000,00',
+        raw.update({'manager': 'Логист', 'expected_delivery_novat': '208 196,72',
                     'actual_delivery_vat': '60 174,94'})
         source = OneC({'datasets': {'logistics_deliveries': {'source': 'http', 'path': '/unused'}}})
         with patch.object(source, '_load', return_value=[raw]):
@@ -179,9 +180,49 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.assertEqual(cost['amount'], 63403)
         self.assertEqual({row['doc'] for row in cost['sources']}, {'688', '713', '731'})
         self.assertIsNone(cost['issue'])
-        self.add('00ЦБ-000133', expected=60000, actual=float(cost['amount']))
+        self.add('00ЦБ-000133', expected=49180.33, actual=float(cost['amount']))
         self.assertEqual(self.result()['payout'], 0)
-        self.assertEqual(self.result()['details']['rows'][0][-1], 'Не засчитан')
+        self.assertEqual(self.result()['details']['rows'][0][-2], 'Не засчитан')
+
+    def test_excluded_unknown_order_does_not_block_payout_and_can_be_restored(self):
+        self.add('included')
+        self.add('unknown', actual=None)
+        manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'unknown', 0, 'admin')
+        item = self.result()
+        self.assertEqual(item['components'][0]['fact'], 1)
+        self.assertEqual(item['payout'], 2000)
+        self.assertEqual(item['details']['rows'][1][-2:], ['Исключён из расчёта', 'Нет'])
+        self.assertEqual(item['details']['budget_inclusion']['rows'][1], {'ref': 'unknown', 'value': 0})
+        self.con.execute("DELETE FROM logistics_deliveries WHERE id='unknown'")
+        self.add('replacement', customer='unknown', actual=None)
+        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(manual.logistics_budget_inclusions(self.con, 'logist', '2026-12'), {})
+        self.assertEqual(manual.logistics_budget_inclusions(self.con, 'other', '2026-11'), {})
+        manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'unknown', 1, 'admin')
+        self.assertIsNone(self.result()['components'][0]['fact'])
+
+    def test_all_excluded_orders_have_no_payout_and_invalid_choices_are_rejected(self):
+        self.add('order')
+        for value in (None, True, 'no', 2):
+            with self.assertRaises(ValueError):
+                manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'order', value, 'admin')
+        with self.assertRaises(ValueError):
+            manual.set_logistics_budget_inclusion(self.con, 'other', '2026-11', 'order', 0, 'admin')
+        manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'order', 0, 'admin')
+        self.assertIsNone(self.result()['components'][0]['fact'])
+        self.assertEqual(self.result()['payout'], 0)
+
+    def test_all_four_known_net_amounts_and_explicit_net_import(self):
+        self.add('151', expected=1, actual=333300)
+        self.add('133', expected=49180.33, actual=63403)
+        self.add('144', expected=20491.8, actual=0)
+        self.add('152')
+        item = self.result()
+        amounts = {row[0]: row[3] for row in item['details']['rows']}
+        self.assertEqual(amounts, {'151': 273196.72, '133': 51969.67, '144': 0, '152': 49323.72})
+        self.assertEqual(item['payout'], 1000)
+        self.con.execute("UPDATE logistics_deliveries SET actual_delivery_novat=10 WHERE id='151'")
+        self.assertEqual({row[0]: row[3] for row in self.result()['details']['rows']}['151'], 10)
 
     def test_customer_order_151_uses_transport_first_line_and_preserves_mixed_goods_order(self):
         amounts = {'715': 140000, '718': 9150, '723': 140000, '727': 20000, '734': 9150,

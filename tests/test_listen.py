@@ -412,6 +412,58 @@ class ListenTest(unittest.TestCase):
         row=self.con.execute("SELECT score FROM monthly_scores WHERE emp='supply-test' AND month='2026-11'").fetchone()
         self.assertEqual(row['score'],90)
 
+    def test_logistics_budget_inclusion_is_admin_only_and_scoped_to_employee_month(self):
+        added = [{'login': login, 'name': login, 'position': 'logistics', 'role': 'employee'}
+                 for login in ('logistics-http', 'logistics-other')]
+        self.app.config['employees'].extend(added)
+        with db_lock():
+            old_state = self.con.execute("SELECT * FROM dataset_state WHERE dataset='logistics_deliveries'").fetchone()
+            self.con.execute("INSERT INTO logistics_deliveries(id,emp,dt,order_key,order_doc,order_status,"
+                             "expected_delivery_novat,actual_delivery_vat,source_kind,source_doc) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                             ('logistics-http', 'logistics-http', '2026-11-10', 'customer-http', 'ORDER', 'ТТК_ВЗакуп', 100, 122,
+                              'forwarder', 'PE'))
+            self.con.execute("INSERT OR REPLACE INTO dataset_state VALUES('logistics_deliveries','2026-11-01','2026-11-30','2026-11-12')")
+            self.con.commit()
+
+        def cleanup():
+            for employee in added:
+                self.app.config['employees'].remove(employee)
+            with db_lock():
+                self.con.execute("DELETE FROM logistics_deliveries WHERE id='logistics-http'")
+                self.con.execute("DELETE FROM logistics_budget_inclusions WHERE emp='logistics-http'")
+                self.con.execute("DELETE FROM dataset_state WHERE dataset='logistics_deliveries'")
+                if old_state:
+                    self.con.execute('INSERT INTO dataset_state VALUES(?,?,?,?)', tuple(old_state))
+                self.con.commit()
+
+        self.addCleanup(cleanup)
+
+        def post(login, body):
+            req = urllib.request.Request(self.base + '/api/logistics-budget-inclusion',
+                data=json.dumps(body).encode(), headers={'Cookie': self.tokens[login], 'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return response.status
+            except urllib.error.HTTPError as exc:
+                with exc:
+                    return exc.code
+
+        def item():
+            report = json.loads(self.get('boss', '/api/employee?login=logistics-http&month=2026-11')[2])
+            return next(i for i in report['items'] if i['code'] == 'logistics_budget')
+
+        body = {'emp': 'logistics-http', 'month': '2026-11', 'ref': 'customer-http', 'value': 0}
+        self.assertEqual(item()['payout'], 2000)
+        self.assertEqual(post('pm', body), 403)
+        for invalid in ({'value': True}, {'value': None}, {'value': 2}, {'month': '2026-10'},
+                        {'month': 'bad'}, {'emp': 'pm'}, {'emp': 'logistics-other'}, {'ref': 'missing'}):
+            self.assertEqual(post('boss', {**body, **invalid}), 400)
+        self.assertEqual(post('boss', body), 200)
+        self.assertEqual(item()['payout'], 0)
+        self.assertEqual(item()['details']['rows'][0][-1], 'Нет')
+        self.assertEqual(post('boss', {**body, 'value': 1}), 200)
+        self.assertEqual(item()['payout'], 2000)
+
     def test_client_approval_is_admin_only_and_invalidates_the_employee_report(self):
         with db_lock():
             self.con.execute("INSERT INTO clients(id,emp,name,need,strategy) VALUES('co99001','lead','Тест согласования',1,1)")

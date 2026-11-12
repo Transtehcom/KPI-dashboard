@@ -363,12 +363,15 @@ class Engine:
                                         "Фактическая дата поставки", "План минус факт", "Результат"], "rows": details}}
 
     def calc_logistics_budget(self, e, ctx, p):
+        from .manual import logistics_budget_inclusions
         raw = self.q("SELECT * FROM logistics_deliveries WHERE emp=? AND dt>=? AND dt<=? "
                      "AND order_status='ТТК_ВЗакуп' ORDER BY dt,source_doc,id",
                      e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
         orders = {row["order_key"]: dict(row) for row in raw if row["order_key"]}
+        inclusions = logistics_budget_inclusions(self.con, e["login"], ctx["month"])
         known = not self._missing_datasets(ctx, ("logistics_deliveries",))
-        details, passed, failed, missing = [], 0, 0, 0
+        details, checks, passed, failed, missing, excluded = [], [], 0, 0, 0, 0
+        vat_factor = Decimal("1") + Decimal(str(p["vat_rate"]))
 
         def money(value):
             try:
@@ -377,18 +380,29 @@ class Engine:
             except (InvalidOperation, TypeError, ValueError):
                 return None
 
-        for row in orders.values():
-            expected = money(row["expected_delivery_vat"])
-            actual = money(row["actual_delivery_vat"])
+        def without_vat(value):
+            value = money(value)
+            return money(value / vat_factor) if value is not None else None
+
+        for key, row in orders.items():
+            included = inclusions.get(key, 1)
+            checks.append({"ref": key, "value": included})
+            expected = money(row["expected_delivery_novat"])
+            actual = money(row["actual_delivery_novat"])
+            if actual is None:
+                actual = without_vat(row["actual_delivery_vat"])
             difference = expected - actual if expected is not None and actual is not None else None
-            if difference is None:
+            if not included:
+                excluded += 1
+                result = "Исключён из расчёта"
+            elif difference is None:
                 missing += 1
                 absent = []
                 if expected is None:
                     absent.append("«Ожидаемая МП»")
                 if actual is None:
                     absent.append("«Фактическая МП»")
-                result = "Ожидает данных — сумма доставки с НДС из " + " и ".join(absent)
+                result = "Ожидает данных — сумма доставки без НДС из " + " и ".join(absent)
                 if row["delivery_cost_issue"]:
                     result += ". " + row["delivery_cost_issue"]
             elif difference >= 0:
@@ -402,7 +416,7 @@ class Engine:
                 explanation = []
                 for source in sources:
                     if source.get("included"):
-                        amount = f"{money(source['amount']):,.2f}".replace(",", " ").replace(".", ",")
+                        amount = f"{without_vat(source['amount']):,.2f}".replace(",", " ").replace(".", ",")
                         explanation.append(f"{source['doc']} — {amount} ₽")
                     else:
                         explanation.append(f"{source['doc']} — {source['reason']}")
@@ -412,18 +426,21 @@ class Engine:
                             float(expected) if expected is not None else None,
                             float(actual) if actual is not None else None,
                             float(difference) if difference is not None else None,
-                            " · ".join(explanation) or "—", result])
-        share = passed / len(orders) if known and orders and not missing else None
+                            " · ".join(explanation) or "—", result, "Да" if included else "Нет"])
+        total = len(orders) - excluded
+        share = passed / total if known and total and not missing else None
         return {"components": [comp("Заказы с фактической доставкой в пределах ожидаемой", share, p["target"], "%", source=SRC_1C)],
                 "extra": [{"label": "Заказы «В закуп»", "value": len(orders)},
+                          {"label": "В расчёте", "value": total}, {"label": "Исключены", "value": excluded},
                           {"label": "Засчитаны", "value": passed}, {"label": "Не засчитаны", "value": failed},
                           {"label": "Ожидают данных", "value": missing}],
                 "warnings": (["Не загружены данные заказов и связи за весь период."] if not known else []) +
                             (["Для расчёта нужны ожидаемая доставка и суммы связанных объектов расчётов 1С. "
                               "Причины ожидания указаны в таблице."] if missing else []),
-                "details": {"columns": ["Заказ клиента", "Клиент", "Ожидаемая доставка с НДС, ₽",
-                                        "Фактическая доставка с НДС, ₽", "Ожидаемая минус фактическая, ₽",
-                                        "Состав фактической доставки", "Результат"],
+                "details": {"columns": ["Заказ клиента", "Клиент", "Ожидаемая доставка без НДС, ₽",
+                                        "Фактическая доставка без НДС, ₽", "Ожидаемая минус фактическая, ₽",
+                                        "Состав фактической доставки без НДС", "Результат", "Учёт"],
+                            "budget_inclusion": {"column": 7, "rows": checks},
                             "money_cols": [2, 3, 4], "rows": details}}
 
     def calc_logistics_discipline(self, e, ctx, p):

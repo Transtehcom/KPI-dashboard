@@ -295,6 +295,10 @@ CREATE TABLE IF NOT EXISTS lead_approvals (
   emp TEXT, month TEXT, ref TEXT, approved INTEGER, author TEXT, updated TEXT,
   PRIMARY KEY (emp, month, ref));
 
+CREATE TABLE IF NOT EXISTS logistics_budget_inclusions (
+  emp TEXT, month TEXT, ref TEXT, included INTEGER, author TEXT, updated TEXT,
+  PRIMARY KEY (emp, month, ref));
+
 -- Задачи исполнителей/соисполнителей с историей для формулы месячной эффективности.
 CREATE TABLE IF NOT EXISTS task_efficiency_tasks (
   id TEXT PRIMARY KEY, title TEXT, responsible_id INTEGER, creator_id INTEGER,

@@ -884,6 +884,18 @@ class Handler(BaseHTTPRequestHandler):
                             app.con.rollback()
                             raise BadRequest(str(exc))
                     return JsonResponse({"ok": True})
+                if path == "/api/logistics-budget-inclusion" and method == "POST":
+                    emp = self.employee_param(b.get("emp"))
+                    month = self.month_param(b.get("month"))
+                    if app.engine.employee(emp).get("position") != "logistics":
+                        raise BadRequest("Учёт заказов доступен для KPI 2 логиста")
+                    try:
+                        with db_lock():
+                            manual.set_logistics_budget_inclusion(app.con,emp,month,str(b.get("ref") or ""),b.get("value"),me["login"])
+                            app.con.commit()
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True})
                 if path == "/api/client-approval" and method == "POST":
                     emp = self.employee_param(b.get("emp"))
                     month = self.month_param(b.get("month"))
