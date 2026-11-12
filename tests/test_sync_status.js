@@ -30,7 +30,8 @@ function fixture(){
   idle.setStatus({running:false,last_sync:{id:2,status:'ok',finished:'2026-11-03T16:00:00'}});
   await idle.tick();
   assert.equal(idle.state.boot.last_sync.id,2);
-  assert.equal(idle.rendered(),1);assert.equal(idle.loaded(),1);
+  assert.equal(idle.rendered(),0,'completed sync preserves the existing shell');assert.equal(idle.loaded(),1);
+  assert.equal(idle.state.quietLoad,true,'completed sync refreshes the report in the background');
   assert.equal(Object.keys(idle.context.sideCache).length,0,'new data must invalidate cached reports');
   const editing=fixture();
   editing.context.document.querySelectorAll=()=>[{tagName:'INPUT',type:'text',value:'Unsaved employee name',defaultValue:''}];
@@ -40,7 +41,7 @@ function fixture(){
   assert.equal(editing.rendered(),0,'automatic completion must preserve unsaved forms');
   assert.equal(editing.state.boot.last_sync.id,2,'status must update even while content refresh is deferred');
   editing.context.document.querySelectorAll=()=>[];
-  await editing.tick();assert.equal(editing.rendered(),1,'content should refresh once the draft is saved or closed');
+  await editing.tick();assert.equal(editing.loaded(),1,'content should refresh once the draft is saved or closed');
   const structural=fixture();
   structural.context.document.querySelector=selector=>selector.includes('#empForm')?{}:null;
   structural.context.watchSync();

@@ -50,6 +50,13 @@ function fixture(source,view) {
   f.pending[0].resolve({old:true});await old;
   assert.equal(f.painted.length,1,'older call filters cannot overwrite newer results');
   assert.equal(f.painted[0].latest,true);
+  const quiet=fixture(kpiSource,'emp');
+  quiet.state.quietLoad=true;
+  const quietRequest=quiet.run();
+  assert.equal(quiet.pending.length,1);
+  assert.equal(quiet.painted.length,0);
+  quiet.pending[0].resolve({updated:true});await quietRequest;
+  assert.equal(quiet.painted[0].updated,true);
   const saved=fixture(moneySource,'money');
   saved.state.view='calls';
   await saved.run();

@@ -1097,6 +1097,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   let syncGeneration = 0;
   let syncRefreshPending = false;
   function syncFormBusy() {
+    if (globalThis.DashboardUI?.busy()) return true;
     const focused = document.activeElement;
     if (document.querySelector("#empForm, dialog[open]") || focused?.matches("input:not([type=hidden]), textarea, select") && !focused.disabled && !focused.readOnly) return true;
     return [...document.querySelectorAll("form input, form textarea, form select")].some((el) => {
@@ -1132,6 +1133,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         if (changed || state.boot.sync_running) {
           const boot = await api("/api/bootstrap");
           if (generation !== syncGeneration) return;
+          state.syncShellChanged = state.boot.me?.role !== boot.me?.role;
           state.boot = boot; sideCache = {};
           syncRefreshPending = true;
           const badge = document.querySelector(".sync"); if (badge) badge.outerHTML = syncInfo();
@@ -1143,7 +1145,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           }
         }
         if (syncRefreshPending && !syncFormBusy()) {
-          syncRefreshPending = false; renderShell(); load(); return;
+          syncRefreshPending = false;
+          if (state.syncShellChanged) { renderShell(); load(); return; }
+          state.quietLoad = true; load(); watchSync(); return;
         }
         syncTimer = setTimeout(tick, 30000);
       } catch (e) {
@@ -1237,14 +1241,18 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   function viewRequest() {
     const request = state.viewRequest = (state.viewRequest || 0) + 1;
     const generation = loadGeneration, view = state.view, main = document.getElementById("main");
-    return { main, current: () => request === state.viewRequest && generation === loadGeneration && state.view === view && document.getElementById("main") === main };
+    const current = () => request === state.viewRequest && generation === loadGeneration && state.view === view && document.getElementById("main") === main;
+    const paint = (render) => globalThis.DashboardUI ? DashboardUI.whenIdle(render, current) : current() && render();
+    return { main, current, paint };
   }
   async function load() {
+    const quiet = !!state.quietLoad; state.quietLoad = false;
     if (state.view !== "gpt") gptReleasePreviews();
     const main = document.getElementById("main");
     const generation = ++loadGeneration, view = state.view, month = state.month, login = state.login;
     const current = () => generation === loadGeneration && state.view === view && document.getElementById("main") === main;
-    main.innerHTML = `<div class="empty">Загрузка…</div>`;
+    const paint = (render) => quiet && globalThis.DashboardUI ? DashboardUI.whenIdle(render, current) : current() && render();
+    if (!quiet) main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "staff") {
       try { const data = await api("/api/staff"); if (current()) renderStaff(data); }
@@ -1268,9 +1276,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         const [leads, deals, calls] = await Promise.all([q("leads", ""), q("deals", state.fCat || ""),
           logins && !PREVIEW ? api(`/api/call-funnel?login=${encodeURIComponent(logins)}&date_from=${dFrom}&date_to=${dTo}`) : null]);
         if (!current()) return;
-        renderFunnel({ leads, deals, calls });
+        await paint(() => renderFunnel({ leads, deals, calls }));
       }
-      catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
+      catch (e) { if (current() && e.message !== "auth") { if (quiet) toast(e.message); else main.innerHTML = loadError(e); } }
       return;
     }
     try {
@@ -1284,7 +1292,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const who = state.boot.employees.find((e) => e.login === login);
       if (view === "team") renderTeam(sideCache[month]);
       else if (who && !who.position) renderNoKpi(who, isMgr);
-      else { const data = await api(`/api/employee?login=${encodeURIComponent(login)}&month=${month}`); if (current()) renderEmp(data); }
+      else { const data = await api(`/api/employee?login=${encodeURIComponent(login)}&month=${month}`); if (current()) await paint(() => renderEmp(data)); }
       if (isMgr && view !== "team" && !sideCache[month] && current()) {
         api("/api/overview?month=" + month).then((overview) => {
           if (!current()) return;
@@ -1293,8 +1301,20 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         }).catch((e) => { if (current() && e.message !== "auth") toast("Не удалось загрузить сводку команды: " + e.message); });
       }
     } catch (e) {
-      if (current() && e.message !== "auth") main.innerHTML = loadError(e);
+      if (current() && e.message !== "auth") { if (quiet) toast(e.message); else main.innerHTML = loadError(e); }
     }
+  }
+
+  function refreshKpi(data) {
+    if (state.view !== "emp" || state.login !== data.login || state.month !== data.month) return;
+    state.quietLoad = true;
+    return load();
+  }
+
+  function refreshFunnel() {
+    if (state.view !== "funnel") return;
+    state.quietLoad = true;
+    return load();
   }
 
   // ---------- графики
@@ -1378,7 +1398,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   function bindPayoutYear(el, data) {
     const year = el.querySelector("[data-chart-year]"), chart = el.querySelector("#payChart");
     const scroll = el.querySelector(".payout-scroll");
-    let shownYear = data.month.slice(0, 4), revision = 0;
+    let shownYear = year.value, revision = 0;
     year.addEventListener("change", async () => {
       const request = ++revision, target = year.value;
       const valid = /^[0-9]{4}$/.test(target) && Number(target) >= 1;
@@ -1389,6 +1409,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         const result = await api(`/api/employee-trend?login=${encodeURIComponent(data.login)}&year=${target}`);
         if (!el.isConnected || request !== revision) return;
         shownYear = target;
+        state.payoutYear = {login:data.login,month:data.month,year:target,trend:result.trend};
         chart.innerHTML = payoutChart(result.trend, data.kpi_bonus, state.boot.current_month);
         bindChart(chart, result.trend, state.boot.current_month);
         scroll.scrollTo({left:0, behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
@@ -1685,8 +1706,15 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   }
 
   function renderEmp(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderEmp") || (() => {});
     const main = document.getElementById("main");
+    const save = (path, body) => globalThis.DashboardUI
+      ? DashboardUI.save(() => api(path, body), [path,body.table,body.ref,body.field,body.emp,body.week,body.criterion].join("|"))
+      : api(path, body);
     const b = state.boot, isMgr = b.me.role === "manager", inProg = d.in_progress;
+    const rememberedYear = state.payoutYear?.login === d.login && state.payoutYear?.month === d.month ? state.payoutYear : null;
+    const chartYear = rememberedYear?.year || d.month.slice(0, 4);
+    const chartTrend = chartYear === d.month.slice(0, 4) ? d.trend : rememberedYear.trend;
     if (d.draft) {
       main.innerHTML = `<div class="head"><div><div class="eyebrow">${esc(d.department)} · ${esc(d.position_title)}</div><h1>${crmLink(d.name, d.url)}</h1>
         <div class="sub">${mLabel(d.month)} · Черновик KPI</div></div>${isMgr ? `<button class="btn" id="backBtn">К команде</button>` : ""}</div>
@@ -1704,7 +1732,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
             </div></details>` : ""}</div></article>`).join("")}</section>`;
       const back = document.getElementById("backBtn");
       if (back) back.addEventListener("click", () => { state.view = "team"; location.hash = "team"; load(); });
-      return;
+      restoreView(); return;
     }
     const zeroed = d.zero_all.length > 0;
     main.innerHTML = `
@@ -1725,8 +1753,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${d.absence && d.absence.truancy_days ? `<div class="small" style="margin-top:6px;color:var(--bad)">Прогулы: ${d.absence.truancy_days} раб. дн. — от норм не освобождают (${esc(d.absence.truancy.join(", "))})</div>` : ""}
           <div class="kv"><div><span class="eyebrow">Оклад</span><b>${rub(d.salary)}</b></div><div><span class="eyebrow">Пунктов выполнено</span><b>${d.met_count} из ${d.item_count}</b></div><div><span class="eyebrow">Итого с окладом</span><b>${rub(d.salary + d.payout)}</b></div></div>
         </div>
-        <div id="payTrend"><div class="chart-heading"><div class="eyebrow">Выплата KPI за год, ₽</div><label class="muted small">Год <input type="number" data-chart-year aria-label="Год диаграммы выплат KPI" min="1" max="9999" step="1" value="${esc(d.month.slice(0, 4))}"></label></div>
-          <div class="payout-scroll" tabindex="0" role="region" aria-label="Диаграмма выплат за год, прокрутка вправо и влево"><div class="chart" id="payChart">${payoutChart(annualTrend(d.trend, d.month.slice(0, 4), b.current_month), d.kpi_bonus, b.current_month)}</div></div></div>
+        <div id="payTrend"><div class="chart-heading"><div class="eyebrow">Выплата KPI за год, ₽</div><label class="muted small">Год <input type="number" data-chart-year aria-label="Год диаграммы выплат KPI" min="1" max="9999" step="1" value="${esc(chartYear)}"></label></div>
+          <div class="payout-scroll" tabindex="0" role="region" aria-label="Диаграмма выплат за год, прокрутка вправо и влево"><div class="chart" id="payChart">${payoutChart(annualTrend(chartTrend, chartYear, b.current_month), d.kpi_bonus, b.current_month)}</div></div></div>
       </section>
       <section class="cards">${d.items.map((i) => {
         const st = STATUS[i.status] || STATUS.nodata;
@@ -1765,7 +1793,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       window.scrollTo({top, behavior: reduced ? "auto" : "smooth"});
       card.focus({preventScroll: true});
     }));
-    bindChart(document.getElementById("payChart"), annualTrend(d.trend, d.month.slice(0, 4), b.current_month), b.current_month);
+    bindChart(document.getElementById("payChart"), annualTrend(chartTrend, chartYear, b.current_month), b.current_month);
     bindPayoutYear(document.getElementById("payTrend"), d);
     bindAudits(main, d);
     main.querySelectorAll("details[data-lot-candidates]").forEach((details) => details.addEventListener("toggle", () => {
@@ -1778,9 +1806,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       select.disabled = true;
       try {
         const kind = select.hasAttribute("data-lead-approval") ? "lead" : "client";
-        await api(`/api/${kind}-approval`, {emp:d.login,month:d.month,ref:select.dataset.ref,
+        await save(`/api/${kind}-approval`, {emp:d.login,month:d.month,ref:select.dataset.ref,
           value:select.value === "" ? null : Number(select.value)});
-        sideCache = {}; toast("Согласование сохранено, KPI пересчитан"); load();
+        sideCache = {}; toast("Согласование сохранено, KPI пересчитан"); refreshKpi(d);
       } catch (e) { select.value = previous; if (e.message !== "auth") toast(e.message); }
       finally { select.disabled = false; }
     }));
@@ -1790,27 +1818,27 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       event.preventDefault();
       const value = form.querySelector("[data-month-score]").value;
       try {
-        await api("/api/month-score", {emp:d.login,month:d.month,criterion:"docs",score:value === "" ? null : Number(value),comment:form.querySelector("[data-month-comment]").value});
-        if (!PREVIEW) {toast("Оценка за месяц сохранена");sideCache={};load();}
+        await save("/api/month-score", {emp:d.login,month:d.month,criterion:"docs",score:value === "" ? null : Number(value),comment:form.querySelector("[data-month-comment]").value});
+        if (!PREVIEW) {toast("Оценка за месяц сохранена");sideCache={};refreshKpi(d);}
       } catch (e) {toast(e.message);}
     }));
     main.querySelectorAll("select[data-score]").forEach((s) => s.addEventListener("change", async () => {
       const row = s.closest("tr"), cm = row.querySelector("[data-comment]");
       try {
-        await api("/api/score", { emp: d.login, week: s.dataset.week, criterion: s.dataset.crit, score: s.value === "" ? null : +s.value, comment: cm ? cm.value : "" });
-        if (!PREVIEW) { toast("Оценка сохранена, KPI пересчитан"); sideCache = {}; load(); }
+        await save("/api/score", { emp: d.login, week: s.dataset.week, criterion: s.dataset.crit, score: s.value === "" ? null : +s.value, comment: cm ? cm.value : "" });
+        if (!PREVIEW) { toast("Оценка сохранена, KPI пересчитан"); sideCache = {}; refreshKpi(d); }
       } catch (e) { toast(e.message); }
     }));
     main.querySelectorAll("input[data-comment]").forEach((inp) => inp.addEventListener("change", async () => {
       const row = inp.closest("tr");
       const sels = row.querySelectorAll("select[data-score]");
       try {
-        for (const s of sels) if (s.value !== "") await api("/api/score", { emp: d.login, week: s.dataset.week, criterion: s.dataset.crit, score: +s.value, comment: inp.value });
+        for (const s of sels) if (s.value !== "") await save("/api/score", { emp: d.login, week: s.dataset.week, criterion: s.dataset.crit, score: +s.value, comment: inp.value });
         if (!PREVIEW) toast("Комментарий сохранён");
       } catch (e) { toast(e.message); }
     }));
     const penalty = async (body, msg) => {
-      try { await api("/api/penalty", { emp: d.login, month: d.month, ...body }); if (!PREVIEW) { toast(msg); sideCache = {}; load(); } }
+      try { await save("/api/penalty", { emp: d.login, month: d.month, ...body }); if (!PREVIEW) { toast(msg); sideCache = {}; refreshKpi(d); } }
       catch (e) { toast(e.message); }
     };
     main.querySelectorAll("form[data-pen-add]").forEach((f) => f.addEventListener("submit", (ev) => {
@@ -1852,9 +1880,11 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
             return;
           }
         }
-        await api("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value });
+        const submittedValue = el.value, submittedChecked = el.checked;
+        await save("/api/manual", { table: el.dataset.table, ref: el.dataset.ref, field: el.dataset.field, value });
+        globalThis.DashboardUI?.saved(el, submittedValue, submittedChecked);
         if (!PREVIEW) {
-          toast("Сохранено, KPI пересчитан"); sideCache = {}; await load();
+          toast("Сохранено, KPI пересчитан"); sideCache = {}; await refreshKpi(d);
           if (keepOpen) {
             const card = [...main.querySelectorAll("[data-kpi-code]")].find((c) => c.dataset.kpiCode === code);
             const disclosure = card?.querySelector("details.more"); if (disclosure) disclosure.open = true;
@@ -1878,14 +1908,15 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
     main.querySelectorAll("form[data-plan]").forEach((f) => f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      try { await api("/api/plan", { emp: d.login, month: d.month, metric: f.dataset.plan, value: +f.querySelector("input").value }); if (!PREVIEW) { toast("План сохранён"); sideCache = {}; load(); } }
+      try { await save("/api/plan", { emp: d.login, month: d.month, metric: f.dataset.plan, value: +f.querySelector("input").value }); if (!PREVIEW) { toast("План сохранён"); sideCache = {}; refreshKpi(d); } }
       catch (e) { toast(e.message); }
     }));
     main.querySelectorAll("form[data-baseline]").forEach((f) => f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      try { await api("/api/baseline", { emp: d.login, metric: "conversion_last_year", value: +f.querySelector("input").value / 100 }); if (!PREVIEW) { toast("Базовый уровень сохранён"); sideCache = {}; load(); } }
+      try { await save("/api/baseline", { emp: d.login, metric: "conversion_last_year", value: +f.querySelector("input").value / 100 }); if (!PREVIEW) { toast("Базовый уровень сохранён"); sideCache = {}; refreshKpi(d); } }
       catch (e) { toast(e.message); }
     }));
+    restoreView();
   }
 
   // ---------- GPT: owned chats, local restoration and masked context preview
@@ -2266,7 +2297,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const d = await api(`/api/calls?${state.cQs}`);
       const log = isMgr && state.cLogOpen ? await api(`/api/listen-log?date_from=${state.cLogFrom || ""}&date_to=${state.cLogTo || ""}`) : null;
       if (!current()) return;
-      renderCalls(d, log);
+      if (globalThis.DashboardUI) await DashboardUI.whenIdle(() => renderCalls(d, log), current); else renderCalls(d, log);
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function chooseCallReprocessing(summary) {
@@ -2358,6 +2389,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   }
 
   function renderCalls(d, log) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderCalls") || (() => {});
     const main = document.getElementById("main"), b = state.boot, isMgr = b.me.role === "manager";
     const audio = (c) => {
       if (c.audio === "ready") return c.can_listen ? `<span class="rec-cell"><button class="btn" type="button" data-play="${esc(c.id)}">▶ Слушать</button>${c.transcript === "ready"
@@ -2431,7 +2463,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <div class="head"><div><div class="eyebrow">Записи разговоров</div><h1>Звонки</h1>
         <div class="sub">${isMgr ? "Звонки сотрудников" : multi ? "Звонки вашего отдела" : "Ваши звонки"} с записью · ${esc(title)} · ${nf(d.calls.length)}</div></div>
         ${isMgr && d.calls.length ? `<div style="margin-left:auto;text-align:right"><div style="display:flex;gap:8px;justify-content:flex-end">${modelMenu()}<details class="proc" id="cProc"><summary class="btn">Обработать…</summary><div class="proc-pop">
-          ${picked ? `<button type="button" data-batch="sel">Выбранные <span class="muted small">· ${nf(picked)}</span></button>` : ""}
+          <button type="button" data-batch="sel" ${picked ? "" : "hidden"}>Выбранные <span class="muted small" data-picked-count>· ${nf(picked)}</span></button>
           <button type="button" data-batch="all">Всё <span class="muted small">· ${nf(ready.length)} звонков</span></button>
           <button type="button" data-batch="yday">За прошлый день</button>
           <button type="button" id="cRngTog" aria-expanded="false">Выбрать период… ▸</button>
@@ -2540,12 +2572,18 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
     main.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("change", () => {
       if (b.checked) state.cSel.add(b.dataset.pick); else state.cSel.delete(b.dataset.pick);
-      renderCalls(d, log);
+      updateCallSelection();
     }));
     const pickAll = document.getElementById("cPickAll");
+    const updateCallSelection = () => {
+      main.querySelectorAll("[data-pick]").forEach((input) => { input.checked = state.cSel.has(input.dataset.pick); });
+      if (pickAll) { pickAll.checked = ready.length > 0 && state.cSel.size === ready.length; pickAll.indeterminate = state.cSel.size > 0 && state.cSel.size < ready.length; }
+      const batch = main.querySelector('[data-batch="sel"]');
+      if (batch) { batch.hidden = !state.cSel.size; batch.querySelector("[data-picked-count]").textContent = `· ${nf(state.cSel.size)}`; }
+    };
     if (pickAll) {
       pickAll.indeterminate = picked > 0 && picked < ready.length;
-      pickAll.addEventListener("change", () => { state.cSel = new Set(pickAll.checked ? ready.map((c) => c.id) : []); renderCalls(d, log); });
+      pickAll.addEventListener("change", () => { state.cSel = new Set(pickAll.checked ? ready.map((c) => c.id) : []); updateCallSelection(); });
     }
     const rngTog = document.getElementById("cRngTog");
     if (rngTog) rngTog.addEventListener("click", () => {
@@ -2563,7 +2601,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const kind = btn.dataset.batch, risk = "Расшифровка идёт на этом компьютере, разбор — через Codex и расходует лимит подписки.";
       if (kind === "sel" || kind === "yday" || kind === "range") {
         let body, what;
-        if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${picked}`; }
+        if (kind === "sel") { body = { ids: [...state.cSel] }; what = `выбранных звонков: ${state.cSel.size}`; }
         else {
           let a, b;
           if (kind === "yday") { const t = new Date(); t.setDate(t.getDate() - 1); a = b = isoDay(t); }
@@ -2571,7 +2609,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           body = { mode: "range", date_from: a, date_to: b }; what = `звонков за ${periodLabel(a, b)}`;
         }
         if (proc) proc.open = false;
-        startProc(body, `Обработать ${what}? ${risk}`).then((started) => { if (started && kind === "sel") { state.cSel = new Set(); } });
+        startProc(body, `Обработать ${what}? ${risk}`).then((started) => { if (started && kind === "sel") { state.cSel = new Set(); updateCallSelection(); } });
         return;
       }
       if (proc) proc.open = false;
@@ -2700,12 +2738,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     if (lg) lg.addEventListener("toggle", () => { if (lg.open !== !!state.cLogOpen) { state.cLogOpen = lg.open; if (lg.open && !log) loadCalls(); } });
     const lf = document.getElementById("cLogForm");
     if (lf) lf.addEventListener("submit", (ev) => { ev.preventDefault(); state.cLogFrom = document.getElementById("cLogFrom").value; state.cLogTo = document.getElementById("cLogTo").value; loadCalls(); });
+    restoreView();
   }
 
   // ---------- метрики отделов: где сейчас находится работа (макет Dashboard_TTK.xlsx)
   async function loadMetrics() {
     if (!METRICS[state.view]) return;
-    const { main, current } = viewRequest(), m = METRICS[state.view];
+    const { main, current, paint } = viewRequest(), m = METRICS[state.view];
     try {
       if (state.boot.operations_enabled && (m.kind === "sales" || m.kind === "supply")) {
         if (m.kind === "sales") state.sp = state.sp || { tab: "day", channel: "Все", emp: "Все", drill: null };
@@ -2717,13 +2756,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         if (!state.lPer) state.lPer = { mode: "month", month: state.boot.current_month };
         const [a, b] = periodRange(state.lPer);
         const data = await api(`/api/metrics?kind=logistics&date_from=${a || "2000-01-01"}&date_to=${b}`);
-        if (current()) renderLogistics(data);
+        if (current()) await paint(() => renderLogistics(data));
         return;
       }
       if (!state.mPer) state.mPer = { mode: "month", month: state.boot.current_month };
       const [a, b] = periodRange(state.mPer);
       const data = await api(`/api/metrics?kind=supply&date_from=${a || "2000-01-01"}&date_to=${b}`);
-      if (current()) renderSupply(data);
+      if (current()) await paint(() => renderSupply(data));
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   const ruMoment = (v) => (v ? ruDay(v.slice(0, 10)) + (v.length > 10 ? " " + v.slice(11, 16) : "") : "—");
@@ -2738,7 +2777,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const s = operationsState(kind), [a, b] = periodRange(s.per);
     const params = new URLSearchParams({ kind, date_from: a || "2000-01-01", date_to: b || isoDay(new Date()), emp: s.emp, channel: s.channel });
     const data = await api("/api/operations?" + params);
-    if (current()) renderOperations(data, current);
+    if (current()) await (globalThis.DashboardUI ? DashboardUI.whenIdle(() => renderOperations(data, current), current) : renderOperations(data, current));
   }
   function operationsLink(label, url) {
     const text = esc(label || "—"), value = String(url || "");
@@ -2878,6 +2917,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     pgBind(container, pager, () => operationsShowDrill(report, tile, current));
   }
   function renderOperations(d, current) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderOperations") || (() => {});
     const main = document.getElementById("main"), s = operationsState(d.kind), sources = d.coverage?.sources || d.coverage || {};
     const employees = Array.isArray(d.employees) ? d.employees : Object.entries(d.employees || {}).map(([login, name]) => ({ login, name }));
     const results = d.results || {}, tiles = d.tiles || [];
@@ -2896,6 +2936,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <section class="panel"><div class="panel-h"><h2>По сотрудникам и отделам</h2></div><div class="panel-b">${(d.people || []).length ? `<div class="scroll"><table class="mt"><thead><tr><th>Сотрудник / группа</th>${peopleFields.map(([, title]) => `<th class="n">${title}</th>`).join("")}</tr></thead><tbody>${d.people.map((person, index) => `<tr><th>${esc(person.name || person.login || "Не назначен")}<div class="small muted">${esc([person.department, person.group].filter(Boolean).join(" · "))}</div></th>${peopleFields.map(([key]) => `<td class="n"><button type="button" class="link-btn" data-op-person="${index}" data-op-metric="${key}">${esc(nf(person[key] ?? 0))}</button></td>`).join("")}</tr>`).join("")}</tbody></table></div>` : '<div class="muted">Данных по сотрудникам нет</div>'}</div></section>
       <section class="panel"><div class="panel-h"><h2>Действия и события за период</h2></div><div class="panel-b" id="opEvents">${operationsPage(d.events || [], s.pages.events, operationsEvents, "событий")}</div></section>`;
     bindOperations(d, current);
+    restoreView();
   }
   async function operationsSaveScope(form, current) {
     const included = form.elements.included.checked, reason = form.elements.reason.value.trim();
@@ -3052,6 +3093,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   };
   const lateCell = (n) => (n == null ? `<td class="n muted">нет даты</td>` : `<td class="n${n > 0 ? " late" : ""}">${n > 0 ? nf(n) : "—"}</td>`);
   function renderSupply(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderSupply") || (() => {});
     const main = document.getElementById("main"), t = d.tiles, ST = d.stages;
     const per = state.mPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
     const row = (label, key, fmt = nf, cls = "") => `<tr><th>${label}</th>${ST.map((s) => `<td class="n${cls && s[key] ? " " + cls : ""}">${s[key] == null ? "—" : fmt(s[key])}</td>`).join("")}</tr>`;
@@ -3087,6 +3129,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${d.orders.map((o) => `<tr><td>${esc(o.doc)}</td><td>${esc(o.supplier || "—")}</td><td>${esc(o.emp)}</td><td class="n">${nf(o.amount)}</td><td>${ruMoment(o.dt)}</td><td>${ruMoment(o.plan)}</td><td>${ruMoment(o.fact)}</td>${lateCell(o.late_days)}</tr>`).join("")}
         </tbody></table></div>` : `<span class="muted">Заказов нет</span>`}</div></section>`;
     bindPeriod("m", () => state.mPer, (p) => { state.mPer = p; }, loadMetrics);
+    restoreView();
   }
   // ---------- «Поставщики»: закупки, номенклатура и цены из 1С (макет «ТТК_Поставщики_дашборд_ТЗ.xlsx»); вход из карточки Битрикса: #suppliers?inn=…
   let supTimer = null;
@@ -3105,17 +3148,18 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   }
   async function loadSuppliers(refresh) {
     if (state.view !== "suppliers") return;
-    const { main, current } = viewRequest();
+    const { main, current, paint } = viewRequest();
     clearTimeout(supTimer);
     const p = supParams(refresh);
     try {
       const d = await api("/api/suppliers?" + p);
       if (!current()) return;
-      renderSuppliers(d);
+      await paint(() => renderSuppliers(d));
       if (d.refreshing) supTimer = setTimeout(() => { if (state.view === "suppliers") loadSuppliers(); }, 4000);  // идёт загрузка из 1С
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderSuppliers(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderSuppliers") || (() => {});
     const s = state.sup, M = d.meta || {}, T = d.tiles, pr = (v) => (v == null ? "—" : nf(v, 2) + " ₽");
     const pc = (v) => {  // изменение цены: чёрные цифры на бледном красном (рост) или зелёном (снижение) квадрате; ноль — без заливки
       if (v == null) return "—";
@@ -3219,6 +3263,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         if (changed) el.dispatchEvent(new Event("input"));  // применить набранное: обновить список или таблицы карточки
       }
     }
+    restoreView();
   }
   // постраничный показ списков: по 20 / 50 / 100 строк, выбор запоминается в браузере и общий для всех списков.
   // st — объект состояния списка {size, page}; pgBind после отрисовки подключает выбор размера и кнопки «Назад / Далее»
@@ -3295,11 +3340,12 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   // ---------- «Загрузка»: загрузка сотрудников по задачам Битрикс24 (расчёт — app/workload.py)
   async function loadWorkload() {
     if (state.view !== "workload") return;
-    const { main, current } = viewRequest();
-    try { const data = await api("/api/workload"); if (current()) renderWorkload(data); }
+    const { main, current, paint } = viewRequest();
+    try { const data = await api("/api/workload"); if (current()) await paint(() => renderWorkload(data)); }
     catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderWorkload(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderWorkload") || (() => {});
     const t0 = new Date(), mon = new Date(t0); mon.setDate(t0.getDate() - ((t0.getDay() + 6) % 7));
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
     const st = state.wl || (state.wl = { per: { mode: "range", from: isoDay(mon), to: isoDay(sun) }, dept: "", uid: "", project: "", tag: "", prio: "", status: "", only: "", list: null });
@@ -3414,6 +3460,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
     const cl = document.getElementById("wlClose");
     if (cl) cl.addEventListener("click", () => { st.list = null; rerender(); });
+    restoreView();
   }
 
   // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx» и «Краткое ТЗ»)
@@ -3421,18 +3468,19 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   let moneyTimer = null;
   async function loadMoney() {
     if (state.view !== "money") return;
-    const { main, current } = viewRequest();
+    const { main, current, paint } = viewRequest();
     clearTimeout(moneyTimer);
     try {
       if (!state.mPer) state.mPer = {mode: "month", month: state.boot.current_month};
       const [dateFrom, dateTo] = periodRange(state.mPer);
       const d = await api(`/api/money?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
       if (!current()) return;
-      renderMoney(d);
+      await paint(() => renderMoney(d));
       if (d.refreshing) moneyTimer = setTimeout(() => { if (state.view === "money") loadMoney(); }, 4000);  // идёт загрузка из 1С
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderMoney(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderMoney") || (() => {});
     const T = d.tiles, O = d.options, neg = (v) => (v < 0 ? ' style="color:var(--bad);font-weight:600"' : "");
     const dayHead = (iso) => { const x = new Date(iso + "T00:00:00"); return `${ruDay(iso).slice(0, 5)} <span class="muted small">${["вс", "пн", "вт", "ср", "чт", "пт", "сб"][x.getDay()]}</span>`; };
     const inp = (f, v, type = "text", w) => `<input data-f="${f}" type="${type}" value="${esc(v ?? "")}"${w ? ` style="width:${w}px"` : ""}>`;
@@ -3512,33 +3560,43 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <div class="muted small" style="margin:4px 0 16px">Поступления периода — безналичные платежи ООО «ТрансТехКом» с операцией «Поступление оплаты от клиента», проведённые банком, по дате «Проведено банком». Поступления в календаре — ожидаемые платежи по графикам заказов клиентов. Выплаты периода — полностью оплаченные или закрытые заявки на расходование ДС; плановые выплаты — заявки в статусах «Согласована», «Не согласована» и «К оплате».</div>`;
     document.querySelectorAll("#main .dt-wrap").forEach((w, i) => { if (scroll[i]) { w.scrollTop = scroll[i][0]; w.scrollLeft = scroll[i][1]; } });
     document.querySelectorAll("#main details[data-keep]").forEach((x, i) => { x.open = !!open[i]; });
-    const post = async (body) => { try { await api("/api/money", body); loadMoney(); } catch (e) { if (e.message !== "auth") { toast(e.message); loadMoney(); } } };
-    const settings = () => post({ action: "settings", adjust: document.getElementById("mAdjust").value });
+    const post = async (body, controls = []) => {
+      const submitted = [...controls].map((input) => ({input,value:input.value,checked:input.checked}));
+      try {
+        if (globalThis.DashboardUI) await DashboardUI.save(() => api("/api/money", body), `money|${body.id || body.action}`);
+        else await api("/api/money", body);
+        submitted.forEach(({input,value,checked}) => globalThis.DashboardUI?.saved(input,value,checked));
+        if (globalThis.DashboardUI) await DashboardUI.whenIdle(loadMoney, () => state.view === "money");
+        else loadMoney();
+      } catch (e) { if (e.message !== "auth") toast(e.message); }
+    };
+    const settings = () => post({ action: "settings", adjust: document.getElementById("mAdjust").value }, [document.getElementById("mAdjust")]);
     bindPeriod("m", () => state.mPer, (v) => { state.mPer = v; }, loadMoney);
     document.getElementById("mAdjust").addEventListener("change", settings);
     document.getElementById("mRefresh").addEventListener("click", () => post({ action: "refresh" }));
     for (const [id, kind] of [["mAddIn", "in"], ["mAddOut", "out"]]) {
-      document.getElementById(id).addEventListener("submit", (ev) => { ev.preventDefault(); post({ action: "item", kind, ...Object.fromEntries(new FormData(ev.target)) }); });
+      document.getElementById(id).addEventListener("submit", (ev) => { ev.preventDefault(); post({ action: "item", kind, ...Object.fromEntries(new FormData(ev.target)) }, ev.target.querySelectorAll("input,select,textarea")); });
     }
     document.querySelectorAll("#main tr[data-iid]").forEach((tr) => tr.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => {
       const body = { action: "item", id: tr.dataset.iid, kind: tr.dataset.kind };
       tr.querySelectorAll("[data-f]").forEach((x) => { body[x.dataset.f] = x.value; });
-      post(body);
+      post(body, tr.querySelectorAll("[data-f]"));
     })));
     document.querySelectorAll("#main tr[data-pid]").forEach((tr) => tr.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => {
       const f = (n) => (tr.querySelector(`[data-f=${n}]`) || {}).value || "";
-      if (tr.dataset.src === "1c") { post({ action: "override", id: tr.dataset.pid, plan: f("plan"), approval: f("approval") }); return; }
+      if (tr.dataset.src === "1c") { post({ action: "override", id: tr.dataset.pid, plan: f("plan"), approval: f("approval") }, tr.querySelectorAll("[data-f]")); return; }
       const body = { action: "item", id: tr.dataset.pid, kind: "out" };
       tr.querySelectorAll("[data-f]").forEach((x) => { body[x.dataset.f] = x.value; });
-      post(body);
+      post(body, tr.querySelectorAll("[data-f]"));
     })));
     document.querySelectorAll("#main tr[data-rid] [data-expect]").forEach((el) => el.addEventListener("change", () =>
-      post({ action: "expect", id: el.closest("tr").dataset.rid, expected: el.value })));
+      post({ action: "expect", id: el.closest("tr").dataset.rid, expected: el.value }, [el])));
     document.querySelectorAll("#main [data-mdel]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); if (confirm("Удалить строку?")) post({ action: "delete", id: b.dataset.mdel }); }));
     document.querySelectorAll("#main tr.mrow").forEach((tr) => tr.addEventListener("click", (ev) => {  // раскрыть источник строки (документ 1С)
       if (ev.target.closest("input, select, button")) return;
       const nx = tr.nextElementSibling; if (nx && nx.classList.contains("mdetail")) nx.hidden = !nx.hidden;
     }));
+    restoreView();
   }
 
   // ---------- «Метрики → Отдел продаж»: реестр и действия по макету «Метрики ОП.xlsx»
@@ -3546,9 +3604,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   async function loadSales(current) {
     const s = state.sp = state.sp || { tab: "reg", channel: "Все", emp: "Все", drill: null };
     const data = await api(`/api/metrics?kind=sales&channel=${encodeURIComponent(s.channel)}&emp=${encodeURIComponent(s.emp)}`);
-    if (current()) renderSales(data);
+    if (current()) await (globalThis.DashboardUI ? DashboardUI.whenIdle(() => renderSales(data), current) : renderSales(data));
   }
   function renderSales(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), `renderSales:${state.sp?.tab}`) || (() => {});
     const s = state.sp, P = d.panel;
     if (!["reg", "act"].includes(s.tab)) s.tab = "reg";
     const scroll = [...document.querySelectorAll("#main .dt-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
@@ -3560,6 +3619,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       ${s.tab === "act" ? spActions(d) : spRegistry(d)}`;
     document.querySelectorAll("#main .dt-wrap").forEach((w, i) => { if (scroll[i]) { w.scrollTop = scroll[i][0]; w.scrollLeft = scroll[i][1]; } });
     bindSales(d);
+    restoreView();
   }
   const spIn = (f, v, type = "text", w) => `<input data-f="${f}" type="${type}" value="${esc(v ?? "")}"${w ? ` style="width:${w}px"` : ""}>`;
   const spSel = (f, v, opts, blank = true) => `<select data-f="${f}">${blank ? `<option value=""></option>` : ""}${opts.map((o) => { const [val, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${v === val ? "selected" : ""}>${esc(t)}</option>`; }).join("")}</select>`;
@@ -3632,17 +3692,25 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const emp = document.getElementById("spEmp");
     if (emp) emp.addEventListener("change", () => { s.emp = emp.value; s.drill = null; again(); });
     main.querySelectorAll("[data-spdrill]").forEach((r) => r.addEventListener("click", () => { s.drill = s.drill === r.dataset.spdrill ? null : r.dataset.spdrill; renderSales(d); }));
-    const save = async (path, body) => { try { await api(path, body); again(); } catch (e) { if (e.message !== "auth") { toast(e.message); again(); } } };
+    const save = async (path, body, controls = []) => {
+      const submitted = [...controls].map((input) => ({input,value:input.value,checked:input.checked}));
+      try {
+        if (globalThis.DashboardUI) await DashboardUI.save(() => api(path, body), `${path}|${body.id || "new"}`);
+        else await api(path, body);
+        submitted.forEach(({input,value,checked}) => globalThis.DashboardUI?.saved(input,value,checked));
+        again();
+      } catch (e) { if (e.message !== "auth") toast(e.message); }
+    };
     for (const [form, path] of [["spAddObj", "/api/sales-object"], ["spAddAct", "/api/sales-action"]]) {
       const f = document.getElementById(form);
-      if (f) f.addEventListener("submit", (ev) => { ev.preventDefault(); save(path, Object.fromEntries(new FormData(f))); });
+      if (f) f.addEventListener("submit", (ev) => { ev.preventDefault(); save(path, Object.fromEntries(new FormData(f)), f.querySelectorAll("input,select,textarea")); });
     }
     main.querySelectorAll(".sp-edit tbody tr").forEach((tr) => {
       const path = tr.closest("table").dataset.path;
       tr.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => {
         const body = { id: tr.dataset.id };
         tr.querySelectorAll("[data-f]").forEach((x) => { body[x.dataset.f] = x.value; });
-        save(path, body);
+        save(path, body, tr.querySelectorAll("[data-f]"));
       }));
     });
     main.querySelectorAll("[data-spdel]").forEach((b) => b.addEventListener("click", () => {
@@ -3651,6 +3719,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
   }
   function renderLogistics(d) {  // лист «Логистика» из Dashboard_TTK.xlsx; этапы без источника — «нет данных»
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderLogistics") || (() => {});
     const per = state.lPer.mode === "all" ? "всё время" : periodLabel(d.date_from, d.date_to);
     const t = d.tiles, ST = d.stages;
     const NA = `<span class="muted small" title="Источника данных в 1С пока нет">нет данных</span>`;
@@ -3697,6 +3766,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${d.registry.map((r) => `<tr><td>${esc(r.doc)}</td><td>${ruMoment(r.dt)}</td><td style="white-space:normal;min-width:220px">${esc(r.route || "—")}</td><td>${esc(r.carrier || "—")}</td><td>${esc(r.customer || "—")}</td><td>${esc(r.status || "—")}</td><td class="n">${r.plan ? nf(r.plan) : "—"}</td><td class="n muted">—</td><td${r.due ? "" : ' class="muted"'}>${r.due ? ruMoment(r.due) : "—"}</td><td${r.closed ? "" : ' class="muted"'}>${r.closed ? ruMoment(r.closed) : "—"}</td><td class="n${r.late_delta > 0 ? " wl-ok" : r.late_delta < 0 ? " wl-bad" : ""}">${r.late_delta == null ? '<span class="muted">—</span>' : r.late_delta > 0 ? "+" + nf(r.late_delta) : r.late_delta < 0 ? "−" + nf(-r.late_delta) : "0"}</td></tr>`).join("")}
         </tbody></table></div>` : `<span class="muted">Заявок за период нет</span>`}</div></section>`;
     bindPeriod("l", () => state.lPer, (p) => { state.lPer = p; }, loadMetrics);
+    restoreView();
   }
 
   // ---------- воронка сделок
@@ -3793,6 +3863,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     if (directions && directions.open && !directions.contains(e.target)) { directions.open = false; state.fDirectionsOpen = false; }
   });
   function renderFunnel(d) {
+    const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderFunnel") || (() => {});
     state.fData = d;
     const main = document.getElementById("main");
     if (!d[state.fKind]) state.fKind = "leads";
@@ -3919,11 +3990,11 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         <div class="filters">
           ${perHtml}
           ${PREVIEW ? "" : `<div class="msel-wrap"><span>Направления</span><details class="msel" id="fDirections" ${state.fDirectionsOpen ? "open" : ""}><summary title="${esc(directionNames.join(", ") || "Все карточки без отбора по направлениям")}">${esc(directionLabel)}</summary>
-            <div class="msel-pop"><label><input type="checkbox" value="__all" ${selectedDirections.length ? "" : "checked"}>Все</label><label><input type="checkbox" value="__tagged" ${selectedDirections.includes("tagged") ? "checked" : ""}>Все с тегом</label>${directionOptions.map((option) => `<label><input type="checkbox" value="${esc(option.value)}" ${selectedDirections.includes(option.value) ? "checked" : ""}>${esc(option.name)}</label>`).join("")}<div class="small muted">${esc(directionRule)}</div></div></details></div>`}
+            <div class="msel-pop"><label><input type="checkbox" value="__all" ${selectedDirections.length ? "" : "checked"}>Все</label><label><input type="checkbox" value="__tagged" ${selectedDirections.includes("tagged") ? "checked" : ""}>Все с тегом</label>${directionOptions.map((option) => `<label><input type="checkbox" value="${esc(option.value)}" ${selectedDirections.includes(option.value) ? "checked" : ""}>${esc(option.name)}</label>`).join("")}<div class="small muted">${esc(directionRule)}</div><button class="btn" type="button" id="fDirectionsApply">Применить</button></div></details></div>`}
           ${PREVIEW ? "" : `<label for="fDep">Отдел<select id="fDep"><option value="__all">Все</option>${deps.map((x) => `<option value="${esc(x.value)}" ${state.fDep === x.value ? "selected" : ""}>${esc(x.name)} (${x.count})</option>`).join("")}</select></label>`}
           <div class="msel-wrap"><span>Ответственные</span><details class="msel" id="fResp" ${state.fRespOpen ? "open" : ""}><summary>${esc(respLabel)}</summary>
             <div class="msel-pop">${respList.map((r) => `<label><input type="checkbox" value="${esc(r.value)}" ${chosen.includes(r.value) ? "checked" : ""}>${esc(r.name)} <span class="muted">(${r.count})</span></label>`).join("")}
-              <button type="button" class="linkish" id="fRespClear">Сбросить выбор</button></div></details></div>
+              <button type="button" class="linkish" id="fRespClear">Сбросить выбор</button><button type="button" class="btn" id="fRespApply">Применить</button></div></details></div>
           <label for="fCat">Воронка сделок<select id="fCat"><option value="">Все</option>${cats.map((c) => `<option value="${esc(c.value)}" ${d.deals.applied.category === c.value ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("")}</select></label>
           <nav class="tabs" aria-label="Вид"><a href="#funnel" data-fview="funnel" class="${bars ? "" : "on"}">Воронка</a><a href="#funnel" data-fview="bars" class="${bars ? "on" : ""}">Диаграмма</a></nav>
           <button class="btn" id="fPrintBtn" type="button">Печать</button>
@@ -3956,27 +4027,45 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       row.addEventListener("click", pick);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     });
-    const onChange = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { fn(el.value); load(); }); };
-    bindPeriod("f", () => state.fPer, (v) => { state.fPer = v; }, load);
+    const onChange = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { fn(el.value); refreshFunnel(); }); };
+    bindPeriod("f", () => state.fPer, (v) => { state.fPer = v; }, refreshFunnel);
     onChange("fField", (v) => { state.fDateField = v; });
     onChange("fCat", (v) => { state.fCat = v; if (PREVIEW) state.fLogins = []; });
     onChange("fDep", (v) => { state.fDep = v === "__all" ? undefined : v; state.fLogins = []; });  // ответственные — заново, из отдела
     const det = document.getElementById("fResp");
-    det.addEventListener("toggle", () => { state.fRespOpen = det.open; });
-    const setLogins = (list, keepOpen) => { state.fLogins = list; state.fRespOpen = keepOpen; if (PREVIEW && list.length) state.fCat = ""; load(); };
+    let respDirty = false;
+    const applyResponsibles = () => { state.fRespOpen = false; det.open = false; if (respDirty) { respDirty = false; refreshFunnel(); } };
+    det.addEventListener("toggle", () => { if (det.isConnected === false) return; state.fRespOpen = det.open; if (!det.open) applyResponsibles(); });
+    const setLogins = (list, keepOpen) => {
+      state.fLogins = list; state.fRespOpen = keepOpen; if (PREVIEW && list.length) state.fCat = "";
+      det.querySelectorAll("input[type=checkbox]").forEach((input) => { input.checked = list.includes(input.value); });
+      respDirty = true;
+      det.querySelector("summary").textContent = list.length ? `${list.length} выбрано` : "Все";
+      if (!keepOpen) applyResponsibles();
+    };
     det.querySelectorAll("input[type=checkbox]").forEach((cb) => cb.addEventListener("change", () =>
       setLogins([...det.querySelectorAll("input[type=checkbox]:checked")].map((x) => x.value), true)));
     document.getElementById("fRespClear").addEventListener("click", () => setLogins([], false));
+    document.getElementById("fRespApply").addEventListener("click", applyResponsibles);
     const directions = document.getElementById("fDirections");
     if (directions) {
-      directions.addEventListener("toggle", () => { state.fDirectionsOpen = directions.open; });
+      let directionsDirty = false;
+      const applyDirections = () => { state.fDirectionsOpen = false; directions.open = false; if (directionsDirty) { directionsDirty = false; refreshFunnel(); } };
+      directions.addEventListener("toggle", () => { if (directions.isConnected === false) return; state.fDirectionsOpen = directions.open; if (!directions.open) applyDirections(); });
+      document.getElementById("fDirectionsApply").addEventListener("click", applyDirections);
       directions.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => checkbox.addEventListener("change", () => {
         state.fDirections = checkbox.value === "__all" ? []
           : checkbox.value === "__tagged" ? (checkbox.checked ? ["tagged"] : [])
           : [...directions.querySelectorAll('input[type="checkbox"]:checked')]
             .map((item) => item.value).filter((key) => directionOptions.some((option) => option.value === key));
         state.fDirectionsOpen = true;
-        load();
+        directionsDirty = true;
+        directions.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+          input.checked = input.value === "__all" ? !state.fDirections.length : state.fDirections.includes(input.value === "__tagged" ? "tagged" : input.value);
+        });
+        directions.querySelector("summary").textContent = state.fDirections.length
+          ? state.fDirections.includes("tagged") ? "Все с тегом" : directionOptions.filter((option) => state.fDirections.includes(option.value)).map((option) => option.name).join(", ")
+          : "Все";
       }));
     }
     main.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => setLogins([b.dataset.resp], false)));
@@ -3985,6 +4074,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }));
     document.getElementById("fPrintBtn").addEventListener("click", () => window.print());
     loadCalendar();
+    restoreView();
   }
 
   // ---------- расписание из календаря Битрикс24 на последний день периода воронок
@@ -4251,4 +4341,5 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 })();
 </script>
 <script src="/assets/brand-field.js?v=5" defer></script>
-<script src="/assets/interface-motion.js?v=4" defer></script>
+<script src="/assets/view-state.js?v=1" defer></script>
+<script src="/assets/interface-motion.js?v=5" defer></script>

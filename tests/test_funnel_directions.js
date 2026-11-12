@@ -9,9 +9,11 @@ const options = [{value:'epc',name:'EPC'},{value:'bpla',name:'БПЛА'},{value:
   {value:'investments',name:'Инвестиции'},{value:'factoring',name:'Факторинг'}];
 const boxes = ['__all','__tagged',...options.map(item=>item.value)].map(value=>({value,checked:false,events:{},
   addEventListener(name,fn){this.events[name]=fn;}}));
+const people=['first','second'].map(value=>({value,checked:false,events:{},addEventListener(name,fn){this.events[name]=fn;}}));
 function node(id) {
   if (!nodes.has(id)) nodes.set(id,{events:{},open:false,value:'',addEventListener(name,fn){this.events[name]=fn;},
-    querySelectorAll(selector){return id==='fDirections' ? boxes.filter(item=>!selector.endsWith(':checked') || item.checked) : [];}});
+    querySelector:()=>({textContent:''}),
+    querySelectorAll(selector){const list=id==='fDirections'?boxes:id==='fResp'?people:[];return list.filter(item=>!selector.endsWith(':checked') || item.checked);}});
   return nodes.get(id);
 }
 let reloads=0;
@@ -20,7 +22,7 @@ const context={state,PREVIEW:null,document:{getElementById:id=>id==='main'?main:
   FUNNELS:[{kind:'leads',title:'Лиды',gen:'лидов'},{kind:'deals',title:'Сделки',gen:'сделок'}],
   Date,Map,Set,esc:v=>String(v??''),nf:String,money:String,pct:String,pad2:String,isoDay:()=> '2026-11-10',
   ruDay:String,periodHtml:()=>'',funnelPeriod:()=>['',''],bindPeriod:()=>{},loadCalendar:()=>{},calPrintHtml:()=>'',
-  load:()=>{reloads++;},funnelShape:()=>'',toneColor:()=>'',logShare:()=>0,window:{print:()=>{}}};
+  load:()=>{reloads++;},refreshFunnel:()=>{reloads++;},funnelShape:()=>'',toneColor:()=>'',logShare:()=>0,window:{print:()=>{}}};
 vm.createContext(context);
 vm.runInContext(source,context);
 const report=()=>({total:0,sections:[{title:'В работе',count:0,amount:0,by_stage:[],by_responsible:[],deals:[]}],other_stages:[],
@@ -38,12 +40,21 @@ boxes.find(box=>box.value==='bpla').checked=true;
 boxes.find(box=>box.value==='kpi').checked=true;
 boxes.find(box=>box.value==='kpi').events.change();
 assert.deepEqual(Array.from(state.fDirections),['bpla','kpi']);
-assert.equal(reloads,1);
+assert.equal(reloads,0,'checking filters does not reload the report');
+node('fDirectionsApply').events.click();
+assert.equal(reloads,1,'the completed selection is applied once');
 context.renderFunnel(data);
 assert.ok(main.innerHTML.includes('Отбор по тегам'));
 assert.ok(!main.innerHTML.includes('БПЛА учитывается по названию или тегу'));
 boxes[0].events.change();
 assert.deepEqual(Array.from(state.fDirections),[]);
+const beforePeople=reloads;
+people[0].checked=true;people[0].events.change();
+people[1].checked=true;people[1].events.change();
+assert.equal(reloads,beforePeople,'multiple employee selections keep the menu in place');
+assert.deepEqual(Array.from(state.fLogins),['first','second']);
+node('fRespApply').events.click();
+assert.equal(reloads,beforePeople+1);
 context.renderFunnel(data);
 assert.ok(main.innerHTML.includes('Все карточки без отбора по направлениям'));
 assert.ok(main.innerHTML.includes('<td colspan="3">Все</td>'));

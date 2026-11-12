@@ -1,0 +1,22 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const html=fs.readFileSync('web/index.html','utf8');
+const start=html.indexOf('    main.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("change"');
+const end=html.indexOf('    const rngTog =',start);
+assert.ok(start>0 && end>start);
+const picks=['one','two'].map(id=>({dataset:{pick:id},checked:false,addEventListener(name,handler) {this[name]=handler;}}));
+const all={checked:false,addEventListener(name,handler) {this[name]=handler;}}, count={textContent:''};
+const batch={hidden:true,querySelector:()=>count};
+const state={cSel:new Set()};
+let renders=0;
+vm.runInNewContext(html.slice(start,end),{state,picked:0,ready:picks.map(input=>({id:input.dataset.pick})),nf:String,
+  main:{querySelectorAll:()=>picks,querySelector:()=>batch},document:{getElementById:()=>all},renderCalls:()=>renders++});
+picks[0].checked=true;picks[0].change();
+assert.equal(batch.hidden,false);assert.equal(count.textContent,'· 1');assert.equal(all.indeterminate,true);
+picks[1].checked=true;picks[1].change();assert.equal(all.checked,true);
+all.checked=false;all.change();assert.equal(state.cSel.size,0);assert.equal(batch.hidden,true);
+assert.equal(picks[0].checked,false);
+all.checked=true;all.change();assert.equal(state.cSel.size,2);assert.equal(picks[1].checked,true);
+assert.equal(renders,0,'selecting calls never replaces the page or playback controls');
+console.log('Call selection and counters update locally: OK');

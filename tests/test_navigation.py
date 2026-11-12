@@ -66,6 +66,12 @@ class NavigationTest(unittest.TestCase):
     def test_consistent_header_layout(self):
         self.run_script("test_header_layout.js")
 
+    def test_editing_state(self):
+        self.run_script("test_editing_state.js")
+
+    def test_call_selection_is_local(self):
+        self.run_script("test_call_selection.js")
+
     def test_staff_directory(self):
         self.run_script("test_staff_directory.js")
 

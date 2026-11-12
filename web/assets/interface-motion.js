@@ -8,7 +8,7 @@
   const entrySelector = ".main > .head, .main > .hero, .main > .panel, .main > .stats > .stat, .main > .cards > .card";
   const barSelector = ".track .fill, .funnel .fb";
   const valueSelector = ".stat .v, .card-score .p, .hero .big";
-  const quietSelector = "#cJobsList, #gptMessages, #gptDocuments, #gptUploadStatus";
+  const quietSelector = "#cJobsList, #gptMessages, #gptDocuments, #gptUploadStatus, [data-ui-refresh]";
   const seen = new WeakSet(), values = new WeakMap();
   const pending = new Map(), active = new Set(), disclosures = new Map();
   const scopes = new Set(), changedValues = new Set();
