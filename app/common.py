@@ -227,7 +227,8 @@ CREATE TABLE IF NOT EXISTS logistics_deliveries (
   comparison_kind TEXT, comparison_key TEXT, comparison_doc TEXT, comparison_date TEXT,
   comparison_amount REAL, comparison_issue TEXT,
   expected_delivery_novat REAL, actual_delivery_novat REAL,
-  expected_delivery_vat REAL, actual_delivery_vat REAL, delivery_cost_sources TEXT, delivery_cost_issue TEXT);
+  expected_delivery_vat REAL, actual_delivery_vat REAL, delivery_cost_sources TEXT, delivery_cost_issue TEXT,
+  shipment_pct REAL);
 
 -- панель «Метрики → Отдел продаж» (макет «Метрики ОП.xlsx»): реестр объектов и действия вводятся вручную
 CREATE TABLE IF NOT EXISTS sales_objects (
@@ -389,7 +390,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                                           ("comparison_amount", "REAL"), ("comparison_issue", "TEXT"),
                                           ("expected_delivery_novat", "REAL"), ("actual_delivery_novat", "REAL"),
                                           ("expected_delivery_vat", "REAL"), ("actual_delivery_vat", "REAL"),
-                                          ("delivery_cost_sources", "TEXT"), ("delivery_cost_issue", "TEXT")],
+                                          ("delivery_cost_sources", "TEXT"), ("delivery_cost_issue", "TEXT"),
+                                          ("shipment_pct", "REAL")],
                  "sales_objects": [("source", "TEXT"), ("status_1c", "TEXT"), ("amount", "REAL"), ("stage_auto", "INTEGER")]}
 
 for _crm_table in ("activities", "call_records", "tenders", "deals", "crm_deals", "fact_records", "deal_failures"):

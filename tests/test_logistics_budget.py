@@ -7,7 +7,7 @@ from app.common import connect, load_rules, replace_rows
 from app.engine import Engine
 from app.onec import OneC
 from app import manual
-from app.onec_logistics_delivery import delivery_costs, fetch_customer_deliveries
+from app.onec_logistics_delivery import delivery_costs, fetch_customer_deliveries, shipment_percentages
 
 
 class LogisticsBudgetTest(unittest.TestCase):
@@ -19,12 +19,12 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.con.execute('INSERT INTO dataset_state VALUES(?,?,?,?)',
                          ('logistics_deliveries', '2026-11-01', '2026-11-30', '2026-11-12'))
 
-    def add(self, identity, customer=None, expected=208196.72, actual=60174.94, status='ТТК_ВЗакуп'):
+    def add(self, identity, customer=None, expected=208196.72, actual=60174.94, status='ТТК_ВЗакуп', shipment=100):
         self.con.execute('INSERT INTO logistics_deliveries '
             '(id,emp,dt,source_kind,source_key,source_doc,order_key,order_doc,order_status,'
-            'expected_delivery_novat,actual_delivery_vat) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            'expected_delivery_novat,actual_delivery_vat,shipment_pct) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
             (identity, 'logist', '2026-11-10', 'forwarder', identity, identity, customer or identity,
-             customer or identity, status, expected, actual))
+             customer or identity, status, expected, actual, shipment))
 
     def result(self):
         with patch('app.engine.today', return_value=dt.date(2026, 11, 12)):
@@ -72,6 +72,24 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.con.execute('DELETE FROM dataset_state')
         self.assertIsNone(self.result()['components'][0]['fact'])
 
+    def test_partial_shipment_counts_as_failed_until_full_and_manual_exclusion_wins(self):
+        self.add('partial', shipment=89)
+        self.add('complete')
+        item = self.result()
+        self.assertEqual(item['components'][0]['fact'], .5)
+        self.assertEqual(item['payout'], 1000)
+        self.con.execute("UPDATE logistics_deliveries SET shipment_pct=100 WHERE id='partial'")
+        self.assertEqual(self.result()['payout'], 2000)
+        self.con.execute("UPDATE logistics_deliveries SET shipment_pct=99.999,actual_delivery_vat=NULL WHERE id='partial'")
+        self.assertEqual(self.result()['payout'], 1000)
+        manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'partial', 0, 'admin')
+        self.assertEqual(self.result()['payout'], 2000)
+
+    def test_unknown_shipment_cannot_be_treated_as_full(self):
+        self.add('unknown', shipment=None)
+        self.assertIsNone(self.result()['components'][0]['fact'])
+        self.assertEqual(self.result()['payout'], 0)
+
     def test_imported_mp_amounts_are_normalized(self):
         self.add('imported')
         raw = dict(self.con.execute('SELECT * FROM logistics_deliveries').fetchone())
@@ -100,7 +118,8 @@ class LogisticsBudgetTest(unittest.TestCase):
                 'Document_ПоручениеЭкспедитору': [{'Ref_Key': 'forwarder', 'Number': 'PE', 'Date': '2026-11-10',
                      'ТТК_ЗаказКлиента_Key': 'order', 'ТТК_СуммаОстаток': 300000}],
                 'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов': [], 'Catalog_ОбъектыРасчетов': [],
-                'Catalog_Номенклатура': [{'Ref_Key': 'transport'}]}
+                'Catalog_Номенклатура': [{'Ref_Key': 'transport'}],
+                'AccumulationRegister_РасчетыСКлиентами_RecordType': []}
 
         for number, amount in (('749', 46632), ('750', 6974), ('757', 6568.94), ('751', 30000), ('goods', 1598822.85)):
             data['Document_ЗаказПоставщику'].append({
@@ -294,3 +313,28 @@ class LogisticsBudgetTest(unittest.TestCase):
                 self.assertTrue(costs['A']['issue'])
                 self.assertIsNone(costs['B']['issue'])
                 self.assertEqual(costs['B']['amount'], 10)
+
+    def test_shipment_register_matches_order_13_and_ignores_payments(self):
+        customers = {'13': {'СуммаДокумента': 14619429.4}, 'partial': {'СуммаДокумента': 100},
+                     'full': {'СуммаДокумента': 100}, 'zero': {'СуммаДокумента': 0},
+                     'none': {'СуммаДокумента': 100}}
+        rows = [{'ПродажаПоЗаказу': key, 'ПродажаПоЗаказу_Type': 'StandardODATA.Document_ЗаказКлиента',
+                 'ХозяйственнаяОперация': 'РеализацияКлиенту', 'RecordType': kind, 'Сумма': amount}
+                for key, kind, amount in [('13', 'Receipt', 13075985.67), ('partial', 'Receipt', 99.999),
+                                          ('full', 'Receipt', 110), ('full', 'Expense', 10)]]
+        rows.append({**rows[0], 'ХозяйственнаяОперация': 'ПоступлениеОплатыОтКлиента', 'Сумма': 99999999})
+
+        class Source:
+            def _odata(self, entity, params):
+                self_params = params
+                assert "Period le datetime'2026-11-12T23:59:59'" in self_params['$filter']
+                return rows
+
+        values = shipment_percentages(Source(), customers, dt.date(2026, 11, 12))
+        self.assertEqual(values, {'13': 89, 'partial': 99, 'full': 100, 'zero': None, 'none': 0})
+
+        class FailedSource:
+            def _odata(self, entity, params):
+                raise OSError('unavailable')
+
+        self.assertTrue(all(value is None for value in shipment_percentages(FailedSource(), customers, dt.date(2026,11,12)).values()))

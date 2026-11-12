@@ -419,9 +419,9 @@ class ListenTest(unittest.TestCase):
         with db_lock():
             old_state = self.con.execute("SELECT * FROM dataset_state WHERE dataset='logistics_deliveries'").fetchone()
             self.con.execute("INSERT INTO logistics_deliveries(id,emp,dt,order_key,order_doc,order_status,"
-                             "expected_delivery_novat,actual_delivery_vat,source_kind,source_doc) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                             "expected_delivery_novat,actual_delivery_vat,source_kind,source_doc,shipment_pct) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                              ('logistics-http', 'logistics-http', '2026-11-10', 'customer-http', 'ORDER', 'ТТК_ВЗакуп', 100, 122,
-                              'forwarder', 'PE'))
+                              'forwarder', 'PE', 100))
             self.con.execute("INSERT OR REPLACE INTO dataset_state VALUES('logistics_deliveries','2026-11-01','2026-11-30','2026-11-12')")
             self.con.commit()
 

@@ -79,6 +79,7 @@ class LogisticsDeliveryTest(unittest.TestCase):
                     'ДокументОснование': 'kp', 'ДокументОснование_Type': 'StandardODATA.Document_КоммерческоеПредложениеКлиенту',
                     'ТТК_КонечнаяДатаПоставки': '2026-11-10T00:00:00', 'ТТК_ФактическаяДатаПоставки': '2026-11-09T00:00:00'}
         data = {'Document_ЗаказКлиента': [customer], 'Document_КоммерческоеПредложениеКлиенту': [],
+                'AccumulationRegister_РасчетыСКлиентами_RecordType': [],
                 'Document_ТТК_ЗаявкаВОтделСнабжения': [{'Ref_Key': 'supply', 'ДокументОснования': 'kp',
                     'ДокументОснования_Type': 'StandardODATA.Document_КоммерческоеПредложениеКлиенту'}],
                 'Document_ЗаказПоставщику': [],
@@ -101,6 +102,7 @@ class LogisticsDeliveryTest(unittest.TestCase):
         customers = [{'Ref_Key': key, 'Number': key, 'Date': '2026-10-01', 'ДокументОснование': 'shared-kp',
                       'ДокументОснование_Type': 'StandardODATA.Document_КоммерческоеПредложениеКлиенту'} for key in ('A', 'B')]
         data = {'Document_ЗаказКлиента': customers, 'Document_КоммерческоеПредложениеКлиенту': [],
+                'AccumulationRegister_РасчетыСКлиентами_RecordType': [],
                 'Document_ТТК_ЗаявкаВОтделСнабжения': [{'Ref_Key': 'supply', 'ДокументОснования': 'shared-kp',
                     'ДокументОснования_Type': 'StandardODATA.Document_КоммерческоеПредложениеКлиенту'}],
                 'Document_ЗаказПоставщику': [{'Ref_Key': 'supplier', 'ТТК_ЗаказКлиента_Key': 'A', 'ДокументОснование': 'supply'}],

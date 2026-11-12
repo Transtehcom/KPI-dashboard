@@ -77,12 +77,48 @@ def delivery_costs(onec, suppliers, customer_keys):
     return costs
 
 
+def shipment_percentages(onec, customers, date_to):
+    """Order-linked realization amounts divided by the gross customer-order amount."""
+    totals = {key: Decimal(0) for key in customers}
+    invalid = set()
+    try:
+        rows = onec._odata("AccumulationRegister_РасчетыСКлиентами_RecordType", {"$format": "json",
+            "$filter": "Active eq true and Сумма ne 0 and ХозяйственнаяОперация eq 'РеализацияКлиенту' "
+                       "and ПродажаПоЗаказу_Type eq 'StandardODATA.Document_ЗаказКлиента' "
+                       f"and Period le datetime'{date_to.isoformat()}T23:59:59'",
+            "$select": "RecordType,Сумма,ПродажаПоЗаказу,ПродажаПоЗаказу_Type,ХозяйственнаяОперация"})
+    except (OSError, ValueError):
+        return dict.fromkeys(customers)
+    for row in rows:
+        key = row.get("ПродажаПоЗаказу")
+        if key not in customers or row.get("ПродажаПоЗаказу_Type") != "StandardODATA.Document_ЗаказКлиента" or row.get("ХозяйственнаяОперация") != "РеализацияКлиенту":
+            continue
+        try:
+            amount = Decimal(str(row.get("Сумма")))
+            if not amount.is_finite() or row.get("RecordType") not in ("Receipt", "Expense"):
+                raise ValueError("Некорректное движение отгрузки")
+            totals[key] += amount if row["RecordType"] == "Receipt" else -amount
+        except (InvalidOperation, TypeError, ValueError):
+            invalid.add(key)
+    result = {}
+    for key, order in customers.items():
+        try:
+            amount = Decimal(str(order.get("СуммаДокумента")))
+            if key in invalid or not amount.is_finite() or amount <= 0:
+                raise ValueError("Не определена сумма отгрузки или заказа")
+            # Partial shipment stays below 100 even if its display would round up.
+            result[key] = min(100, max(0, int(totals[key] / amount * 100)))
+        except (InvalidOperation, TypeError, ValueError):
+            result[key] = None
+    return result
+
+
 def fetch_customer_deliveries(onec, ds, date_from, date_to):
     def read(entity, fields, **params):
         return onec._odata(entity, {"$format": "json", "$select": fields, **params})
 
     customers = read("Document_ЗаказКлиента",
-        "Ref_Key,Number,Date,DeletionMark,Статус,ДокументОснование,ДокументОснование_Type,"
+        "Ref_Key,Number,Date,DeletionMark,Статус,СуммаДокумента,ДокументОснование,ДокументОснование_Type,"
         "ТТК_КонечнаяДатаПоставки,ТТК_ФактическаяДатаПоставки,ТТК_СуммаДоставки,ТТК_СуммаДоставкиБезНДС,"
         "Партнер/Description", **{"$expand": "Партнер"})
     proposals = read("Document_КоммерческоеПредложениеКлиенту",
@@ -94,6 +130,7 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
         "ОбъектРасчетов_Key,Товары/LineNumber,Товары/Номенклатура_Key")
     customers = {row["Ref_Key"]: row for row in customers if not row.get("DeletionMark")}
     costs = delivery_costs(onec, suppliers, customers)
+    shipments = shipment_percentages(onec, customers, date_to)
     edges = {}
     for kind, rows in (("order", customers.values()), ("kp", proposals), ("supply", requests)):
         for row in rows:
@@ -201,6 +238,7 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
                 "planned_date": _date(customer.get("ТТК_КонечнаяДатаПоставки")),
                 "actual_date": _date(customer.get("ТТК_ФактическаяДатаПоставки")),
                 "order_status": customer.get("Статус"),
+                "shipment_pct": shipments.get(ref),
                 "expected_delivery_novat": customer.get("ТТК_СуммаДоставкиБезНДС"),
                 "expected_delivery_vat": customer.get("ТТК_СуммаДоставки"),
                 "actual_delivery_vat": float(cost["amount"]) if cost and not cost["issue"] else None,
