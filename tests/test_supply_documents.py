@@ -95,7 +95,8 @@ class SupplyDocumentsTest(unittest.TestCase):
         with patch("app.engine.today",return_value=dt.date(2026,11,5)):
             item = next(i for i in engine.compute("supply","2026-11")["items"] if i["code"]=="exec_discipline")
         self.assertEqual(item["components"][0]["fact"],.5)
-        self.assertEqual(item["payout"],750)
+        self.assertEqual(item["pct"],.75)
+        self.assertEqual(item["payout"],1125)
         self.assertNotIn("manual",item)
         self.assertTrue(item["entry"]["readonly"])
         self.assertEqual(len(item["entry"]["rows"]),4)

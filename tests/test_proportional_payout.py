@@ -70,6 +70,12 @@ class ProportionalPayoutTest(unittest.TestCase):
         item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
         self.assertEqual(item.get("aggregation"),"equal_mean")
 
+    def test_other_equal_mean_kpis_still_require_complete_data(self):
+        with mock.patch.object(self.engine,"calc_operational_activity",return_value={
+                "components":[comp("Known",1,1),comp("Unknown",None,1)],"aggregation":"equal_mean"}):
+            item=next(i for i in self.engine.compute("pm","2026-11")["items"] if i["code"]=="operational_activity")
+        self.assertEqual(item["payout"],0)
+
     def test_operational_percentage_rounds_tenths_then_units_half_up(self):
         for value,expected in ((.0867,.09),(.0745,.08),(.0741,.07),(.074499,.07),(.9945,1.0)):
             with self.subTest(value=value):

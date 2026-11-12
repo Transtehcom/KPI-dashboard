@@ -560,6 +560,7 @@ class Engine:
                     "DATETIME_from":ctx["first"].strftime("%d.%m.%Y"),"DATETIME_to":ctx["last"].strftime("%d.%m.%Y")})
             result = {"components":[comp(CRITERIA_TITLES["docs"],score["score"],100,"балл",source=SRC_MAN),
                                    comp("Эффективность задач Б24 за месяц",value/100 if value is not None else None,1.0,"%",source=SRC_B24)],
+                    "aggregation":"equal_mean", "pay_known_components":True,
                     "manual":{"period":"month","month":ctx["month"],"criteria":["docs"],"scores":{"docs":score}},
                     "extra":[{"label":"Всего задач в работе за месяц","value":snapshot.get("total")},
                              {"label":"Завершено за месяц","value":snapshot.get("completed")},
@@ -581,7 +582,9 @@ class Engine:
                 result["extra"][0:0] = [
                     {"label":"Заказов поставщикам за месяц","value":documents["total"]},
                     {"label":"Заказов с файлом договора","value":documents["matched"]},
-                    {"label":"Расчёт документооборота","value":f"{documents['matched']} / {documents['total']} × 100%" if documents["total"] else "Нет заказов для расчёта"}]
+                    {"label":"Расчёт документооборота","value":
+                        (f"{documents['matched']} / {documents['total']} × 100%" if documents["total"] else "Нет заказов для расчёта")
+                        if documents["known"] else "Данные файлов договоров за период ещё не загружены"}]
                 result["entry"] = {
                     "table":"supply_contracts", "title":"Договоры к заказам поставщикам", "readonly":True,
                     "note":"Учитываются файлы самого заказа поставщику и карточки договора, указанного в заказе. Подходят названия с «договор», «договора», «дог.» или отдельным сокращением «дог» без учёта регистра. Один заказ учитывается один раз. Ответственный — из связанной заявки в отдел снабжения. Период — по дате заказа поставщику.",
@@ -1190,8 +1193,9 @@ class Engine:
             pcts = [c["pct"] for c in scored if c["pct"] is not None]
             missing = [c for c in scored if c["pct"] is None]
             equal_mean = r.get("aggregation") == "equal_mean"
+            pay_known_components = equal_mean and r.get("pay_known_components", False)
             pct = (sum(min(1, max(0, v)) for v in pcts) / len(scored)
-                   if equal_mean and pcts and not missing else min(pcts) if pcts else None)
+                   if equal_mean and pcts and (not missing or pay_known_components) else min(pcts) if pcts else None)
             if equal_mean and pct is not None:
                 # Tenths of a percent first, then whole percent; suppress float noise at ties.
                 pct = float(Decimal(str(round(pct, 12))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
@@ -1206,13 +1210,13 @@ class Engine:
             else:
                 met = pct >= 1 - EPS
                 if proportional:
-                    payout = amount * payout_fraction(pct) if not missing else 0
+                    payout = amount * payout_fraction(pct) if not missing or pay_known_components else 0
                 else:
                     payout = amount if met else 0
                 status = "met" if met else ("close" if pct >= close_pct - EPS else "fail")
                 if proportional and 0 < pct < 1 - EPS:
                     status = "partial"
-                if missing:
+                if missing and not pay_known_components:
                     status = "awaiting" if awaiting_manual else "nodata" if proportional else status
                 if not proportional and r.get("payout_share") is not None and not missing:  # legacy binary scale
                     share = r["payout_share"]

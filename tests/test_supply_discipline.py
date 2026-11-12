@@ -59,7 +59,28 @@ class SupplyDisciplineTest(unittest.TestCase):
         manual.set_month_score(self.con,'supply','2026-11','docs',100,'','boss')
         self.efficiency()
         item=next(i for i in self.engine.compute('supply','2026-11')['items'] if i['code']=='exec_discipline')
-        self.assertEqual((item['amount'],item['pct'],item['payout']),(1500,.86,1290))
+        self.assertEqual((item['amount'],item['pct'],item['payout']),(1500,.93,1395))
+
+    def test_tasks_twenty_percent_and_missing_contracts_pay_ten_percent(self):
+        params=next(i['params'] for i in self.engine.rules['positions']['supply']['items'] if i['code']=='exec_discipline')
+        params['docs_source']='contract_files'
+        with mock.patch('app.task_efficiency.report',return_value={
+                'percent':20,'total':5,'completed':1,'violations':4,'rows':[]}):
+            item=next(i for i in self.engine.compute('supply','2026-11')['items'] if i['code']=='exec_discipline')
+        self.assertEqual((item['pct'],item['payout'],item['status']),(.1,150,'partial'))
+        self.assertIsNone(item['components'][0]['fact'])
+        self.assertEqual(item['components'][1]['fact'],.2)
+        self.assertEqual(item['aggregation'],'equal_mean')
+
+    def test_known_component_can_pay_without_task_snapshot(self):
+        manual.set_month_score(self.con,'supply','2026-11','docs',100,'','boss')
+        item=next(i for i in self.engine.compute('supply','2026-11')['items'] if i['code']=='exec_discipline')
+        self.assertEqual((item['pct'],item['payout']),(.5,750))
+
+    def test_both_components_unknown_do_not_pay(self):
+        item=next(i for i in self.engine.compute('supply','2026-11')['items'] if i['code']=='exec_discipline')
+        self.assertIsNone(item['pct'])
+        self.assertEqual(item['payout'],0)
 
     def test_wrong_employee_snapshot_is_not_used(self):
         self.efficiency(uid=99)
