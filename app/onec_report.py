@@ -5,6 +5,8 @@
 - тендеры (ТТК_Тендер) по ведущему менеджеру со статусом («Валидные заявки», «Действует», «Выигран»,
   «Проигран» в разделе «Тендерный отдел»). Валидные — статусы Действует, Выиграно, Проиграно.
 """
+from .onec_operations import _metadata
+
 EMPTY = "00000000-0000-0000-0000-000000000000"
 
 
@@ -32,14 +34,30 @@ def fetch_kp(onec, ds, date_from, date_to):
              "amount": k.get("СуммаДокумента"), "ordered": int(k["Ref_Key"] in based)} for k in kps]
 
 
+def tender_title_field(onec):
+    """Published tender title field for the connected 1C configuration."""
+    warnings = []
+    metadata = _metadata(onec, warnings)
+    for warning in warnings:
+        getattr(onec, "log", lambda _: None)(warning)
+    available = metadata.get("Document_ТТК_Тендер", set()) if metadata is not None else None
+    return next((name for name in ("НаименованиеЛота", "Наименование")
+                 if available is None or name in available), None)
+
+
 def fetch_tenders(onec, ds, date_from, date_to):
     """Тендеры за период (по дате документа) с ведущим менеджером, статусом и признаком ordered — есть заказ клиента."""
+    title_field = tender_title_field(onec)
+    fields = ["Ref_Key", "Date", "Number", "Статус", "СуммаДокумента",
+              "ВедущийМенеджер/Description", "Клиент/Description"]
+    if title_field:
+        fields.append(title_field)
     rows = onec._odata("Document_ТТК_Тендер", {
         "$format": "json", "$expand": "ВедущийМенеджер,Клиент",
         "$filter": "DeletionMark eq false and " + _period(date_from, date_to),
-        "$select": "Ref_Key,Date,Number,Статус,СуммаДокумента,НаименованиеЛота,ВедущийМенеджер/Description,Клиент/Description"})
+        "$select": ",".join(fields)})
     based = _based_on(onec, date_from)
     return [{"id": t["Ref_Key"], "manager": (t.get("ВедущийМенеджер") or {}).get("Description"), "dt": t["Date"][:10],
              "doc": (t.get("Number") or "").strip(), "client": (t.get("Клиент") or {}).get("Description"),
-             "title": t.get("НаименованиеЛота"), "status": t.get("Статус"), "amount": t.get("СуммаДокумента"),
+             "title": t.get(title_field) if title_field else None, "status": t.get("Статус"), "amount": t.get("СуммаДокумента"),
              "ordered": int(t["Ref_Key"] in based)} for t in rows]

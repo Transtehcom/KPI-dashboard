@@ -13,6 +13,7 @@
 Канал — «Тендеры», если цепочка начинается с тендера, иначе «Прямые».
 """
 import datetime as dt
+from .onec_report import tender_title_field
 
 SINCE = "2026-01-01"
 TENDER = "Document_ТТК_Тендер"
@@ -32,9 +33,13 @@ def _login(managers, name):
 def fetch(onec, managers, since=SINCE):
     """managers: {ФИО в 1С (нижний регистр): login}. Возвращает [{key, source, number, ...}] без этапов заказов."""
     flt = f"DeletionMark eq false and Date ge datetime'{since}T00:00:00'"
+    title_field = tender_title_field(onec)
+    tender_fields = ["Ref_Key", "Date", "Number", "Статус", "СуммаДокумента",
+                     "ВедущийМенеджер/Description", "Клиент/Description"]
+    if title_field:
+        tender_fields.append(title_field)
     tenders = onec._odata(TENDER, {"$format": "json", "$expand": "ВедущийМенеджер,Клиент", "$filter": flt,
-                                   "$select": "Ref_Key,Date,Number,Статус,СуммаДокумента,НаименованиеЛота,"
-                                              "ВедущийМенеджер/Description,Клиент/Description"})
+                                   "$select": ",".join(tender_fields)})
     kps = onec._odata(KP, {"$format": "json", "$expand": "Менеджер,Клиент", "$filter": flt,
                            "$select": "Ref_Key,Date,Number,Статус,СуммаДокумента,ДокументОснование,ДокументОснование_Type,"
                                       "Менеджер/Description,Клиент/Description"})
@@ -60,7 +65,7 @@ def fetch(onec, managers, since=SINCE):
         covered = t["Ref_Key"] in ordered or t["Ref_Key"] in based_kp
         stage = "Закрыто без результата" if t["Статус"] in LOST_TENDER else "Закрыто успешно" if covered else None
         out.append({"key": t["Ref_Key"], "source": "tender", "id": t["Number"].strip(), "type": "Сделка", "channel": "Тендеры",
-                    "client": (t.get("Клиент") or {}).get("Description") or t.get("НаименованиеЛота"),
+                    "client": (t.get("Клиент") or {}).get("Description") or (t.get(title_field) if title_field else None),
                     "emp": _login(managers, (t.get("ВедущийМенеджер") or {}).get("Description")), "status_1c": t["Статус"],
                     "amount": t.get("СуммаДокумента"), "entered": t["Date"][:16], "stage": stage, "order_1c": None})
     for k in kps:

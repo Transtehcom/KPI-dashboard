@@ -237,6 +237,8 @@ def fetch(onec, config, since=None):
     for kind, table in DOCUMENTS.items():
         fields = COMMON + FIELDS[kind]
         available = metadata.get(table, set()) if metadata is not None else None
+        if kind == "tender" and available and "НаименованиеЛота" not in available and "Наименование" in available:
+            fields = ["Наименование" if name == "НаименованиеЛота" else name for name in fields]
         if kind == "transport" and available:
             fields += [name for name in ("ОтработатьДо", "СрокОтработкиДо", "ТТК_ОтработатьДо") if name in available]
         if available is not None:
@@ -310,7 +312,7 @@ def fetch(onec, config, since=None):
             due = _moment(row.get(due_field)) if due_field else None
             entity = {"id": identity(onec, kind, ref), "ref": ref, "kind": kind,
                       "number": str(row.get("Number") or "").strip(), "date": _moment(row.get("Date")),
-                      "title": row.get("НаименованиеЛота") or None,
+                      "title": row.get("НаименованиеЛота") or row.get("Наименование") or None,
                       "client": partners.get(_ref(row.get("Клиент_Key") or row.get("Партнер_Key"))),
                       "owner": owner, "owner_name": owner_name, "sales_owner": sales_owner,
                       "sales_owner_name": sales_name, "status": row.get("СтатусЗаявки") if kind == "supply" else row.get("Статус"),

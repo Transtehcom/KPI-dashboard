@@ -12,6 +12,46 @@ from tests.test_engine import CONFIG
 
 
 class ConversionSourceTest(unittest.TestCase):
+    def test_sales_register_uses_the_live_tender_title_field(self):
+        from app.onec_sales_register import fetch
+        class API:
+            def metadata(self):
+                return '<Schema><EntityType Name="Document_ТТК_Тендер"><Property Name="Наименование"/></EntityType></Schema>'
+
+            def _odata(self, entity, params):
+                if entity != "Document_ТТК_Тендер":
+                    return []
+                self_test.assertIn("Наименование", params["$select"].split(","))
+                self_test.assertNotIn("НаименованиеЛота", params["$select"].split(","))
+                return [{"Ref_Key": "tender", "Date": "2026-11-11T10:00:00", "Number": "ТН-1",
+                         "Наименование": "Лот без клиента", "Статус": "Действует"}]
+        self_test = self
+        self.assertEqual(fetch(API(), {})[0]["client"], "Лот без клиента")
+
+    def test_tender_title_follows_publication_metadata(self):
+        from app.onec_report import fetch_tenders
+        for title_field in ("НаименованиеЛота", "Наименование"):
+            with self.subTest(title_field=title_field):
+                class API:
+                    def metadata(self):
+                        return f'<Schema><EntityType Name="Document_ТТК_Тендер"><Property Name="{title_field}"/></EntityType></Schema>'
+
+                    def _odata(self, entity, params):
+                        if entity == "Document_ЗаказКлиента":
+                            return [{"ДокументОснование": "tender"}]
+                        selected = params["$select"].split(",")
+                        self_test.assertIn(title_field, selected)
+                        other = "Наименование" if title_field == "НаименованиеЛота" else "НаименованиеЛота"
+                        self_test.assertNotIn(other, selected)
+                        return [{"Ref_Key": "tender", "Date": "2026-11-11T10:00:00", "Number": "ТН-1",
+                                 title_field: "Лот", "ВедущийМенеджер": {"Description": "Менеджер"},
+                                 "Клиент": {"Description": "Клиент"}, "Статус": "Действует", "СуммаДокумента": 100}]
+                self_test = self
+                rows = fetch_tenders(API(), {}, dt.date(2026, 11, 1), dt.date(2026, 11, 12))
+                self.assertEqual(rows[0]["title"], "Лот")
+                self.assertEqual(rows[0]["manager"], "Менеджер")
+                self.assertEqual(rows[0]["ordered"], 1)
+
     def test_order_manager_and_old_request_owner_are_independent_and_deduplicated(self):
         from app.onec_conversions import fetch_conversion_orders
         calls = []

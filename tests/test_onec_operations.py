@@ -29,6 +29,16 @@ class Source:
 
 
 class OperationsSourceTests(unittest.TestCase):
+    def test_live_tender_title_uses_published_name_field(self):
+        source = Source({"Document_ТТК_Тендер": [{"Ref_Key": guid(1), "Наименование": "Текущий лот"}]})
+        source.metadata = lambda: '<Schema><EntityType Name="Document_ТТК_Тендер"><Property Name="Ref_Key"/><Property Name="Наименование"/></EntityType></Schema>'
+        result = fetch(source, {})
+        row = next(e for e in result["entities"] if e["kind"] == "tender")
+        self.assertEqual(row["title"], "Текущий лот")
+        params = next(p for entity, p in source.calls if entity == "Document_ТТК_Тендер")
+        self.assertIn("Наименование", params["$select"].split(","))
+        self.assertNotIn("НаименованиеЛота", params["$select"].split(","))
+
     def test_supply_best_price_total_uses_published_line_amounts(self):
         source=Source({'Document_ТТК_ЗаявкаВОтделСнабжения':[{'Ref_Key':guid(1),'ТаблицаТовары':[
             {'LineNumber':'1','Количество':10,'ЛучшаяЦена':139344.26,'ЛучшаяСумма':1393442.6,'СуммаТекущегоПоставщика':1393442.6,'Примечание':'Confirmed'},
