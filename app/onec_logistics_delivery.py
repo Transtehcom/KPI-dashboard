@@ -1,4 +1,7 @@
-"""Customer delivery dates, expected cost and explicit logistics links, read-only."""
+"""Customer delivery dates, MP delivery costs and explicit logistics links, read-only."""
+import json
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
 from .onec_logistics import EMPTY, _date, _when
 
 TYPES = {
@@ -9,20 +12,67 @@ TYPES = {
 }
 
 
+def delivery_costs(onec, suppliers, customer_keys):
+    """Reconstruct the MP gross delivery amount from supplier-order settlement objects.
+
+    Verified against customer forms 000152 and 000144. Contract settlement objects
+    are excluded by the 1C form, even when the supplier order has a delivery amount.
+    """
+    costs = {key: {"amount": Decimal(0), "sources": [], "issue": None} for key in customer_keys}
+    transport = [row for row in suppliers if not row.get("DeletionMark")
+                 and row.get("ТТК_ЗаказКлиента_Key") in costs
+                 and row.get("ДокументОснование_Type") == "StandardODATA.Document_ПоручениеЭкспедитору"]
+    if not transport:
+        return costs
+    try:
+        objects = onec._odata("Catalog_ОбъектыРасчетов", {"$format": "json",
+            "$select": "Ref_Key,Объект,Объект_Type,Сумма,DeletionMark"})
+    except (OSError, ValueError):
+        for row in transport:
+            costs[row["ТТК_ЗаказКлиента_Key"]]["issue"] = "Не удалось прочитать объекты расчётов 1С"
+        return costs
+    objects = {row["Ref_Key"]: row for row in objects if not row.get("DeletionMark")}
+    for row in transport:
+        cost = costs[row["ТТК_ЗаказКлиента_Key"]]
+        obj = objects.get(row.get("ОбъектРасчетов_Key"), {})
+        source = {"doc": (row.get("Number") or "").strip(), "included": False, "amount": None, "reason": ""}
+        kind = obj.get("Объект_Type")
+        if kind == "StandardODATA.Catalog_ДоговорыКонтрагентов":
+            source["reason"] = "Расчёты по договору — исключён из МП 1С"
+        elif kind == "StandardODATA.Document_ЗаказПоставщику" and obj.get("Объект") == row["Ref_Key"]:
+            try:
+                amount = Decimal(str(obj.get("Сумма")))
+                if not amount.is_finite():
+                    raise InvalidOperation()
+                amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                cost["amount"] += amount
+                source.update({"included": True, "amount": float(amount)})
+            except (InvalidOperation, ValueError, TypeError):
+                source["reason"] = "Не заполнена сумма объекта расчётов"
+                cost["issue"] = source["reason"]
+        else:
+            source["reason"] = "Отсутствует или не соответствует заказу объект расчётов"
+            cost["issue"] = source["reason"]
+        cost["sources"].append(source)
+    return costs
+
+
 def fetch_customer_deliveries(onec, ds, date_from, date_to):
     def read(entity, fields, **params):
         return onec._odata(entity, {"$format": "json", "$select": fields, **params})
 
     customers = read("Document_ЗаказКлиента",
         "Ref_Key,Number,Date,DeletionMark,Статус,ДокументОснование,ДокументОснование_Type,"
-        "ТТК_КонечнаяДатаПоставки,ТТК_ФактическаяДатаПоставки,ТТК_СуммаДоставкиБезНДС,Партнер/Description", **{"$expand": "Партнер"})
+        "ТТК_КонечнаяДатаПоставки,ТТК_ФактическаяДатаПоставки,ТТК_СуммаДоставки,ТТК_СуммаДоставкиБезНДС,"
+        "Партнер/Description", **{"$expand": "Партнер"})
     proposals = read("Document_КоммерческоеПредложениеКлиенту",
         "Ref_Key,ДокументОснование,ДокументОснование_Type")
     requests = read("Document_ТТК_ЗаявкаВОтделСнабжения",
         "Ref_Key,ДокументОснования,ДокументОснования_Type")
     suppliers = read("Document_ЗаказПоставщику",
-        "Ref_Key,DeletionMark,ТТК_ЗаказКлиента_Key,ДокументОснование")
+        "Ref_Key,Number,DeletionMark,ТТК_ЗаказКлиента_Key,ДокументОснование,ДокументОснование_Type,ОбъектРасчетов_Key")
     customers = {row["Ref_Key"]: row for row in customers if not row.get("DeletionMark")}
+    costs = delivery_costs(onec, suppliers, customers)
     edges = {}
     for kind, rows in (("order", customers.values()), ("kp", proposals), ("supply", requests)):
         for row in rows:
@@ -121,6 +171,7 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
             continue
         for ref in record["linked"] or [None]:
             customer = customers.get(ref, {})
+            cost = costs.get(ref, {})
             result.append({"id": f"{record['kind']}:{record['key']}:{ref or 'unlinked'}",
                 "manager": record["manager"], "dt": day,
                 "source_kind": record["kind"], "source_key": record["key"], "source_doc": record["doc"],
@@ -130,6 +181,8 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
                 "actual_date": _date(customer.get("ТТК_ФактическаяДатаПоставки")),
                 "order_status": customer.get("Статус"),
                 "expected_delivery_novat": customer.get("ТТК_СуммаДоставкиБезНДС"),
-                # The actual MP amount is computed by the 1C form and is absent from OData.
-                "actual_delivery_novat": None})
+                "expected_delivery_vat": customer.get("ТТК_СуммаДоставки"),
+                "actual_delivery_vat": float(cost["amount"]) if cost and not cost["issue"] else None,
+                "delivery_cost_sources": json.dumps(cost.get("sources", []), ensure_ascii=False),
+                "delivery_cost_issue": cost.get("issue")})
     return result

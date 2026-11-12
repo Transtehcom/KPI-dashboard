@@ -1,11 +1,12 @@
 import datetime as dt
+import json
 import unittest
 from unittest.mock import patch
 
 from app.common import connect, load_rules, replace_rows
 from app.engine import Engine
 from app.onec import OneC
-from app.onec_logistics_delivery import fetch_customer_deliveries
+from app.onec_logistics_delivery import delivery_costs, fetch_customer_deliveries
 
 
 class LogisticsBudgetTest(unittest.TestCase):
@@ -17,10 +18,10 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.con.execute('INSERT INTO dataset_state VALUES(?,?,?,?)',
                          ('logistics_deliveries', '2026-11-01', '2026-11-30', '2026-11-12'))
 
-    def add(self, identity, customer=None, expected=208196.72, actual=49323.72, status='ТТК_ВЗакуп'):
+    def add(self, identity, customer=None, expected=254000, actual=60174.94, status='ТТК_ВЗакуп'):
         self.con.execute('INSERT INTO logistics_deliveries '
             '(id,emp,dt,source_kind,source_key,source_doc,order_key,order_doc,order_status,'
-            'expected_delivery_novat,actual_delivery_novat) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            'expected_delivery_vat,actual_delivery_vat) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
             (identity, 'logist', '2026-11-10', 'forwarder', identity, identity, customer or identity,
              customer or identity, status, expected, actual))
 
@@ -32,7 +33,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.add('00ЦБ-000152')
         item = self.result()
         self.assertEqual(item['payout'], 2000)
-        self.assertEqual(item['details']['rows'][0][2:5], [208196.72, 49323.72, 158873.0])
+        self.assertEqual(item['details']['rows'][0][2:5], [254000, 60174.94, 193825.06])
         self.assertEqual(item['details']['rows'][0][-1], 'Засчитан')
         self.assertEqual(item['details']['money_cols'], [2, 3, 4])
 
@@ -73,31 +74,94 @@ class LogisticsBudgetTest(unittest.TestCase):
     def test_imported_mp_amounts_are_normalized(self):
         self.add('imported')
         raw = dict(self.con.execute('SELECT * FROM logistics_deliveries').fetchone())
-        raw.update({'manager': 'Логист', 'expected_delivery_novat': '208 196,72',
-                    'actual_delivery_novat': '49 323,72'})
+        raw.update({'manager': 'Логист', 'expected_delivery_vat': '254 000,00',
+                    'actual_delivery_vat': '60 174,94'})
         source = OneC({'datasets': {'logistics_deliveries': {'source': 'http', 'path': '/unused'}}})
         with patch.object(source, '_load', return_value=[raw]):
             rows = source.fetch(self.con, {'логист': 'logist'}, dt.date(2026, 11, 1), dt.date(2026, 11, 30))['logistics_deliveries']
         replace_rows(self.con, 'logistics_deliveries', rows)
         self.assertEqual(self.result()['payout'], 2000)
 
-    def test_odata_uses_order_expected_mp_and_marks_unpublished_actual_unknown(self):
+    def test_malformed_imported_audit_does_not_break_employee_report(self):
+        self.add('imported')
+        for audit in ('not-json', '{}', '[null]', '[{"included": true, "amount": "bad"}]'):
+            with self.subTest(audit=audit):
+                self.con.execute('UPDATE logistics_deliveries SET delivery_cost_sources=?', (audit,))
+                item = self.result()
+                self.assertEqual(item['payout'], 2000)
+
+    def test_odata_reconstructs_actual_mp_from_supplier_settlement_objects(self):
         customer = {'Ref_Key': 'order', 'Number': '00ЦБ-000152', 'Date': '2026-10-08',
-                    'Статус': 'ТТК_ВЗакуп', 'ТТК_СуммаДоставкиБезНДС': 208196.72}
+                    'Статус': 'ТТК_ВЗакуп', 'ТТК_СуммаДоставки': 254000}
         data = {'Document_ЗаказКлиента': [customer],
                 'Document_КоммерческоеПредложениеКлиенту': [],
                 'Document_ТТК_ЗаявкаВОтделСнабжения': [], 'Document_ЗаказПоставщику': [],
                 'Document_ПоручениеЭкспедитору': [{'Ref_Key': 'forwarder', 'Number': 'PE', 'Date': '2026-11-10',
                      'ТТК_ЗаказКлиента_Key': 'order', 'ТТК_СуммаОстаток': 300000}],
-                'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов': []}
+                'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов': [], 'Catalog_ОбъектыРасчетов': []}
+
+        for number, amount in (('749', 46632), ('750', 6974), ('757', 6568.94), ('751', 30000), ('goods', 1598822.85)):
+            data['Document_ЗаказПоставщику'].append({
+                'Ref_Key': number, 'Number': number, 'ТТК_ЗаказКлиента_Key': 'order',
+                'ДокументОснование_Type': 'StandardODATA.Document_' + ('ЗаказКлиента' if number == 'goods' else 'ПоручениеЭкспедитору'),
+                'ДокументОснование': 'forwarder', 'ОбъектРасчетов_Key': 'object-' + number,
+                'СуммаДокумента': amount})
+            data['Catalog_ОбъектыРасчетов'].append({
+                'Ref_Key': 'object-' + number, 'Объект': 'contract' if number == '751' else number,
+                'Объект_Type': 'StandardODATA.Catalog_ДоговорыКонтрагентов' if number == '751' else 'StandardODATA.Document_ЗаказПоставщику',
+                'Сумма': 900000 if number == '751' else amount})
+        data['Document_ПоручениеЭкспедитору'].append({
+            'Ref_Key': 'second-forwarder', 'Number': 'PE2', 'Date': '2026-11-11', 'ТТК_ЗаказКлиента_Key': 'order'})
 
         class Source:
             def _odata(self, entity, params):
                 if entity == 'Document_ЗаказКлиента':
-                    assert 'ТТК_СуммаДоставкиБезНДС' in params['$select']
+                    assert 'ТТК_СуммаДоставки' in params['$select']
                 return data[entity]
 
         rows = fetch_customer_deliveries(Source(), {}, dt.date(2026, 11, 1), dt.date(2026, 11, 12))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['expected_delivery_novat'], 208196.72)
-        self.assertIsNone(rows[0]['actual_delivery_novat'])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['expected_delivery_vat'], 254000)
+        self.assertEqual(rows[0]['actual_delivery_vat'], 60174.94)
+        self.assertEqual(rows[1]['actual_delivery_vat'], 60174.94)
+        sources = json.loads(rows[0]['delivery_cost_sources'])
+        self.assertEqual(len(sources), 4)
+        self.assertEqual(next(r for r in sources if r['doc'] == '751')['included'], False)
+
+        data['Catalog_ОбъектыРасчетов'] = []
+        rows = fetch_customer_deliveries(Source(), {}, dt.date(2026, 11, 1), dt.date(2026, 11, 12))
+        self.assertIsNone(rows[0]['actual_delivery_vat'])
+        self.assertTrue(rows[0]['delivery_cost_issue'])
+
+    def test_contract_costs_and_deleted_transport_orders_match_zero_in_form(self):
+        suppliers = [
+            {'Ref_Key': 'contract-order', 'Number': '753', 'ТТК_ЗаказКлиента_Key': 'customer',
+             'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'contract'},
+            {'Ref_Key': 'deleted-order', 'DeletionMark': True, 'ТТК_ЗаказКлиента_Key': 'customer',
+             'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору'}]
+
+        class Source:
+            def _odata(self, entity, params):
+                return [{'Ref_Key': 'contract', 'Объект_Type': 'StandardODATA.Catalog_ДоговорыКонтрагентов',
+                         'Объект': 'contract-ref', 'Сумма': 2097.18}]
+
+        cost = delivery_costs(Source(), suppliers, ['customer'])['customer']
+        self.assertEqual(cost['amount'], 0)
+        self.assertIsNone(cost['issue'])
+        self.assertEqual(len(cost['sources']), 1)
+        self.assertIn('договору', cost['sources'][0]['reason'])
+
+    def test_unavailable_mismatched_deleted_or_unfilled_settlement_cannot_become_zero(self):
+        suppliers = [{'Ref_Key': 'supplier', 'Number': 'supplier', 'ТТК_ЗаказКлиента_Key': 'customer',
+                      'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'obj'}]
+        for problem in ('unavailable', 'wrong-order', 'deleted', 'missing-sum'):
+            with self.subTest(problem=problem):
+                class Source:
+                    def _odata(self, entity, params):
+                        if problem == 'unavailable':
+                            raise OSError('source unavailable')
+                        return [{'Ref_Key': 'obj', 'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику',
+                                 'Объект': 'other' if problem == 'wrong-order' else 'supplier',
+                                 'DeletionMark': problem == 'deleted', 'Сумма': None if problem == 'missing-sum' else 1}]
+                cost = delivery_costs(Source(), suppliers, ['customer'])['customer']
+                self.assertTrue(cost['issue'])
