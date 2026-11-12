@@ -151,6 +151,30 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.assertEqual(len(cost['sources']), 1)
         self.assertIn('договору', cost['sources'][0]['reason'])
 
+    def test_customer_order_133_includes_carrier_order_created_without_forwarder(self):
+        suppliers = [
+            {'Ref_Key': number, 'Number': number, 'ТТК_ЗаказКлиента_Key': 'customer',
+             'ДокументОснование_Type': 'StandardODATA.Document_' + basis,
+             'Партнер': {'Перевозчик': carrier}, 'ОбъектРасчетов_Key': 'obj-' + number}
+            for number, basis, carrier in [('688', 'ЗаказКлиента', True),
+                                           ('713', 'ПоручениеЭкспедитору', True),
+                                           ('731', 'ПоручениеЭкспедитору', True),
+                                           ('758', 'ЗаказКлиента', False)]]
+
+        class Source:
+            def _odata(self, entity, params):
+                return [{'Ref_Key': 'obj-' + number, 'Объект': number,
+                         'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику', 'Сумма': amount}
+                        for number, amount in [('688', 4111), ('713', 8621), ('731', 50671), ('758', 54087.48)]]
+
+        cost = delivery_costs(Source(), suppliers, ['customer'])['customer']
+        self.assertEqual(cost['amount'], 63403)
+        self.assertEqual({row['doc'] for row in cost['sources']}, {'688', '713', '731'})
+        self.assertIsNone(cost['issue'])
+        self.add('00ЦБ-000133', expected=60000, actual=float(cost['amount']))
+        self.assertEqual(self.result()['payout'], 0)
+        self.assertEqual(self.result()['details']['rows'][0][-1], 'Не засчитан')
+
     def test_unavailable_mismatched_deleted_or_unfilled_settlement_cannot_become_zero(self):
         suppliers = [{'Ref_Key': 'supplier', 'Number': 'supplier', 'ТТК_ЗаказКлиента_Key': 'customer',
                       'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'obj'}]

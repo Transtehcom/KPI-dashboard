@@ -15,13 +15,15 @@ TYPES = {
 def delivery_costs(onec, suppliers, customer_keys):
     """Reconstruct the MP gross delivery amount from supplier-order settlement objects.
 
-    Verified against customer forms 000152 and 000144. Contract settlement objects
+    Delivery includes carrier suppliers and orders based on forwarder instructions.
+    Verified against customer forms 000152, 000144 and 000133. Contract settlement objects
     are excluded by the 1C form, even when the supplier order has a delivery amount.
     """
     costs = {key: {"amount": Decimal(0), "sources": [], "issue": None} for key in customer_keys}
     transport = [row for row in suppliers if not row.get("DeletionMark")
                  and row.get("ТТК_ЗаказКлиента_Key") in costs
-                 and row.get("ДокументОснование_Type") == "StandardODATA.Document_ПоручениеЭкспедитору"]
+                 and ((row.get("Партнер") or {}).get("Перевозчик") is True
+                      or row.get("ДокументОснование_Type") == "StandardODATA.Document_ПоручениеЭкспедитору")]
     if not transport:
         return costs
     try:
@@ -70,7 +72,8 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
     requests = read("Document_ТТК_ЗаявкаВОтделСнабжения",
         "Ref_Key,ДокументОснования,ДокументОснования_Type")
     suppliers = read("Document_ЗаказПоставщику",
-        "Ref_Key,Number,DeletionMark,ТТК_ЗаказКлиента_Key,ДокументОснование,ДокументОснование_Type,ОбъектРасчетов_Key")
+        "Ref_Key,Number,DeletionMark,ТТК_ЗаказКлиента_Key,ДокументОснование,ДокументОснование_Type,"
+        "ОбъектРасчетов_Key,Партнер/Перевозчик", **{"$expand": "Партнер"})
     customers = {row["Ref_Key"]: row for row in customers if not row.get("DeletionMark")}
     costs = delivery_costs(onec, suppliers, customers)
     edges = {}
