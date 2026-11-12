@@ -60,6 +60,9 @@ class NavigationTest(unittest.TestCase):
     def test_competitive_entry(self):
         self.run_script("test_competitive_entry.js")
 
+    def test_payout_chart_month_selection(self):
+        self.run_script("test_payout_chart.js")
+
     def test_staff_directory(self):
         self.run_script("test_staff_directory.js")
 

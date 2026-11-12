@@ -1,0 +1,59 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const html = fs.readFileSync('web/index.html', 'utf8');
+const start = html.indexOf('  function selectKpiMonth(');
+assert.ok(start >= 0, 'month selection needs a shared handler');
+const source = html.slice(start, html.indexOf('  // ---------- команда', start));
+const loads = [], messages = [];
+const picker = {value:'2026-11',options:[{value:'2026-11'},{value:'2026-10'}],
+  add(option,before) { this.options.splice(before?this.options.indexOf(before):this.options.length,0,option); }};
+const state = {month:'2026-11',login:'supply',view:'emp'};
+const context = {state,PREVIEW:null,toast:message=>messages.push(message),
+  document:{getElementById:()=>picker,createElement:()=>({})},
+  load:()=>loads.push(state.month),mLabel:month=>month,mShort:month=>month.slice(5),
+  nf:String,rub:value=>value+' ₽',pct:value=>value*100+'%',esc:String};
+vm.createContext(context);
+vm.runInContext(source,context);
+const trend=[{month:'2026-10',payout:0,share:0},{month:'2026-11',payout:2500,share:.25}];
+const tip={style:{},hidden:true};
+const rectangles=trend.map((_,i)=>({dataset:{i:String(i)},handlers:{},
+  getBoundingClientRect:()=>({left:i*100,width:100}),
+  addEventListener(name,handler){this.handlers[name]=handler;}}));
+const chart={querySelector:()=>tip,querySelectorAll:()=>rectangles,getBoundingClientRect:()=>({left:0})};
+context.bindChart(chart,trend,'2026-11');
+rectangles[0].handlers.mouseenter();
+assert.equal(loads.length,0,'hover preserves the selected month');
+assert.equal(tip.hidden,false);
+rectangles[0].handlers.click();
+assert.equal(state.month,'2026-10');
+assert.equal(picker.value,'2026-10');
+assert.equal(state.login,'supply');
+assert.equal(state.view,'emp');
+assert.deepEqual(loads,['2026-10']);
+rectangles[0].handlers.click();
+assert.equal(loads.length,1,'clicking the selected month avoids a duplicate request');
+let prevented=false;
+rectangles[1].handlers.keydown({key:' ',preventDefault:()=>prevented=true});
+assert.ok(prevented);
+assert.equal(state.month,'2026-11');
+assert.equal(picker.value,'2026-11');
+rectangles[0].handlers.keydown({key:'Enter',preventDefault:()=>{}});
+assert.equal(state.month,'2026-10');
+context.selectKpiMonth('2025-10');
+assert.equal(picker.value,'2025-10');
+assert.ok(picker.options.some(option=>option.value==='2025-10'),'older chart months are added to the period selector');
+context.PREVIEW={months:['2026-11']};
+context.selectKpiMonth('2025-09');
+assert.equal(state.month,'2025-10');
+assert.equal(messages.length,1);
+const markup=context.payoutChart(trend,10000,'2026-11');
+assert.ok(markup.includes('role="group"'));
+assert.equal((markup.match(/role="button"/g)||[]).length,2);
+assert.equal((markup.match(/tabindex="0"/g)||[]).length,2);
+assert.equal((markup.match(/height="176"/g)||[]).length,2,'click targets cover the month labels and zero-value bars');
+assert.ok(html.includes('selectKpiMonth(e.target.value)'),'the normal period selector uses the same handler');
+const monthsLine=html.split('\n').find(line=>line.includes('const months = [...new Set('));
+const months=vm.runInNewContext(monthsLine+'\nmonths',{state,PREVIEW:null,b:{months:['2026-11','2026-10']}});
+assert.ok(months.includes('2025-10'),'rerendering the header preserves an older selected month');
+console.log('Chart clicks and keyboard activation update the period, preserve the employee and support older months');

@@ -466,6 +466,8 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
 .chart text { fill: var(--fg-3); font: 11px var(--mono); }
 .chart .lbl { fill: var(--fg-2); }
+.chart rect[data-i] { cursor: pointer; }
+.chart rect[data-i]:focus-visible { outline: none; stroke: var(--accent); stroke-width: 1.5; }
 .tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 9px; border-radius: 6px; font-size: 12px;
   white-space: nowrap; transform: translate(-50%, -110%); z-index: 5; }
 .tip b { font-family: var(--mono); }
@@ -1138,7 +1140,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   function renderShell() {
     syncRefreshPending = false;
     const b = state.boot, isMgr = b.me.role === "manager";
-    const months = PREVIEW ? PREVIEW.months : b.months;
+    const months = [...new Set([...(PREVIEW ? PREVIEW.months : b.months), state.month])].sort().reverse();
     const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers", "gpt"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
@@ -1157,7 +1159,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${PREVIEW ? "" : `<button class="btn ghost" id="logoutBtn" type="button">Выйти</button>`}
         </div></header>
       <div class="shell ${isMgr && !noSide ? "" : "single"}">${isMgr && !noSide ? `<nav class="side" id="side" aria-label="Команда"></nav>` : ""}<main class="main" id="main"><div class="empty">Загрузка…</div></main></div>`;
-    document.getElementById("month").addEventListener("change", (e) => { state.month = e.target.value; load(); });
+    document.getElementById("month").addEventListener("change", (e) => selectKpiMonth(e.target.value));
     document.getElementById("rulesBtn").addEventListener("click", showRules);
     root.querySelectorAll("[data-tab]").forEach((a) => a.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -1291,12 +1293,28 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <circle cx="${last[0]}" cy="${last[1]}" r="3" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/></svg>`;
   }
 
+  function selectKpiMonth(month) {
+    if (state.month === month) return;
+    if (PREVIEW && !PREVIEW.months.includes(month)) { toast("В превью доступны только последние месяцы"); return; }
+    state.month = month;
+    const picker = document.getElementById("month");
+    if (picker) {
+      if (![...picker.options].some((option) => option.value === month)) {
+        const option = document.createElement("option");
+        option.value = month; option.textContent = mLabel(month);
+        picker.add(option, [...picker.options].find((existing) => existing.value < month) || null);
+      }
+      picker.value = month;
+    }
+    load();
+  }
+
   function payoutChart(trend, bonus, currentMonth) {
     const W = 520, H = 190, L = 54, R = 8, T = 14, B = 26;
     const n = trend.length, bw = Math.min(46, ((W - L - R) / n) * 0.56), step = (W - L - R) / n;
     const y = (v) => T + (H - T - B) * (1 - v / bonus);
     const ticks = [0, 0.5, 1].map((k) => k * bonus);
-    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Выплата KPI по месяцам">`;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Выплата KPI по месяцам. Выберите месяц для просмотра">`;
     ticks.forEach((t) => { s += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" ${t ? 'stroke-dasharray="3 4"' : ""}/>
       <text x="${L - 8}" y="${y(t) + 4}" text-anchor="end">${nf(t)}</text>`; });
     trend.forEach((t, i) => {
@@ -1307,7 +1325,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       if (hgt > 0) s += `<path d="M${x} ${y(0)} V${top + r} Q${x} ${top} ${x + r} ${top} H${x + bw - r} Q${x + bw} ${top} ${x + bw} ${top + r} V${y(0)} Z" fill="${inProg ? "var(--bar-2)" : "var(--bar)"}"/>`;
       else s += `<line x1="${x}" x2="${x + bw}" y1="${y(0) - 1}" y2="${y(0) - 1}" stroke="var(--bad)" stroke-width="2"/>`;
       s += `<text class="lbl" x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${mShort(t.month)}</text>`;
-      s += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${H - T - B}" fill="transparent" data-i="${i}"/>`;
+      s += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${H - T}" fill="transparent" data-i="${i}" role="button" tabindex="0" aria-label="${esc(`Открыть KPI за ${mLabel(t.month)}. Выплата ${rub(t.payout)}`)}"/>`;
     });
     s += `</svg><div class="tip" hidden></div>`;
     return s;
@@ -1315,13 +1333,19 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   function bindChart(el, trend, currentMonth) {
     const tip = el.querySelector(".tip");
     el.querySelectorAll("rect[data-i]").forEach((r) => {
+      const t = trend[+r.dataset.i];
       const show = () => {
-        const t = trend[+r.dataset.i], bb = r.getBoundingClientRect(), pb = el.getBoundingClientRect();
+        const bb = r.getBoundingClientRect(), pb = el.getBoundingClientRect();
         tip.innerHTML = `${mLabel(t.month)}${t.month === currentMonth ? " (идёт)" : ""}<br><b>${rub(t.payout)}</b> · ${pct(t.share)} фонда`;
         tip.style.left = bb.left - pb.left + bb.width / 2 + "px"; tip.style.top = "8px"; tip.hidden = false;
       };
-      r.addEventListener("mouseenter", show); r.addEventListener("click", show);
+      r.addEventListener("mouseenter", show); r.addEventListener("focus", show);
+      r.addEventListener("click", () => selectKpiMonth(t.month));
+      r.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectKpiMonth(t.month); }
+      });
       r.addEventListener("mouseleave", () => (tip.hidden = true));
+      r.addEventListener("blur", () => (tip.hidden = true));
     });
   }
 
