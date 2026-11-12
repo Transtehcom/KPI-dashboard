@@ -92,6 +92,20 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_employee_trend_reuses_employee_access_rules(self):
+        expected = [{'month': '2026-09', 'payout': 500, 'share': .05}]
+        with patch.object(self.app.engine, 'trend', return_value=expected) as trend:
+            for viewer, employee in (('boss', 'pm'), ('pm', 'pm')):
+                status, _, body = self.get(viewer, f'/api/employee-trend?login={employee}&month=2026-09')
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {'trend': expected})
+            trend.assert_called_with('pm', '2026-09')
+            trend.reset_mock()
+            self.assertEqual(self.get('pm', '/api/employee-trend?login=tender&month=2026-09')[0], 403)
+            self.assertEqual(self.get('boss', '/api/employee-trend?login=missing&month=2026-09')[0], 404)
+            self.assertEqual(self.get('pm', '/api/employee-trend?month=wrong')[0], 400)
+            trend.assert_not_called()
+
     def test_staff_directory_is_public_to_employees_but_writes_remain_admin_only(self):
         with db_lock():
             self.con.execute("INSERT INTO employees(login,name,department,title,b24_user_id) VALUES(?,?,?,?,?)",

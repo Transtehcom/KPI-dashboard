@@ -769,12 +769,15 @@ class Handler(BaseHTTPRequestHandler):
                         return JsonResponse(app.engine.activity_audit(login, month, q.get("code"), q.get("kind")))
                     except ValueError as e:
                         raise BadRequest(str(e))
-                if path == "/api/employee":
+                if path in ("/api/employee", "/api/employee-trend"):
                     login = q.get("login") or me["login"]
                     if not is_mgr and login != me["login"]:
                         return JsonResponse({"error": "Нет доступа к дашборду другого сотрудника"}, 403)
                     if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
                         return JsonResponse({"error": "Сотрудник не найден"}, 404)
+                    if path == "/api/employee-trend":
+                        trend = app.cached_report(("employee-trend", login, month), lambda: app.engine.trend(login, month))
+                        return JsonResponse({"trend": trend})
                     return JsonResponse(app.employee(login, month))
                 if path == "/api/calls":  # звонки с записью: сотрудник — свои, администратор — любого или по сделке
                     # период «с … по …» (ГГГГ-ММ-ДД, любая граница может быть пустой); all=1 — всё время; без них — месяц

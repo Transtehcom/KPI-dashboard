@@ -470,6 +470,9 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .chart .lbl { fill: var(--fg-2); }
 .chart rect[data-i] { cursor: pointer; }
 .chart rect[data-i]:focus-visible { outline: none; stroke: var(--accent); stroke-width: 1.5; }
+.chart-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.chart-tools .btn { padding: 2px 10px; min-height: 28px; }
+.chart-tools span { text-align: center; }
 .tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 9px; border-radius: 6px; font-size: 12px;
   white-space: nowrap; transform: translate(-50%, -110%); z-index: 5; }
 .tip b { font-family: var(--mono); }
@@ -1006,9 +1009,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       return Promise.resolve(b);
     }
     if (u.pathname === "/api/overview") return PREVIEW.overview[m] ? Promise.resolve(PREVIEW.overview[m]) : Promise.reject(new Error("В превью доступны только последние месяцы"));
-    if (u.pathname === "/api/employee") {
+    if (u.pathname === "/api/employee" || u.pathname === "/api/employee-trend") {
       const d = (PREVIEW.employee[u.searchParams.get("login")] || {})[m];
-      return d ? Promise.resolve(d) : Promise.reject(new Error("В превью доступны только последние месяцы"));
+      return d ? Promise.resolve(u.pathname === "/api/employee-trend" ? {trend:d.trend} : d) : Promise.reject(new Error("В превью доступны только последние месяцы"));
     }
     if (u.pathname === "/api/funnel") {
       const k = (u.searchParams.get("kind") || "deals") + "|" + (u.searchParams.get("login") || "") + "|" + (u.searchParams.get("category") || "");
@@ -1351,6 +1354,40 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     });
   }
 
+  function bindPayoutPaging(el, data) {
+    const back = el.querySelector("[data-chart-back]"), forward = el.querySelector("[data-chart-forward]");
+    const range = el.querySelector("[data-chart-range]"), chart = el.querySelector("#payChart");
+    let month = data.month, busy = false;
+    const controls = (trend) => {
+      back.disabled = busy;
+      forward.disabled = busy || month >= state.boot.current_month;
+      range.textContent = `${mLabel(trend[0].month)} — ${mLabel(trend[trend.length - 1].month)}`;
+    };
+    controls(data.trend);
+    const move = async (delta) => {
+      if (busy || delta > 0 && month >= state.boot.current_month) return;
+      const date = new Date(`${month}-15T12:00:00Z`);
+      date.setUTCMonth(date.getUTCMonth() + delta);
+      const target = date.toISOString().slice(0, 7);
+      busy = true; back.disabled = true; forward.disabled = true;
+      chart.setAttribute("aria-busy", "true");
+      try {
+        const result = await api(`/api/employee-trend?login=${encodeURIComponent(data.login)}&month=${target}`);
+        if (!el.isConnected) return;
+        month = target; data = {...data, trend:result.trend};
+        chart.innerHTML = payoutChart(data.trend, data.kpi_bonus, state.boot.current_month);
+        bindChart(chart, data.trend, state.boot.current_month);
+      } catch (error) {
+        if (el.isConnected && error.message !== "auth") toast(error.message);
+      } finally {
+        busy = false;
+        if (el.isConnected) { chart.setAttribute("aria-busy", "false"); controls(data.trend); }
+      }
+    };
+    back.addEventListener("click", () => move(-1));
+    forward.addEventListener("click", () => move(1));
+  }
+
   // ---------- команда
   function renderTeam(ov) {
     const main = document.getElementById("main");
@@ -1676,7 +1713,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${d.absence && d.absence.truancy_days ? `<div class="small" style="margin-top:6px;color:var(--bad)">Прогулы: ${d.absence.truancy_days} раб. дн. — от норм не освобождают (${esc(d.absence.truancy.join(", "))})</div>` : ""}
           <div class="kv"><div><span class="eyebrow">Оклад</span><b>${rub(d.salary)}</b></div><div><span class="eyebrow">Пунктов выполнено</span><b>${d.met_count} из ${d.item_count}</b></div><div><span class="eyebrow">Итого с окладом</span><b>${rub(d.salary + d.payout)}</b></div></div>
         </div>
-        <div><div class="eyebrow">Выплата KPI за 6 месяцев, ₽</div><div class="chart" id="payChart">${payoutChart(d.trend, d.kpi_bonus, b.current_month)}</div></div>
+        <div id="payTrend"><div class="eyebrow">Выплата KPI за 6 месяцев, ₽</div>
+          <div class="chart-tools"><button class="btn" type="button" data-chart-back aria-label="Диаграмма на месяц раньше">‹</button><span class="muted small" data-chart-range aria-live="polite"></span><button class="btn" type="button" data-chart-forward aria-label="Диаграмма на месяц позже">›</button></div>
+          <div class="chart" id="payChart">${payoutChart(d.trend, d.kpi_bonus, b.current_month)}</div></div>
       </section>
       <section class="cards">${d.items.map((i) => {
         const st = STATUS[i.status] || STATUS.nodata;
@@ -1716,6 +1755,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       card.focus({preventScroll: true});
     }));
     bindChart(document.getElementById("payChart"), d.trend, b.current_month);
+    bindPayoutPaging(document.getElementById("payTrend"), d);
     bindAudits(main, d);
     main.querySelectorAll("details[data-lot-candidates]").forEach((details) => details.addEventListener("toggle", () => {
       state.lotCandidatesOpen ??= new Set();

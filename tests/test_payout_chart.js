@@ -57,3 +57,46 @@ const monthsLine=html.split('\n').find(line=>line.includes('const months = [...n
 const months=vm.runInNewContext(monthsLine+'\nmonths',{state,PREVIEW:null,b:{months:['2026-11','2026-10']}});
 assert.ok(months.includes('2025-10'),'rerendering the header preserves an older selected month');
 console.log('Chart clicks and keyboard activation update the period, preserve the employee and support older months');
+
+(async () => {
+  const button = () => ({disabled:false, addEventListener(name,handler) { this[name]=handler; }});
+  const back=button(), forward=button(), range={textContent:''};
+  const plot={innerHTML:'',querySelector:()=>tip,querySelectorAll:()=>[],setAttribute() {}};
+  const elements={'[data-chart-back]':back,'[data-chart-forward]':forward,'[data-chart-range]':range,'#payChart':plot};
+  const panel={isConnected:true,querySelector:selector=>elements[selector],setAttribute() {}};
+  context.PREVIEW=null;
+  state.month='2026-11';
+  state.boot={current_month:'2026-11'};
+  const requests=[];
+  context.api=async path=>{
+    requests.push(path);
+    return {trend:[{month:'2026-05',payout:500,share:.05},{month:'2026-10',payout:1000,share:.1}]};
+  };
+  context.bindPayoutPaging(panel,{login:'supply',month:'2026-11',kpi_bonus:10000,trend});
+  assert.equal(forward.disabled,true,'future chart months are disabled');
+  await back.click();
+  assert.ok(requests[0].includes('month=2026-10'));
+  assert.ok(requests[0].includes('login=supply'));
+  assert.equal(state.month,'2026-11','paging changes only the chart');
+  assert.equal(forward.disabled,false);
+  assert.ok(range.textContent.includes('2026-10'));
+  context.api=async path=>{requests.push(path);return {trend};};
+  await forward.click();
+  assert.ok(requests.at(-1).includes('month=2026-11'));
+  assert.equal(forward.disabled,true,'paging stops at the current month');
+  const oldPlot=plot.innerHTML;
+  context.api=async()=>{throw new Error('Temporary failure');};
+  await back.click();
+  assert.equal(plot.innerHTML,oldPlot,'a failed request preserves the previous chart');
+  assert.equal(back.disabled,false,'paging remains usable after an error');
+  assert.equal(messages.at(-1),'Temporary failure');
+  let finish;
+  context.api=()=>new Promise(resolve=>finish=resolve);
+  const pending=back.click();
+  assert.equal(back.disabled,true);
+  panel.isConnected=false;
+  finish({trend});
+  await pending;
+  assert.equal(plot.innerHTML,oldPlot,'a late response cannot replace another report');
+  console.log('Chart paging preserves the report month, handles failures and ignores detached views');
+})().catch(error=>{console.error(error);process.exitCode=1;});
