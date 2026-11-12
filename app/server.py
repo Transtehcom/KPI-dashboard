@@ -298,11 +298,15 @@ class App:
     def build_employee(self, login, month):
         r = self.engine.compute(login, month)
         first, last = month_bounds(month)
+        entry_minimums = {rule["code"]: rule["params"]["threshold"]
+                          for rule in self.engine.items_for(self.rules["positions"][r["position"]], month)
+                          if rule["code"] == "deferred_payment"}
         for it in r["items"]:
             if it["code"] == "receivables_overdue" and self.engine.has_1c_receivables():
                 pass  # сроки и оплаты пришли из 1С — ручной ввод не нужен
             elif it["code"] in manual.ENTRY:
-                it["entry"] = manual.entry(self.con, it["code"], login, first, last)
+                it["entry"] = manual.entry(self.con, it["code"], login, first, last,
+                                           minimum_amount_novat=entry_minimums.get(it["code"]))
             if it["code"] == "tender_receivables" or it.get("uses_penalties"):
                 it["penalties"] = manual.penalties_block(self.con, login, month)
                 it["penalties"]["source_known"] = bool(it.get("penalties_source_known"))

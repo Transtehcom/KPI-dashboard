@@ -221,7 +221,7 @@ def set_penalty_check(con, emp, month, checked, author):
         con.execute("DELETE FROM penalty_checks WHERE emp=? AND month=?", (emp, month))
 
 
-def entry(con, code, emp, month_first, month_last):
+def entry(con, code, emp, month_first, month_last, minimum_amount_novat=None):
     """Таблица для ввода в карточке пункта KPI: записи сотрудника за месяц и поля, которые можно заполнить."""
     tbl, fields = ENTRY[code]
     first, last = month_first.isoformat(), month_last.isoformat()
@@ -236,8 +236,9 @@ def entry(con, code, emp, month_first, month_last):
             rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND planned_date BETWEEN ? AND ? "
                                "ORDER BY dt", (emp, first, last)).fetchall()
         else:  # отсрочка и конкурентность считаются по заказам, размещённым в месяце
-            rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND dt BETWEEN ? AND ? ORDER BY dt",
-                               (emp, first, last)).fetchall()
+            rows = con.execute("SELECT * FROM supplier_orders WHERE emp=? AND dt BETWEEN ? AND ? "
+                               "AND (? IS NULL OR amount_novat>=?) ORDER BY dt",
+                               (emp, first, last, minimum_amount_novat, minimum_amount_novat)).fetchall()
         columns = ["Заказ", "Дата", "Поставщик", "Сумма без НДС, ₽"]
         cells = [[r["doc"], r["dt"], r["supplier"], r["amount_novat"]] for r in rows]
     manual = {}
