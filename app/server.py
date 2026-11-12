@@ -310,7 +310,7 @@ class App:
             if it["code"] == "tender_receivables" or it.get("uses_penalties"):
                 it["penalties"] = manual.penalties_block(self.con, login, month)
                 it["penalties"]["source_known"] = bool(it.get("penalties_source_known"))
-        r["trend"] = self.engine.trend(login, month)
+        r["trend"] = self.engine.year_trend(login, month[:4])
         r["weeks"] = weeks_of_month(month)
         return r
 
@@ -776,6 +776,12 @@ class Handler(BaseHTTPRequestHandler):
                     if not app.engine.employee(login) or not app.engine.employee(login).get("position"):
                         return JsonResponse({"error": "Сотрудник не найден"}, 404)
                     if path == "/api/employee-trend":
+                        if "year" in q:
+                            year = q["year"]
+                            if not re.fullmatch(r"[0-9]{4}", year) or not 1 <= int(year) <= 9999:
+                                raise BadRequest("Укажите год четырьмя цифрами от 0001 до 9999")
+                            trend = app.cached_report(("employee-year-trend", login, year), lambda: app.engine.year_trend(login, year))
+                            return JsonResponse({"trend": trend})
                         trend = app.cached_report(("employee-trend", login, month), lambda: app.engine.trend(login, month))
                         return JsonResponse({"trend": trend})
                     return JsonResponse(app.employee(login, month))

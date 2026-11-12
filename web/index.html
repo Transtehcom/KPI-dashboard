@@ -470,9 +470,16 @@ details.more[open] > summary::before { transform: rotate(90deg); }
 .chart .lbl { fill: var(--fg-2); }
 .chart rect[data-i] { cursor: pointer; }
 .chart rect[data-i]:focus-visible { outline: none; stroke: var(--accent); stroke-width: 1.5; }
-.chart-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
-.chart-tools .btn { padding: 2px 10px; min-height: 28px; }
-.chart-tools span { text-align: center; }
+.chart-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.chart-heading label { display: flex; align-items: center; gap: 6px; }
+.chart-heading input { width: 88px; min-height: 30px; }
+.payout-scroll { overflow-x: scroll; scroll-behavior: smooth; scrollbar-color: var(--teal) var(--surface-2); scrollbar-width: thin; padding: 4px 0 8px; }
+.payout-scroll .chart { min-width: 780px; }
+.payout-scroll .tip { transform: translate(-50%, 0); }
+.payout-scroll::-webkit-scrollbar { height: 8px; }
+.payout-scroll::-webkit-scrollbar-track { background: var(--surface-2); border-radius: 4px; }
+.payout-scroll::-webkit-scrollbar-thumb { background: var(--teal); border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { .payout-scroll { scroll-behavior: auto; } }
 .tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 9px; border-radius: 6px; font-size: 12px;
   white-space: nowrap; transform: translate(-50%, -110%); z-index: 5; }
 .tip b { font-family: var(--mono); }
@@ -1010,6 +1017,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }
     if (u.pathname === "/api/overview") return PREVIEW.overview[m] ? Promise.resolve(PREVIEW.overview[m]) : Promise.reject(new Error("В превью доступны только последние месяцы"));
     if (u.pathname === "/api/employee" || u.pathname === "/api/employee-trend") {
+      if (u.pathname === "/api/employee-trend" && u.searchParams.has("year")) {
+        const known = Object.values(PREVIEW.employee[u.searchParams.get("login")] || {}).flatMap((report) => report.trend);
+        return Promise.resolve({trend:annualTrend(known, u.searchParams.get("year"), PREVIEW.bootstrap.current_month)});
+      }
       const d = (PREVIEW.employee[u.searchParams.get("login")] || {})[m];
       return d ? Promise.resolve(u.pathname === "/api/employee-trend" ? {trend:d.trend} : d) : Promise.reject(new Error("В превью доступны только последние месяцы"));
     }
@@ -1314,10 +1325,18 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     load();
   }
 
+  function annualTrend(known, year, currentMonth) {
+    const byMonth = new Map(known.map((row) => [row.month, row]));
+    return Array.from({length:12}, (_, index) => {
+      const month = `${year}-${String(index + 1).padStart(2, "0")}`;
+      return byMonth.get(month) || {month, payout:null, share:null, future:month > currentMonth};
+    });
+  }
+
   function payoutChart(trend, bonus, currentMonth) {
-    const W = 520, H = 190, L = 54, R = 8, T = 14, B = 26;
+    const W = trend.length > 6 ? 780 : 520, H = 190, L = 54, R = 8, T = 14, B = 26;
     const n = trend.length, bw = Math.min(46, ((W - L - R) / n) * 0.56), step = (W - L - R) / n;
-    const y = (v) => T + (H - T - B) * (1 - v / bonus);
+    const y = (v) => T + (H - T - B) * (1 - v / (bonus || 1));
     const ticks = [0, 0.5, 1].map((k) => k * bonus);
     let s = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Выплата KPI по месяцам. Выберите месяц для просмотра">`;
     ticks.forEach((t) => { s += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" ${t ? 'stroke-dasharray="3 4"' : ""}/>
@@ -1328,9 +1347,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const hgt = Math.max(0, y(0) - top);
       const r = Math.min(4, hgt);
       if (hgt > 0) s += `<path d="M${x} ${y(0)} V${top + r} Q${x} ${top} ${x + r} ${top} H${x + bw - r} Q${x + bw} ${top} ${x + bw} ${top + r} V${y(0)} Z" fill="${inProg ? "var(--bar-2)" : "var(--bar)"}"/>`;
-      else s += `<line x1="${x}" x2="${x + bw}" y1="${y(0) - 1}" y2="${y(0) - 1}" stroke="var(--bad)" stroke-width="2"/>`;
+      else s += `<line x1="${x}" x2="${x + bw}" y1="${y(0) - 1}" y2="${y(0) - 1}" stroke="${t.payout == null ? "var(--line-strong)" : "var(--bad)"}" stroke-width="2"/>`;
       s += `<text class="lbl" x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${mShort(t.month)}</text>`;
-      s += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${H - T}" fill="transparent" data-i="${i}" role="button" tabindex="0" aria-label="${esc(`Открыть KPI за ${mLabel(t.month)}. Выплата ${rub(t.payout)}`)}"/>`;
+      const valueLabel = t.payout == null ? (t.future ? "Месяц ещё не наступил" : "Нет данных") : `Выплата ${rub(t.payout)}`;
+      s += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${H - T}" fill="transparent" data-i="${i}" role="button" tabindex="0" aria-label="${esc(`Открыть KPI за ${mLabel(t.month)}. ${valueLabel}`)}"/>`;
     });
     s += `</svg><div class="tip" hidden></div>`;
     return s;
@@ -1341,7 +1361,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const t = trend[+r.dataset.i];
       const show = () => {
         const bb = r.getBoundingClientRect(), pb = el.getBoundingClientRect();
-        tip.innerHTML = `${mLabel(t.month)}${t.month === currentMonth ? " (идёт)" : ""}<br><b>${rub(t.payout)}</b> · ${pct(t.share)} фонда`;
+        const value = t.payout == null ? (t.future ? "Месяц ещё не наступил" : "Нет данных") : `<b>${rub(t.payout)}</b> · ${pct(t.share)} фонда`;
+        tip.innerHTML = `${mLabel(t.month)}${t.month === currentMonth ? " (идёт)" : ""}<br>${value}`;
         tip.style.left = bb.left - pb.left + bb.width / 2 + "px"; tip.style.top = "8px"; tip.hidden = false;
       };
       r.addEventListener("mouseenter", show); r.addEventListener("focus", show);
@@ -1354,38 +1375,29 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     });
   }
 
-  function bindPayoutPaging(el, data) {
-    const back = el.querySelector("[data-chart-back]"), forward = el.querySelector("[data-chart-forward]");
-    const range = el.querySelector("[data-chart-range]"), chart = el.querySelector("#payChart");
-    let month = data.month, busy = false;
-    const controls = (trend) => {
-      back.disabled = busy;
-      forward.disabled = busy || month >= state.boot.current_month;
-      range.textContent = `${mLabel(trend[0].month)} — ${mLabel(trend[trend.length - 1].month)}`;
-    };
-    controls(data.trend);
-    const move = async (delta) => {
-      if (busy || delta > 0 && month >= state.boot.current_month) return;
-      const date = new Date(`${month}-15T12:00:00Z`);
-      date.setUTCMonth(date.getUTCMonth() + delta);
-      const target = date.toISOString().slice(0, 7);
-      busy = true; back.disabled = true; forward.disabled = true;
+  function bindPayoutYear(el, data) {
+    const year = el.querySelector("[data-chart-year]"), chart = el.querySelector("#payChart");
+    const scroll = el.querySelector(".payout-scroll");
+    let shownYear = data.month.slice(0, 4), revision = 0;
+    year.addEventListener("change", async () => {
+      const request = ++revision, target = year.value;
+      const valid = /^[0-9]{4}$/.test(target) && Number(target) >= 1;
+      year.setCustomValidity(valid ? "" : "Укажите год четырьмя цифрами от 0001 до 9999");
+      if (!valid) { chart.setAttribute("aria-busy", "false"); year.reportValidity(); return; }
       chart.setAttribute("aria-busy", "true");
       try {
-        const result = await api(`/api/employee-trend?login=${encodeURIComponent(data.login)}&month=${target}`);
-        if (!el.isConnected) return;
-        month = target; data = {...data, trend:result.trend};
-        chart.innerHTML = payoutChart(data.trend, data.kpi_bonus, state.boot.current_month);
-        bindChart(chart, data.trend, state.boot.current_month);
+        const result = await api(`/api/employee-trend?login=${encodeURIComponent(data.login)}&year=${target}`);
+        if (!el.isConnected || request !== revision) return;
+        shownYear = target;
+        chart.innerHTML = payoutChart(result.trend, data.kpi_bonus, state.boot.current_month);
+        bindChart(chart, result.trend, state.boot.current_month);
+        scroll.scrollTo({left:0, behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
       } catch (error) {
-        if (el.isConnected && error.message !== "auth") toast(error.message);
+        if (el.isConnected && request === revision && error.message !== "auth") { year.value = shownYear; toast(error.message); }
       } finally {
-        busy = false;
-        if (el.isConnected) { chart.setAttribute("aria-busy", "false"); controls(data.trend); }
+        if (el.isConnected && request === revision) chart.setAttribute("aria-busy", "false");
       }
-    };
-    back.addEventListener("click", () => move(-1));
-    forward.addEventListener("click", () => move(1));
+    });
   }
 
   // ---------- команда
@@ -1713,9 +1725,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           ${d.absence && d.absence.truancy_days ? `<div class="small" style="margin-top:6px;color:var(--bad)">Прогулы: ${d.absence.truancy_days} раб. дн. — от норм не освобождают (${esc(d.absence.truancy.join(", "))})</div>` : ""}
           <div class="kv"><div><span class="eyebrow">Оклад</span><b>${rub(d.salary)}</b></div><div><span class="eyebrow">Пунктов выполнено</span><b>${d.met_count} из ${d.item_count}</b></div><div><span class="eyebrow">Итого с окладом</span><b>${rub(d.salary + d.payout)}</b></div></div>
         </div>
-        <div id="payTrend"><div class="eyebrow">Выплата KPI за 6 месяцев, ₽</div>
-          <div class="chart-tools"><button class="btn" type="button" data-chart-back aria-label="Диаграмма на месяц раньше">‹</button><span class="muted small" data-chart-range aria-live="polite"></span><button class="btn" type="button" data-chart-forward aria-label="Диаграмма на месяц позже">›</button></div>
-          <div class="chart" id="payChart">${payoutChart(d.trend, d.kpi_bonus, b.current_month)}</div></div>
+        <div id="payTrend"><div class="chart-heading"><div class="eyebrow">Выплата KPI за год, ₽</div><label class="muted small">Год <input type="number" data-chart-year aria-label="Год диаграммы выплат KPI" min="1" max="9999" step="1" value="${esc(d.month.slice(0, 4))}"></label></div>
+          <div class="payout-scroll" tabindex="0" role="region" aria-label="Диаграмма выплат за год, прокрутка вправо и влево"><div class="chart" id="payChart">${payoutChart(annualTrend(d.trend, d.month.slice(0, 4), b.current_month), d.kpi_bonus, b.current_month)}</div></div></div>
       </section>
       <section class="cards">${d.items.map((i) => {
         const st = STATUS[i.status] || STATUS.nodata;
@@ -1754,8 +1765,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       window.scrollTo({top, behavior: reduced ? "auto" : "smooth"});
       card.focus({preventScroll: true});
     }));
-    bindChart(document.getElementById("payChart"), d.trend, b.current_month);
-    bindPayoutPaging(document.getElementById("payTrend"), d);
+    bindChart(document.getElementById("payChart"), annualTrend(d.trend, d.month.slice(0, 4), b.current_month), b.current_month);
+    bindPayoutYear(document.getElementById("payTrend"), d);
     bindAudits(main, d);
     main.querySelectorAll("details[data-lot-candidates]").forEach((details) => details.addEventListener("toggle", () => {
       state.lotCandidatesOpen ??= new Set();

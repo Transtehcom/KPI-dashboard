@@ -106,6 +106,20 @@ class ListenTest(unittest.TestCase):
             self.assertEqual(self.get('pm', '/api/employee-trend?month=wrong')[0], 400)
             trend.assert_not_called()
 
+    def test_employee_year_trend_access_and_validation(self):
+        expected = [{'month': '2025-01', 'payout': 500, 'share': .05}]
+        with patch.object(self.app.engine, 'year_trend', return_value=expected) as trend:
+            for viewer in ('boss', 'pm'):
+                status, _, body = self.get(viewer, '/api/employee-trend?login=pm&year=2025')
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {'trend': expected})
+            trend.assert_called_with('pm', '2025')
+            trend.reset_mock()
+            self.assertEqual(self.get('pm', '/api/employee-trend?login=tender&year=2025')[0], 403)
+            for year in ('wrong', '0000', '10000', '2025-01'):
+                self.assertEqual(self.get('pm', '/api/employee-trend?year=' + year)[0], 400)
+            trend.assert_not_called()
+
     def test_staff_directory_is_public_to_employees_but_writes_remain_admin_only(self):
         with db_lock():
             self.con.execute("INSERT INTO employees(login,name,department,title,b24_user_id) VALUES(?,?,?,?,?)",

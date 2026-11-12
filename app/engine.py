@@ -1251,6 +1251,17 @@ class Engine:
     def trend(self, login, month, n=6):
         return [self.summary(login, month_add(month, -k)) for k in range(n - 1, -1, -1)]
 
+    def year_trend(self, login, year):
+        current = today().strftime("%Y-%m")
+        rows = []
+        for number in range(1, 13):
+            month = f"{year}-{number:02d}"
+            row = {"month": month, "payout": None, "share": None, "future": True}
+            if month <= current:
+                row = self.summary(login, month)
+            rows.append(row)
+        return rows
+
     def overview(self, month):
         groups = {}
         alerts = []
