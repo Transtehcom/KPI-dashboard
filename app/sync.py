@@ -347,7 +347,10 @@ def start_scheduler(con, config):
                         last = last_sync(con)
                     interval = minutes * 60
                     if last:
-                        retry = last.get("status") != "ok"
+                        # Access rights require an administrator's action. Keep these
+                        # failures on the regular schedule instead of reloading all sources.
+                        access_denied = any(f"HTTP Error {code}:" in (last.get("message") or "") for code in (401, 403))
+                        retry = last.get("status") != "ok" and not access_denied
                         base = (last.get("finished") if retry else last.get("started")) or last.get("finished")
                         due = dt.datetime.fromisoformat(base) + dt.timedelta(seconds=min(interval, 300) if retry else interval)
                         delay = max(0, min(30, (due - dt.datetime.now()).total_seconds()))

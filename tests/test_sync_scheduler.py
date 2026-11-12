@@ -17,9 +17,9 @@ class SchedulerTest(unittest.TestCase):
         self.config={'mode':'live','sync':{'interval_minutes':60}}
         self.now=dt.datetime(2026,11,3,15,53)
 
-    def record(self,started,finished,status='ok'):
+    def record(self,started,finished,status='ok',message='test'):
         self.con.execute('INSERT INTO sync_log(started,finished,status,message) VALUES(?,?,?,?)',
-                         (started,finished,status,'test'))
+                         (started,finished,status,message))
         self.con.commit()
 
     def first_cycle(self,busy=False):
@@ -66,6 +66,27 @@ class SchedulerTest(unittest.TestCase):
 
     def test_failed_import_retries_in_five_minutes(self):
         self.record('2026-11-03T15:40:00','2026-11-03T15:47:00','error')
+        self.first_cycle()
+        self.assertEqual(sync.last_sync(self.con)['status'],'ok')
+
+    def test_access_denied_uses_regular_interval_after_restart(self):
+        for code in (401,403):
+            with self.subTest(code=code):
+                self.record('2026-11-03T15:30:00','2026-11-03T15:40:00','error',
+                            f'Ошибка договоров снабжения из 1С: HTTP Error {code}: Unauthorized')
+                self.first_cycle()
+                self.assertEqual(sync.last_sync(self.con)['status'],'error')
+                self.assertEqual(sync.last_sync(self.con)['started'],'2026-11-03T15:30:00')
+
+    def test_access_denied_is_retried_when_regular_interval_is_due(self):
+        self.record('2026-11-03T14:50:00','2026-11-03T15:00:00','error',
+                    'Ошибка 1С: HTTP Error 401: Unauthorized')
+        self.first_cycle()
+        self.assertEqual(sync.last_sync(self.con)['status'],'ok')
+
+    def test_temporary_server_error_keeps_fast_retry(self):
+        self.record('2026-11-03T15:40:00','2026-11-03T15:47:00','error',
+                    'Ошибка 1С: HTTP Error 503: Service Unavailable')
         self.first_cycle()
         self.assertEqual(sync.last_sync(self.con)['status'],'ok')
 
