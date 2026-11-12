@@ -54,6 +54,9 @@ class NavigationTest(unittest.TestCase):
     def test_logistics_draft(self):
         self.run_script("test_logistics_draft.js")
 
+    def test_kpi_card_jumps(self):
+        self.run_script("test_kpi_jumps.js")
+
     def test_staff_directory(self):
         self.run_script("test_staff_directory.js")
 

@@ -234,7 +234,8 @@ table { border-collapse: collapse; width: 100%; }
 .big small { font-size: 16px; color: var(--fg-3); font-weight: 500; letter-spacing: 0; }
 .weights { display: flex; gap: 3px; margin-top: 14px; height: 30px; }
 .weights .seg { position: relative; border-radius: 4px; display: flex; align-items: center; justify-content: center; font: 600 11px var(--mono);
-  min-width: 0; overflow: hidden; border: 1.5px solid var(--line-strong); color: var(--fg-3); background: var(--surface); cursor: default; }
+  min-width: 0; padding: 0; overflow: hidden; border: 1.5px solid var(--line-strong); color: var(--fg-3); background: var(--surface); cursor: pointer; }
+.weights .seg:focus-visible, .card[data-kpi-code]:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .weights .seg.met { background: var(--good); border-color: var(--good); color: var(--surface); }
 .weights .seg.partial { background: linear-gradient(90deg, rgba(245,158,11,.38) var(--completion), transparent var(--completion)); border-color: rgba(245,158,11,.7); color: var(--fg); }
 .weights .seg.zeroed { background: repeating-linear-gradient(135deg, var(--bad-soft) 0 5px, var(--surface) 5px 10px); border-color: var(--bad); color: var(--bad); }
@@ -1634,10 +1635,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <section class="panel hero">
         <div><div class="eyebrow">${inProg ? "Начислено на сегодня" : "KPI к выплате"}</div>
           <div class="big" style="margin-top:8px;${zeroed ? "color:var(--bad)" : ""}">${nf(d.payout)} <small>₽ из ${nf(d.kpi_bonus)}</small></div>
-          <div class="weights" role="img" aria-label="Структура KPI по пунктам">${d.items.map((i) => {
+          <div class="weights" role="group" aria-label="Перейти к пункту KPI">${d.items.map((i) => {
             const completion = Number.isFinite(i.pct) ? Math.round(Math.max(0, Math.min(1, i.pct)) * 100) : 0;
             const stateClass = zeroed && i.payout ? "zeroed" : i.status === "met" ? "met" : completion > 0 ? "partial" : "";
-            return `<div class="seg ${stateClass}" style="flex:${i.weight};--completion:${completion}%" title="KPI ${i.n}. ${esc(i.title)} — выполнено ${completion}% · ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</div>`;
+            return `<button type="button" class="seg ${stateClass}" data-kpi-jump aria-controls="kpi-${esc(i.code)}" aria-label="Перейти к KPI ${i.n}. ${esc(i.title)}" style="flex:${i.weight};--completion:${completion}%" title="KPI ${i.n}. ${esc(i.title)} — выполнено ${completion}% · ${rub(i.payout)} из ${rub(i.amount)}">${i.n}</button>`;
           }).join("")}</div>
           <div class="legend"><span><i style="background:var(--good)"></i>выполнен</span><span><i style="background:rgba(245,158,11,.38);border:1px solid rgba(245,158,11,.7)"></i>частично выполнен</span><span><i style="border:1.5px solid var(--line-strong)"></i>нет выполнения</span>${zeroed ? `<span><i style="background:repeating-linear-gradient(135deg,var(--bad-soft) 0 3px,var(--surface) 3px 6px);border:1.5px solid var(--bad)"></i>обнулено</span>` : ""}<span>ширина — вес пункта</span></div>
           ${zeroed ? d.zero_all.map((z) => `<div class="zero-note" style="margin-top:10px">${esc(z)}</div>`).join("") : ""}
@@ -1651,7 +1652,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         const st = STATUS[i.status] || STATUS.nodata;
         const ex = i.extra || [];
         const hasAudits = !PREVIEW && i.components.some((c) => c.audit);
-        return `<article class="panel card" data-kpi-code="${esc(i.code)}">
+        return `<article class="panel card" id="kpi-${esc(i.code)}" tabindex="-1" data-kpi-code="${esc(i.code)}">
           <div class="card-h"><div class="meta">KPI ${i.n} · вес ${Math.round(i.weight * 100)}% · ${nf(i.amount)} ₽ · ${esc(i.period)}</div>
             <div class="card-score"><div class="p">${i.pct == null ? "—" : pct(i.pct)}</div><div class="r">${rub(i.payout)}</div></div>
             <h3>${esc(i.title)}</h3><div class="tgt"><span class="chip ${st[1]}">${st[0]}</span> &nbsp;${esc(i.target_text)}</div></div>
@@ -1674,6 +1675,15 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
               ${i.details.rows.map((r, ri) => `<tr>${r.map((v, ci) => `<td class="${typeof v === "number" ? "n" : ""}">${detailCell(i.details, ri, ci, v, isMgr)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="muted small">Записей за период нет.</div>`}
           </div></details></article>`;
       }).join("")}</section>`;
+    main.querySelectorAll("[data-kpi-jump]").forEach((button) => button.addEventListener("click", () => {
+      const card = document.getElementById(button.getAttribute("aria-controls"));
+      if (!card || !main.contains(card)) return;
+      const headerBottom = document.querySelector(".top")?.getBoundingClientRect().bottom || 0;
+      const top = Math.max(0, window.scrollY + card.getBoundingClientRect().top - headerBottom - 16);
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({top, behavior: reduced ? "auto" : "smooth"});
+      card.focus({preventScroll: true});
+    }));
     bindChart(document.getElementById("payChart"), d.trend, b.current_month);
     bindAudits(main, d);
     main.querySelectorAll("[data-client-approval], [data-lead-approval]").forEach((select) => select.addEventListener("change", async () => {
