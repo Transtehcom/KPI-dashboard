@@ -98,14 +98,16 @@ class LogisticsBudgetTest(unittest.TestCase):
                 'Document_ТТК_ЗаявкаВОтделСнабжения': [], 'Document_ЗаказПоставщику': [],
                 'Document_ПоручениеЭкспедитору': [{'Ref_Key': 'forwarder', 'Number': 'PE', 'Date': '2026-11-10',
                      'ТТК_ЗаказКлиента_Key': 'order', 'ТТК_СуммаОстаток': 300000}],
-                'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов': [], 'Catalog_ОбъектыРасчетов': []}
+                'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов': [], 'Catalog_ОбъектыРасчетов': [],
+                'Catalog_Номенклатура': [{'Ref_Key': 'transport'}]}
 
         for number, amount in (('749', 46632), ('750', 6974), ('757', 6568.94), ('751', 30000), ('goods', 1598822.85)):
             data['Document_ЗаказПоставщику'].append({
                 'Ref_Key': number, 'Number': number, 'ТТК_ЗаказКлиента_Key': 'order',
                 'ДокументОснование_Type': 'StandardODATA.Document_' + ('ЗаказКлиента' if number == 'goods' else 'ПоручениеЭкспедитору'),
                 'ДокументОснование': 'forwarder', 'ОбъектРасчетов_Key': 'object-' + number,
-                'СуммаДокумента': amount})
+                'СуммаДокумента': amount,
+                'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'goods' if number == 'goods' else 'transport'}]})
             data['Catalog_ОбъектыРасчетов'].append({
                 'Ref_Key': 'object-' + number, 'Объект': 'contract' if number == '751' else number,
                 'Объект_Type': 'StandardODATA.Catalog_ДоговорыКонтрагентов' if number == '751' else 'StandardODATA.Document_ЗаказПоставщику',
@@ -136,12 +138,15 @@ class LogisticsBudgetTest(unittest.TestCase):
     def test_contract_costs_and_deleted_transport_orders_match_zero_in_form(self):
         suppliers = [
             {'Ref_Key': 'contract-order', 'Number': '753', 'ТТК_ЗаказКлиента_Key': 'customer',
-             'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'contract'},
+             'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'contract',
+             'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'transport'}]},
             {'Ref_Key': 'deleted-order', 'DeletionMark': True, 'ТТК_ЗаказКлиента_Key': 'customer',
              'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору'}]
 
         class Source:
             def _odata(self, entity, params):
+                if entity == 'Catalog_Номенклатура':
+                    return [{'Ref_Key': 'transport'}]
                 return [{'Ref_Key': 'contract', 'Объект_Type': 'StandardODATA.Catalog_ДоговорыКонтрагентов',
                          'Объект': 'contract-ref', 'Сумма': 2097.18}]
 
@@ -155,7 +160,8 @@ class LogisticsBudgetTest(unittest.TestCase):
         suppliers = [
             {'Ref_Key': number, 'Number': number, 'ТТК_ЗаказКлиента_Key': 'customer',
              'ДокументОснование_Type': 'StandardODATA.Document_' + basis,
-             'Партнер': {'Перевозчик': carrier}, 'ОбъектРасчетов_Key': 'obj-' + number}
+             'Партнер': {'Перевозчик': carrier}, 'ОбъектРасчетов_Key': 'obj-' + number,
+             'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'goods' if number == '758' else 'transport'}]}
             for number, basis, carrier in [('688', 'ЗаказКлиента', True),
                                            ('713', 'ПоручениеЭкспедитору', True),
                                            ('731', 'ПоручениеЭкспедитору', True),
@@ -163,6 +169,8 @@ class LogisticsBudgetTest(unittest.TestCase):
 
         class Source:
             def _odata(self, entity, params):
+                if entity == 'Catalog_Номенклатура':
+                    return [{'Ref_Key': 'transport'}]
                 return [{'Ref_Key': 'obj-' + number, 'Объект': number,
                          'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику', 'Сумма': amount}
                         for number, amount in [('688', 4111), ('713', 8621), ('731', 50671), ('758', 54087.48)]]
@@ -175,13 +183,45 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.assertEqual(self.result()['payout'], 0)
         self.assertEqual(self.result()['details']['rows'][0][-1], 'Не засчитан')
 
+    def test_customer_order_151_uses_transport_first_line_and_preserves_mixed_goods_order(self):
+        amounts = {'715': 140000, '718': 9150, '723': 140000, '727': 20000, '734': 9150,
+                   '745': 15000, '711': 333999.76}
+        suppliers = [{'Ref_Key': number, 'Number': number, 'ТТК_ЗаказКлиента_Key': 'customer',
+                      'ДокументОснование_Type': 'StandardODATA.Document_ЗаказКлиента',
+                      'ОбъектРасчетов_Key': 'obj-' + number,
+                      'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'goods' if number == '711' else 'transport'}]}
+                     for number in amounts]
+        suppliers[-1]['Товары'].append({'LineNumber': '2', 'Номенклатура_Key': 'transport'})
+        suppliers[-1]['Товары'].reverse()
+        suppliers[-1]['Партнер'] = {'Перевозчик': True}
+
+        class Source:
+            def _odata(self, entity, params):
+                if entity == 'Catalog_Номенклатура':
+                    return [{'Ref_Key': 'transport', 'Description': 'Транспортные расходы'}]
+                return [{'Ref_Key': 'obj-' + number, 'Объект': number,
+                         'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику', 'Сумма': amount}
+                        for number, amount in amounts.items()]
+
+        cost = delivery_costs(Source(), suppliers, ['customer'])['customer']
+        self.assertEqual(cost['amount'], 333300)
+        self.assertEqual({row['doc'] for row in cost['sources']}, set(amounts) - {'711'})
+        self.assertIsNone(cost['issue'])
+
     def test_unavailable_mismatched_deleted_or_unfilled_settlement_cannot_become_zero(self):
         suppliers = [{'Ref_Key': 'supplier', 'Number': 'supplier', 'ТТК_ЗаказКлиента_Key': 'customer',
-                      'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'obj'}]
-        for problem in ('unavailable', 'wrong-order', 'deleted', 'missing-sum'):
+                      'ДокументОснование_Type': 'StandardODATA.Document_ПоручениеЭкспедитору', 'ОбъектРасчетов_Key': 'obj',
+                      'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'transport'}]}]
+        for problem in ('unavailable', 'wrong-order', 'deleted', 'missing-sum', 'missing-item', 'item-unavailable'):
             with self.subTest(problem=problem):
                 class Source:
                     def _odata(self, entity, params):
+                        if entity == 'Catalog_Номенклатура':
+                            if problem == 'item-unavailable':
+                                raise OSError('source unavailable')
+                            if problem == 'missing-item':
+                                return []
+                            return [{'Ref_Key': 'transport'}]
                         if problem == 'unavailable':
                             raise OSError('source unavailable')
                         return [{'Ref_Key': 'obj', 'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику',
@@ -189,3 +229,27 @@ class LogisticsBudgetTest(unittest.TestCase):
                                  'DeletionMark': problem == 'deleted', 'Сумма': None if problem == 'missing-sum' else 1}]
                 cost = delivery_costs(Source(), suppliers, ['customer'])['customer']
                 self.assertTrue(cost['issue'])
+
+    def test_ambiguous_line_order_is_unknown_only_for_affected_customer(self):
+        for bad in (None, 'bad', 0, 1, 'missing'):
+            with self.subTest(number=bad):
+                line = {'Номенклатура_Key': 'transport'}
+                if bad != 'missing':
+                    line['LineNumber'] = bad
+                suppliers = [
+                    {'Ref_Key': 'bad', 'ТТК_ЗаказКлиента_Key': 'A', 'ОбъектРасчетов_Key': 'bad',
+                     'Товары': [line, {'LineNumber': '1', 'Номенклатура_Key': 'goods'}]},
+                    {'Ref_Key': 'good', 'ТТК_ЗаказКлиента_Key': 'B', 'ОбъектРасчетов_Key': 'good',
+                     'Товары': [{'LineNumber': '1', 'Номенклатура_Key': 'transport'}]}]
+
+                class Source:
+                    def _odata(self, entity, params):
+                        if entity == 'Catalog_Номенклатура':
+                            return [{'Ref_Key': 'transport'}]
+                        return [{'Ref_Key': 'good', 'Объект': 'good', 'Сумма': 10,
+                                 'Объект_Type': 'StandardODATA.Document_ЗаказПоставщику'}]
+
+                costs = delivery_costs(Source(), suppliers, ['A', 'B'])
+                self.assertTrue(costs['A']['issue'])
+                self.assertIsNone(costs['B']['issue'])
+                self.assertEqual(costs['B']['amount'], 10)

@@ -15,23 +15,41 @@ TYPES = {
 def delivery_costs(onec, suppliers, customer_keys):
     """Reconstruct the MP gross delivery amount from supplier-order settlement objects.
 
-    Delivery includes carrier suppliers and orders based on forwarder instructions.
-    Verified against customer forms 000152, 000144 and 000133. Contract settlement objects
+    The first goods line identifies transport orders; their whole settlement amount
+    includes associated charges such as insurance. Reconstructed against customer
+    amounts 000151, 000152, 000144 and 000133. Contract settlement objects
     are excluded by the 1C form, even when the supplier order has a delivery amount.
     """
     costs = {key: {"amount": Decimal(0), "sources": [], "issue": None} for key in customer_keys}
-    transport = [row for row in suppliers if not row.get("DeletionMark")
-                 and row.get("ТТК_ЗаказКлиента_Key") in costs
-                 and ((row.get("Партнер") or {}).get("Перевозчик") is True
-                      or row.get("ДокументОснование_Type") == "StandardODATA.Document_ПоручениеЭкспедитору")]
-    if not transport:
+    related = [row for row in suppliers if not row.get("DeletionMark")
+               and row.get("ТТК_ЗаказКлиента_Key") in costs and row.get("Товары")]
+    if not related:
         return costs
     try:
+        items = onec._odata("Catalog_Номенклатура", {"$format": "json",
+            "$filter": "Description eq 'Транспортные расходы'", "$select": "Ref_Key"})
+        transport_items = {row["Ref_Key"] for row in items}
+        if not transport_items:
+            raise ValueError("Не найдена номенклатура транспортных расходов")
+        transport = []
+        for row in related:
+            try:
+                numbers = [int(line["LineNumber"]) for line in row["Товары"]]
+                if min(numbers) < 1 or len(set(numbers)) != len(numbers):
+                    raise ValueError("Неоднозначный порядок строк")
+            except (KeyError, TypeError, ValueError):
+                costs[row["ТТК_ЗаказКлиента_Key"]]["issue"] = "Не определён порядок номенклатурных строк заказа " + (row.get("Number") or "")
+                continue
+            first = row["Товары"][numbers.index(min(numbers))]
+            if first.get("Номенклатура_Key") in transport_items:
+                transport.append(row)
+        if not transport:
+            return costs
         objects = onec._odata("Catalog_ОбъектыРасчетов", {"$format": "json",
             "$select": "Ref_Key,Объект,Объект_Type,Сумма,DeletionMark"})
     except (OSError, ValueError):
-        for row in transport:
-            costs[row["ТТК_ЗаказКлиента_Key"]]["issue"] = "Не удалось прочитать объекты расчётов 1С"
+        for row in related:
+            costs[row["ТТК_ЗаказКлиента_Key"]]["issue"] = "Не удалось прочитать номенклатуру доставки или объекты расчётов 1С"
         return costs
     objects = {row["Ref_Key"]: row for row in objects if not row.get("DeletionMark")}
     for row in transport:
@@ -73,7 +91,7 @@ def fetch_customer_deliveries(onec, ds, date_from, date_to):
         "Ref_Key,ДокументОснования,ДокументОснования_Type")
     suppliers = read("Document_ЗаказПоставщику",
         "Ref_Key,Number,DeletionMark,ТТК_ЗаказКлиента_Key,ДокументОснование,ДокументОснование_Type,"
-        "ОбъектРасчетов_Key,Партнер/Перевозчик", **{"$expand": "Партнер"})
+        "ОбъектРасчетов_Key,Товары/LineNumber,Товары/Номенклатура_Key")
     customers = {row["Ref_Key"]: row for row in customers if not row.get("DeletionMark")}
     costs = delivery_costs(onec, suppliers, customers)
     edges = {}
