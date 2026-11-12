@@ -364,38 +364,31 @@ class Engine:
 
     def calc_logistics_budget(self, e, ctx, p):
         raw = self.q("SELECT * FROM logistics_deliveries WHERE emp=? AND dt>=? AND dt<=? "
-                     "AND order_status='ТТК_ВЗакуп' AND quote_key IS NOT NULL AND quote_key<>'' "
-                     "ORDER BY dt,source_doc,id", e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
+                     "AND order_status='ТТК_ВЗакуп' ORDER BY dt,source_doc,id",
+                     e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
         orders = {row["order_key"]: dict(row) for row in raw if row["order_key"]}
         known = not self._missing_datasets(ctx, ("logistics_deliveries",))
         details, passed, failed, missing = [], 0, 0, 0
-        factor = Decimal("1") + Decimal(str(p["vat_rate"]))
 
-        def document(kind, number, day):
-            label = f"{kind} {number or '—'}"
-            date = parse_date(day)
-            return label + (" от " + date.strftime("%d-%m-%Y") if date else "")
+        def money(value):
+            try:
+                value = Decimal(str(value))
+                return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if value.is_finite() else None
+            except (InvalidOperation, TypeError, ValueError):
+                return None
 
         for row in orders.values():
-            budget, budget_vat, actual, difference = None, None, None, None
-            issue = row["comparison_issue"]
-            try:
-                budget = Decimal(str(row["delivery_novat"]))
-                if not budget.is_finite():
-                    raise InvalidOperation()
-                budget_vat = (budget * factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                actual = Decimal(str(row["comparison_amount"]))
-                if not actual.is_finite():
-                    raise InvalidOperation()
-                actual = actual.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                difference = actual - budget_vat
-            except (InvalidOperation, TypeError, ValueError):
-                issue = issue or "Не заполнена сумма доставки в КП или документе сравнения"
-            if not row["comparison_kind"]:
-                issue = "Нет связанной транспортной заявки или поручения экспедитору"
-            if issue:
+            expected = money(row["expected_delivery_novat"])
+            actual = money(row["actual_delivery_novat"])
+            difference = expected - actual if expected is not None and actual is not None else None
+            if difference is None:
                 missing += 1
-                result = "Нет данных — " + issue
+                absent = []
+                if expected is None:
+                    absent.append("«Ожидаемая МП»")
+                if actual is None:
+                    absent.append("«Фактическая МП»")
+                result = "Ожидает данных — сумма доставки без НДС из " + " и ".join(absent)
             elif difference >= 0:
                 passed += 1
                 result = "Засчитан"
@@ -403,23 +396,20 @@ class Engine:
                 failed += 1
                 result = "Не засчитан"
             details.append([row["order_doc"], row["client"] or "—",
-                document("КП", row["quote_doc"], row["quote_date"]),
-                float(budget) if budget is not None and budget.is_finite() else None,
-                float(budget_vat) if budget_vat is not None else None,
-                document("Заявка ТР" if row["comparison_kind"] == "transport" else "ПЭ", row["comparison_doc"], row["comparison_date"]),
-                float(actual) if actual is not None and actual.is_finite() else None,
-                float(difference) if difference is not None else None, result])
+                            float(expected) if expected is not None else None,
+                            float(actual) if actual is not None else None,
+                            float(difference) if difference is not None else None, result])
         share = passed / len(orders) if known and orders and not missing else None
-        return {"components": [comp("Заказы, прошедшие сравнение стоимости доставки", share, p["target"], "%", source=SRC_1C)],
-                "extra": [{"label": "Заказы «В закуп» с КП-основанием", "value": len(orders)},
+        return {"components": [comp("Заказы с фактической доставкой в пределах ожидаемой", share, p["target"], "%", source=SRC_1C)],
+                "extra": [{"label": "Заказы «В закуп»", "value": len(orders)},
                           {"label": "Засчитаны", "value": passed}, {"label": "Не засчитаны", "value": failed},
                           {"label": "Ожидают данных", "value": missing}],
-                "warnings": (["Не загружены суммы доставки и связи за весь период."] if not known else []) +
-                            (["Для расчёта KPI нужны суммы по каждому заказу; причины указаны в таблице."] if missing else []),
-                "details": {"columns": ["Заказ клиента", "Клиент", "КП-основание", "Доставка КП без НДС, ₽",
-                                        "Доставка КП с НДС, ₽", "Документ сравнения", "Сумма документа с НДС, ₽",
-                                        "Документ минус КП, ₽", "Результат"],
-                            "money_cols": [3, 4, 6, 7], "rows": details}}
+                "warnings": (["Не загружены данные заказов и связи за весь период."] if not known else []) +
+                            (["Для расчёта нужны обе суммы доставки из заказа клиента. "
+                              "Сумма из блока «Фактическая МП» пока недоступна в подключённом OData."] if missing else []),
+                "details": {"columns": ["Заказ клиента", "Клиент", "Ожидаемая доставка без НДС, ₽",
+                                        "Фактическая доставка без НДС, ₽", "Ожидаемая минус фактическая, ₽", "Результат"],
+                            "money_cols": [2, 3, 4], "rows": details}}
 
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
