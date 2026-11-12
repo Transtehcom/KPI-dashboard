@@ -128,6 +128,7 @@
       "receivables":     { "source": "order_payments", "lookback_days": 365 },
       "transport_requests": { "source": "transport_requests" },
       "forwarder_orders": { "source": "forwarder_orders" },
+      "logistics_deliveries": { "source": "logistics_deliveries" },
       "guarantees":      { "source": "http", "path": "hs/kpi/guarantees" },
       "penalties":       { "source": "http", "path": "hs/kpi/penalties" },
       "supplier_orders": { "source": "http", "path": "hs/kpi/supplier_orders", "author_owners": {}, "_author_owners_comment": "Для source=supply_requests: GUID автора заказа → ФИО ответственного в 1С; имеет приоритет перед ответственным заявки снабжения." },

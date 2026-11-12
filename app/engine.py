@@ -317,6 +317,51 @@ class Engine:
         return p.get("default_plan")
 
     # ------------------------------------------------------------------ calculators
+    def calc_logistics_delivery(self, e, ctx, p):
+        from .supply_delivery import delivery_deviation
+        raw = self.q("SELECT * FROM logistics_deliveries WHERE emp=? AND dt>=? AND dt<=? ORDER BY dt,source_doc,id",
+                     e["login"], ctx["first"].isoformat(), ctx["last"].isoformat())
+        groups, unlinked = {}, set()
+        for row in raw:
+            if not row["order_key"]:
+                unlinked.add((row["source_kind"], row["source_key"]))
+                continue
+            groups.setdefault(row["order_key"], []).append(dict(row))
+        known = not self._missing_datasets(ctx, ("logistics_deliveries",))
+        details, good, late, missing, waiting = [], 0, 0, 0, 0
+        for children in groups.values():
+            row = children[-1]
+            planned, actual = row["planned_date"], row["actual_date"]
+            delta = delivery_deviation({"planned_date": planned, "customer_actual_date": actual}, ctx["asof"])
+            if not planned:
+                missing += 1
+                status = "Не задана конечная дата поставки"
+            elif delta is not None and delta < 0:
+                late += 1
+                status = "Просрочен"
+            else:
+                good += 1
+                waiting += int(not actual)
+                status = "Без просрочки" if actual else "Ожидает поставки, срок не прошёл"
+            sources = ", ".join(dict.fromkeys(
+                ("Поручение " if child["source_kind"] == "forwarder" else "Заявка ТР ") + child["source_doc"] for child in children))
+            details.append([row["order_doc"], row["client"] or "—", sources, planned, actual,
+                            f"{delta:+d} дн." if delta is not None else "—", status])
+        share = good / len(groups) if known and groups and not missing else None
+        component = comp("Заказы клиентов без просрочки", share, p["target"], "%", source=SRC_1C)
+        if component["pct"] is not None:
+            component["pct"] = min(1, component["pct"])
+        return {"components": [component],
+                "extra": [{"label": "Заказов клиента", "value": len(groups)},
+                          {"label": "Без просрочки", "value": good}, {"label": "Просрочены", "value": late},
+                          {"label": "Ожидают поставки в пределах срока", "value": waiting},
+                          {"label": "Без конечной даты поставки", "value": missing},
+                          {"label": "Документов без связанного заказа клиента", "value": len(unlinked)}],
+                "warnings": (["Не загружены связи и даты заказов клиентов за весь период."] if not known else []) +
+                            (["Для расчёта KPI заполните конечную дату поставки каждого заказа клиента."] if missing else []),
+                "details": {"columns": ["Заказ клиента", "Клиент", "Связанные документы логиста", "Плановая дата поставки",
+                                        "Фактическая дата поставки", "План минус факт", "Результат"], "rows": details}}
+
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
                       "AND NOT deleted ORDER BY dt,doc,id", e["login"],
@@ -1166,16 +1211,17 @@ class Engine:
         payout_cfg = self.rules.get("payout", {})
         draft = bool(pos.get("draft"))
         bonus = pos["kpi_bonus"] or 0
-        issues = list(pos.get("setup_issues") or []) if draft else []
+        issues = list(pos.get("setup_issues") or [])
         items, zero_all, warnings = [], [], issues[:1]
         absence = self._absence(e, ctx)
         absent = ctx["wd"] > 0 and absence["days"] >= ctx["wd"]  # весь месяц не работал: KPI не считается
         for it in self.items_for(pos, month):
-            if absent and not draft:
+            item_draft = draft or bool(it.get("draft"))
+            if absent and not item_draft:
                 items.append({**{k: it[k] for k in ("code", "n", "title", "weight", "period", "target_text", "description")},
                               "amount": round(bonus * it["weight"]), "pct": None, "status": "absent", "payout": 0, "components": []})
                 continue
-            if draft:
+            if item_draft:
                 r = self.calc_logistics_discipline(e, ctx, it.get("params", {})) if it["code"] == "logistics_discipline" else {"components": []}
             else:
                 fn = getattr(self, "calc_" + it["code"])
@@ -1216,7 +1262,7 @@ class Engine:
                     status = "met" if share >= 1 - EPS else ("partial" if share > EPS else "fail")
             if ctx["in_progress"] and status in ("fail", "close", "nodata"):
                 status = "progress_" + status
-            if draft:
+            if item_draft:
                 status, pct, payout = "draft", None, 0
             if r.get("payout_pending"):
                 payout, status = 0, "awaiting"

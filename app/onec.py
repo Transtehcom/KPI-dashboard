@@ -27,10 +27,11 @@ DATASETS = {
     "conversion_orders": ("conversion_orders", "dt"),
     "transport_requests": ("transport_requests", "dt"),
     "forwarder_orders": ("forwarder_orders", "dt"),
+    "logistics_deliveries": ("logistics_deliveries", "dt"),
 }
 # таблицы, где нужен весь отдел (раздел «Метрики»): строки с ответственным не из дашборда сохраняются
 # с emp = «1c:ФИО» — KPI их не видит, он выбирает строки по логину сотрудника
-KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests", "forwarder_orders", "receivables"}  # дебиторка — и по заказам менеджеров вне дашборда («Деньги», панель продаж); в KPI они не входят
+KEEP_UNMAPPED = {"supply_funnel", "supplier_orders", "transport_requests", "forwarder_orders", "receivables", "logistics_deliveries"}  # В KPI выбираются записи конкретного сотрудника.
 UNMAPPED = "1c:"
 BOOL_FIELDS = {"ordered", "signed", "out_of_tender", "confirmed", "complete", "defect", "mis_sort", "relevant", "evidence",
                "affiliated", "single_source", "emergency", "justified", "posted", "deleted"}
@@ -160,6 +161,9 @@ class OneC:
         if src == "forwarder_orders":  # поручения экспедитору (ТТК) — «Метрики → Логистика», подготовка отгрузки
             from .onec_logistics import fetch_forwarder_orders
             return fetch_forwarder_orders(self, ds, date_from, date_to)
+        if src == "logistics_deliveries":
+            from .onec_logistics_delivery import fetch_customer_deliveries
+            return fetch_customer_deliveries(self, ds, date_from, date_to)
         if src == "kp_orders":  # КП с признаком «есть заказ клиента» (Отчёт ОП, ТТК)
             from .onec_report import fetch_kp
             return fetch_kp(self, ds, date_from, date_to)

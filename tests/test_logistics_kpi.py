@@ -1,4 +1,4 @@
-"""The logistics draft is selectable, faithful to its source and financially inactive."""
+"""Confirmed logistics delivery rules pay while unresolved items remain drafts."""
 import unittest
 from unittest.mock import patch
 
@@ -30,7 +30,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
     def test_six_items_use_approved_weights_and_compensation(self):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
-        self.assertTrue(p["draft"])
+        self.assertFalse(p["draft"])
+        self.assertTrue(all(item.get("draft") for item in p["items"][1:]))
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
@@ -48,7 +49,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         positions = employees.listing(self.con, self.rules)["positions"]
         self.assertIn("logistics", [p["key"] for p in positions])
         p = next(p for p in positions if p["key"] == "logistics")
-        self.assertTrue(p["draft"])
+        self.assertFalse(p["draft"])
         self.assertEqual(before, [dict(r) for r in self.con.execute("SELECT * FROM employees")])
         self.assertNotIn("logistics", [e.get("position") for e in self.config["employees"]])
 
@@ -56,14 +57,14 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertTrue(any("80%" in issue for issue in self.profile()["setup_issues"]),
                         "The source's 80% completion statement conflicts with the table and needs an explicit note")
 
-    def test_draft_never_pays_even_with_positive_bonus_and_pay_when_no_data(self):
+    def test_missing_delivery_data_and_draft_items_never_create_payout(self):
         engine = self.engine_with_draft()
         self.profile()["kpi_bonus"] = 10000
         self.rules["payout"]["pay_when_no_data"] = True
         for month in ("2026-09", "2026-11"):
             with self.subTest(month=month):
                 r = engine.compute("logist", month)
-                self.assertTrue(r["draft"])
+                self.assertFalse(r["draft"])
                 self.assertEqual(r["salary"], 70000)
                 self.assertEqual(r["kpi_bonus"], 10000)
                 self.assertEqual([item["amount"] for item in r["items"]], [2000, 2000, 1500, 1500, 1500, 1500])
@@ -72,17 +73,20 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertEqual(r["met_count"], 0)
                 self.assertEqual(len(r["items"]), 6)
                 self.assertTrue(r["warnings"])
-                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in r["items"]))
+                self.assertIsNone(r["items"][0]["pct"])
+                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in r["items"][1:]))
                 self.assertEqual(engine.summary("logist", month)["payout"], 0)
 
-    def test_draft_is_excluded_from_team_performance_and_fund(self):
+    def test_partially_active_profile_enters_team_fund(self):
         baseline = Engine(self.con, self.rules, self.config).overview("2026-10")["totals"]
         engine = self.engine_with_draft()
         self.profile()["kpi_bonus"] = 10000
         overview = engine.overview("2026-10")
-        self.assertEqual(overview["totals"], baseline)
+        self.assertEqual(overview["totals"]["payout"], baseline["payout"])
+        self.assertEqual(overview["totals"]["fund"], baseline["fund"] + 10000)
+        self.assertEqual(overview["totals"]["employees"], baseline["employees"] + 1)
         group = next(g for g in overview["groups"] if g["position"] == "logistics")
-        self.assertTrue(group["employees"][0]["draft"])
+        self.assertFalse(group["employees"][0]["draft"])
 
     def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
         engine = self.engine_with_draft()
@@ -131,7 +135,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         app.engine = Engine(self.con, self.rules, self.config)
         boot = app.bootstrap(self.config["employees"][0])
         p = boot["positions"]["logistics"]
-        self.assertTrue(p["draft"])
+        self.assertFalse(p["draft"])
         self.assertEqual(p["setup_issues"], profile["setup_issues"])
         self.assertEqual(len(p["items"]), 6)
         self.assertEqual(p["salary"], 70000)

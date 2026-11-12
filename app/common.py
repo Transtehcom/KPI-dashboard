@@ -220,6 +220,10 @@ CREATE TABLE IF NOT EXISTS forwarder_orders (
   ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL,
   dop TEXT, dof TEXT, dpp TEXT, dfp TEXT);
 
+CREATE TABLE IF NOT EXISTS logistics_deliveries (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, source_kind TEXT, source_key TEXT, source_doc TEXT,
+  order_key TEXT, order_doc TEXT, order_date TEXT, client TEXT, planned_date TEXT, actual_date TEXT);
+
 -- панель «Метрики → Отдел продаж» (макет «Метрики ОП.xlsx»): реестр объектов и действия вводятся вручную
 CREATE TABLE IF NOT EXISTS sales_objects (
   id TEXT PRIMARY KEY, type TEXT, client TEXT, emp TEXT, channel TEXT, stage TEXT, entered TEXT, due TEXT,
@@ -357,7 +361,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 # таблицы, которые полностью перезаписываются при синхронизации
 SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales", "supply_contracts",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
-               "deal_failures", "task_ledger", "task_people", "conversion_orders", "task_efficiency_tasks"]
+               "deal_failures", "task_ledger", "task_people", "conversion_orders", "task_efficiency_tasks", "logistics_deliveries"]
 
 # столбцы, добавленные после первой версии: в старых базах их создаёт migrate()
 ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "tenders_1c": [("ordered", "INTEGER")],
