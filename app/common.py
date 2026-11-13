@@ -219,6 +219,8 @@ CREATE TABLE IF NOT EXISTS forwarder_orders (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, created_at TEXT, doc TEXT, status TEXT, posted INTEGER, deleted INTEGER,
   ship_date TEXT, delivery_date TEXT, plan_sum REAL, carrier TEXT, route TEXT, fact_sum REAL,
   dop TEXT, dof TEXT, dpp TEXT, dfp TEXT);
+CREATE TABLE IF NOT EXISTS forwarder_contracts (
+  id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, carrier TEXT, files TEXT, has_contract INTEGER);
 
 CREATE TABLE IF NOT EXISTS logistics_deliveries (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, source_kind TEXT, source_key TEXT, source_doc TEXT,
@@ -379,7 +381,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 """
 
 # таблицы, которые полностью перезаписываются при синхронизации
-SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales", "supply_contracts",
+SYNC_TABLES = ["activities", "tenders", "deals", "crm_deals", "stage_moves", "fact_records", "leads", "clients", "kp", "kp_letters", "tasks", "sales", "supply_contracts", "forwarder_contracts",
                "receivables", "guarantees", "penalties", "supplier_orders", "supply_funnel", "transport_requests", "forwarder_orders", "tenders_1c",
                "deal_failures", "task_ledger", "task_people", "conversion_orders", "task_efficiency_tasks", "logistics_deliveries"]
 

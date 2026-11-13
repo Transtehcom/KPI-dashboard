@@ -161,6 +161,17 @@ def run(con, config, force_demo=False):
                         status = 'error'
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)
+                    if onec_cfg.get('datasets', {}).get('forwarder_orders', {}).get('source') == 'forwarder_orders':
+                        file_entity = onec_cfg['datasets']['forwarder_orders'].get('contract_files_entity')
+                        if file_entity:
+                            try:
+                                forwarder_contracts = supply_documents.fetch_forwarder_contracts(onec, managers, date_from, date_to, file_entity)
+                                writes.append(('1С', 'forwarder_contracts', forwarder_contracts, 'dt'))
+                            except Exception as e:
+                                status = 'error'
+                                log.append(f'Ошибка файлов поручений экспедитору из 1С: {e}')
+                        else:
+                            log.append('1С: файлы поручений экспедитору — ожидается настройка источника OData')
                     supplier_ds = onec_cfg.get("datasets", {}).get("supplier_orders", {})
                     if supplier_ds.get("source") == "supply_requests":
                         try:
@@ -246,9 +257,9 @@ def run(con, config, force_demo=False):
                             else:
                                 window_from = supplier_date_from(con, date_from) if src == "1С" and table == "supplier_orders" and \
                                     config.get("onec", {}).get("datasets", {}).get("supplier_orders", {}).get("source") == "supply_requests" else date_from
-                                replace_rows(con, table, rows, emps=None if table in ("crm_deals", "task_ledger", "task_people", "supply_contracts") else owners,
+                                replace_rows(con, table, rows, emps=None if table in ("crm_deals", "task_ledger", "task_people", "supply_contracts", "forwarder_contracts") else owners,
                                              date_field=date_field, date_from=window_from.isoformat(), commit=False)
-                            if src == "1С" and table in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties", "supply_contracts", "forwarder_orders", "logistics_deliveries", "transport_requests"):
+                            if src == "1С" and table in ("conversion_orders", "kp", "tenders_1c", "supply_funnel", "penalties", "supply_contracts", "forwarder_contracts", "forwarder_orders", "logistics_deliveries", "transport_requests"):
                                 con.execute("INSERT OR REPLACE INTO dataset_state VALUES (?,?,?,?)",
                                             (table, date_from.isoformat(), date_to.isoformat(), dt.datetime.now().isoformat()))
                         manual.apply(con)  # ручной ввод руководителя поверх свежей выгрузки

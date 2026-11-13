@@ -519,6 +519,20 @@ class Engine:
                           {"label": "Сохранность стоимости грузов", "value": checks["safety_share"], "fmt": "pct"},
                           {"label": "Режим расчёта", "value": "Ручная корректировка" if score["score"] is not None else "Автоматический расчёт"}]}
 
+    def calc_logistics_documents(self, e, ctx, p):
+        from .supply_documents import report
+        documents = report(self.con, e['login'], ctx['first'], ctx['last'], today(), table='forwarder_contracts')
+        fact = documents['percent'] / 100 if documents['percent'] is not None else None
+        return {'components': [comp('Поручения с файлом договора', fact, p.get('target', .98), '%', source=SRC_1C)],
+                'extra': [{'label': 'Поручений за месяц', 'value': documents['total']},
+                          {'label': 'С файлом договора', 'value': documents['matched'] if documents['known'] else None},
+                          {'label': 'Данные файлов', 'value': 'Загружены за период' if documents['known'] else 'Ожидается загрузка из 1С'}],
+                'details': {'columns': ['Поручение экспедитору', 'Дата', 'Перевозчик', 'Файлы договора', 'Зачтён'],
+                            'rows': [[row['doc'], row['dt'], row['carrier'],
+                                      (', '.join(json.loads(row['files'] or '[]')) or '—') if documents['known'] else 'Ожидается загрузка',
+                                      ('Да' if row['has_contract'] else 'Нет') if documents['known'] else 'Не проверено']
+                                     for row in documents['rows']]}}
+
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
                       "AND NOT deleted ORDER BY dt,doc,id", e["login"],
@@ -1350,6 +1364,8 @@ class Engine:
         прошлые месяцы считаются по правилам того времени, а не задним числом."""
         out = []
         for it in pos["items"]:
+            if it.get('enabled') is False:
+                continue
             if (it.get("from") and month < it["from"]) or (it.get("until") and month > it["until"]):
                 continue
             w = it["weight"]

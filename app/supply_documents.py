@@ -9,21 +9,15 @@ from .onec_operations import _pages
 CONTRACT_NAME = re.compile(r"договор|(?<![а-яёa-z])дог(?![а-яёa-z])", re.I)
 ORDER_TYPE = "StandardODATA.Document_ЗаказПоставщику"
 CONTRACT_TYPE = "StandardODATA.Catalog_ДоговорыКонтрагентов"
+FORWARDER_TYPE = "StandardODATA.Document_ПоручениеЭкспедитору"
 
 
-def fetch(onec, ds, managers, first, last):
-    context = supply_request_context(onec, ds, first)
-    orders = onec._odata("Document_ЗаказПоставщику", {
-        "$format": "json", "$expand": "Контрагент",
-        "$filter": f"Posted eq true and DeletionMark eq false and Date ge datetime'{_when(first)}' "
-                   f"and Date le datetime'{last.isoformat()}T23:59:59'",
-        "$select": "Ref_Key,Number,Date,Договор_Key,ТТК_ЗаказКлиента_Key,ДокументОснование,Контрагент/Description"})
-    contracts = {r["Ref_Key"]: r.get("Description") for r in onec._odata("Catalog_ДоговорыКонтрагентов", {
-        "$format": "json", "$select": "Ref_Key,Description"})}
+def contract_files(onec, include_contracts=True, file_entity='Catalog_Файлы'):
+    """Индекс подходящих файлов по типу и ссылке владельца, без загрузки содержимого."""
     attached = _pages(onec, "Catalog_ДоговорыКонтрагентовПрисоединенныеФайлы", {
         "$format": "json", "$filter": "DeletionMark eq false and IsFolder eq false",
-        "$select": "Ref_Key,Description,ВладелецФайла_Key,Расширение,DeletionMark,IsFolder"})
-    generic = _pages(onec, "Catalog_Файлы", {
+        "$select": "Ref_Key,Description,ВладелецФайла_Key,Расширение,DeletionMark,IsFolder"}) if include_contracts else []
+    generic = _pages(onec, file_entity, {
         "$filter": "DeletionMark eq false",
         "$select": "Ref_Key,Description,ВладелецФайла,ВладелецФайла_Type,Расширение,DeletionMark"})
     attachments = [(CONTRACT_TYPE, file.get("ВладелецФайла_Key"), file) for file in attached]
@@ -37,6 +31,19 @@ def fetch(onec, ds, managers, first, last):
         name = name if not extension or name.lower().endswith("." + extension.lower()) else name + "." + extension
         if CONTRACT_NAME.search(name):
             files.setdefault((owner_type, owner_key), {})[file["Ref_Key"]] = name
+    return files
+
+
+def fetch(onec, ds, managers, first, last):
+    context = supply_request_context(onec, ds, first)
+    orders = onec._odata("Document_ЗаказПоставщику", {
+        "$format": "json", "$expand": "Контрагент",
+        "$filter": f"Posted eq true and DeletionMark eq false and Date ge datetime'{_when(first)}' "
+                   f"and Date le datetime'{last.isoformat()}T23:59:59'",
+        "$select": "Ref_Key,Number,Date,Договор_Key,ТТК_ЗаказКлиента_Key,ДокументОснование,Контрагент/Description"})
+    contracts = {r["Ref_Key"]: r.get("Description") for r in onec._odata("Catalog_ДоговорыКонтрагентов", {
+        "$format": "json", "$select": "Ref_Key,Description"})}
+    files = contract_files(onec)
     rows = {}
     for order in orders:
         requests = order_requests(order, context)
@@ -56,11 +63,36 @@ def fetch(onec, ds, managers, first, last):
     return list(rows.values())
 
 
-def report(con, emp, first, last, asof):
-    marker = con.execute("SELECT * FROM dataset_state WHERE dataset='supply_contracts'").fetchone()
+def fetch_forwarder_contracts(onec, managers, first, last, file_entity=None):
+    if not file_entity:
+        raise ValueError('Источник прикреплённых файлов поручений экспедитору не настроен: требуется проверка публикации OData')
+    orders = _pages(onec, 'Document_ПоручениеЭкспедитору', {
+        '$format': 'json', '$expand': 'ТТК_ОтветственныйЛогист,ТТК_ТранспортнаяКомпания',
+        '$filter': f"DeletionMark eq false and Date ge datetime'{_when(first)}' "
+                   f"and Date le datetime'{last.isoformat()}T23:59:59'",
+        '$select': 'Ref_Key,Number,Date,DeletionMark,ТТК_ОтветственныйЛогист/Description,'
+                   'ТТК_ТранспортнаяКомпания/Description'})
+    files = contract_files(onec, include_contracts=False, file_entity=file_entity)
+    rows = []
+    for order in orders:
+        if order.get('DeletionMark'):
+            continue
+        owner = (order.get('ТТК_ОтветственныйЛогист') or {}).get('Description') or ''
+        matched = list(files.get((FORWARDER_TYPE, order['Ref_Key']), {}).values())
+        rows.append({'id': order['Ref_Key'], 'emp': managers.get(owner.strip().lower(), '1c:' + owner),
+                     'dt': order['Date'][:10], 'doc': (order.get('Number') or '').strip(),
+                     'carrier': (order.get('ТТК_ТранспортнаяКомпания') or {}).get('Description'),
+                     'files': json.dumps(matched, ensure_ascii=False), 'has_contract': int(bool(matched))})
+    return rows
+
+
+def report(con, emp, first, last, asof, table='supply_contracts'):
+    if table not in ('supply_contracts', 'forwarder_contracts'):
+        raise ValueError('Неизвестный источник документооборота')
+    marker = con.execute('SELECT * FROM dataset_state WHERE dataset=?', (table,)).fetchone()
     required_end = min(last, asof).isoformat()
     known = bool(marker and marker["date_from"] <= first.isoformat() <= required_end <= marker["date_to"])
-    rows = [dict(r) for r in con.execute("SELECT * FROM supply_contracts WHERE emp=? AND dt BETWEEN ? AND ? ORDER BY dt,doc,id",
+    rows = [dict(r) for r in con.execute(f"SELECT * FROM {table} WHERE emp=? AND dt BETWEEN ? AND ? ORDER BY dt,doc,id",
                                        (emp, first.isoformat(), last.isoformat()))]
     matched = sum(r["has_contract"] for r in rows)
     return {"known": known, "total": len(rows), "matched": matched,

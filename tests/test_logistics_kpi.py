@@ -32,7 +32,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
         self.assertFalse(p["draft"])
-        self.assertEqual([item["n"] for item in p["items"] if item.get("draft")], [5, 6])
+        self.assertEqual([item["n"] for item in p["items"] if item.get("draft")], [6])
+        self.assertFalse(p['items'][5]['enabled'])
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
@@ -41,7 +42,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(len({i["code"] for i in p["items"]}), 6)
         self.assertFalse(any("85%" in issue for issue in p["setup_issues"]))
         self.assertFalse(any("Оклад и размер премии" in issue for issue in p["setup_issues"]))
-        self.assertIn("X", p["items"][4]["description"])
+        self.assertIn("файл", p["items"][4]["description"])
         self.assertIn("руководитель", p["items"][3]["description"].lower())
         self.assertIn("15 минут", p["items"][5]["description"])
 
@@ -54,9 +55,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(before, [dict(r) for r in self.con.execute("SELECT * FROM employees")])
         self.assertNotIn("logistics", [e.get("position") for e in self.config["employees"]])
 
-    def test_original_80_percent_statement_remains_an_unresolved_payout_rule(self):
-        self.assertTrue(any("80%" in issue for issue in self.profile()["setup_issues"]),
-                        "The source's 80% completion statement conflicts with the table and needs an explicit note")
+    def test_hidden_discipline_does_not_add_setup_warnings(self):
+        self.assertFalse(self.profile()['setup_issues'])
 
     def test_missing_delivery_data_and_draft_items_never_create_payout(self):
         engine = self.engine_with_draft()
@@ -68,16 +68,15 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertFalse(r["draft"])
                 self.assertEqual(r["salary"], 70000)
                 self.assertEqual(r["kpi_bonus"], 10000)
-                self.assertEqual([item["amount"] for item in r["items"]], [2000, 2000, 1500, 1500, 1500, 1500])
-                self.assertEqual(sum(item["amount"] for item in r["items"]), 10000)
+                self.assertEqual([item["amount"] for item in r["items"]], [2000, 2000, 1500, 1500, 1500])
+                self.assertEqual(sum(item["amount"] for item in r["items"]), 8500)
                 self.assertEqual(r["payout"], 0)
                 self.assertEqual(r["met_count"], 0)
-                self.assertEqual(len(r["items"]), 6)
-                self.assertTrue(r["warnings"])
+                self.assertEqual(len(r["items"]), 5)
                 self.assertIsNone(r["items"][0]["pct"])
                 self.assertEqual(r["items"][1]["payout"], 0)
-                drafts = [r["items"][n - 1] for n in (5, 6)]
-                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in drafts))
+                self.assertIsNone(r['items'][4]['pct'])
+                self.assertEqual(r['items'][4]['payout'], 0)
                 self.assertEqual(r["items"][3]["status"], "awaiting")
                 self.assertEqual(engine.summary("logist", month)["payout"], 0)
 
@@ -168,19 +167,17 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         ]
         self.con.executemany("INSERT INTO forwarder_orders(id,emp,dt,status,deleted,dop,dpp,dof,dfp) VALUES(?,?,?,?,?,?,?,?,?)", rows)
         result = engine.compute("logist", "2026-10")
-        item = next(i for i in result["items"] if i["code"] == "logistics_discipline")
+        self.assertNotIn('logistics_discipline', [i['code'] for i in result['items']])
+        item = engine.calc_logistics_discipline(engine.employee('logist'), engine._ctx('2026-10'), {})
         self.assertEqual(item["components"][0]["fact"], 1 / 3)
         self.assertTrue(item["components"][0]["informative"])
         self.assertEqual(len(item["details"]["rows"]), 3)
         self.assertEqual(item["details"]["rows"][1][-2], "ДОФ, ДФП")
         self.assertEqual(item["details"]["rows"][2][-2], "Статус")
-        self.assertEqual(item["status"], "draft")
-        self.assertIsNone(item["pct"])
-        self.assertEqual(item["payout"], 0)
 
     def test_discipline_empty_or_unsynced_source_is_unknown(self):
         engine = self.engine_with_draft()
-        item = next(i for i in engine.compute("logist", "2026-10")["items"] if i["code"] == "logistics_discipline")
+        item = engine.calc_logistics_discipline(engine.employee('logist'), engine._ctx('2026-10'), {})
         self.assertIsNone(item["components"][0]["fact"])
         self.assertEqual(item["details"]["rows"], [])
 
@@ -254,10 +251,10 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         p = boot["positions"]["logistics"]
         self.assertFalse(p["draft"])
         self.assertEqual(p["setup_issues"], profile["setup_issues"])
-        self.assertEqual(len(p["items"]), 6)
+        self.assertEqual(len(p["items"]), 5)
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
-        self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
+        self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15])
 
 
 if __name__ == "__main__":
