@@ -17,6 +17,27 @@ assert.equal(context.supplierDirectoryFiltered(rows, 'емкости 00123').len
 assert.equal(context.supplierDirectoryFiltered(rows, 'резервуары').length, 1);
 assert.equal(context.supplierDirectoryFiltered(rows, 'unknown').length, 0);
 assert.ok(html.includes('href="#suppliers?mode=directory" data-tab="suppliers" data-mode="directory"'));
-assert.ok(html.includes('"/api/supplier-directory.xlsx?" + new URLSearchParams'));
+assert.ok(html.includes('await api("/api/supplier-directory/gpt",'));
 assert.ok(html.includes('if (d.mode === "directory") { renderSupplierDirectory(d); return; }'));
 console.log('Supplier directory navigation, filtering and download: OK');
+
+(async () => {
+  const button = {isConnected: true};
+  Object.assign(context, {location: {}, document: {getElementById: () => null},
+    renderShell: () => {}, load: async () => {}, toast: message => { throw new Error(message); }});
+  context.state.view = 'suppliers';
+  context.state.sup = {mode: 'directory', search: '00123'};
+  let requests = 0;
+  context.api = async (url, body) => {
+    requests++;
+    assert.equal(url, '/api/supplier-directory/gpt');
+    assert.equal(body.search, '00123');
+    return {chat_id: 'own-chat'};
+  };
+  await Promise.all([context.startSupplierExport(button), context.startSupplierExport(button)]);
+  assert.equal(requests, 1);
+  assert.equal(context.state.view, 'gpt');
+  assert.equal(context.state.gptChat, 'own-chat');
+  assert.equal(context.location.hash, 'gpt');
+  assert.equal(context.state.supplierExportStarting, false);
+})().catch(error => { console.error(error); process.exitCode = 1; });

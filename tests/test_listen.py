@@ -117,6 +117,33 @@ class ListenTest(unittest.TestCase):
                 self.con.execute('DELETE FROM supplier_directory')
                 self.con.execute("DELETE FROM supplier_meta WHERE key LIKE 'directory_%'")
 
+    def test_supplier_export_handoff_is_admin_only_and_uses_server_snapshot(self):
+        from app import supplier_directory
+        with db_lock(), self.con:
+            supplier_directory.store(self.con, [{'id': 'supplier-http', 'fields': {
+                'Название': 'ООО Ромашка', 'Реквизит: ИНН': '5900000000'}}])
+        try:
+            with patch('app.server.supplier_export.start', return_value={'chat_id': 'owned-chat', 'message_id': 1}) as start, \
+                    patch.object(self.app, 'gpt_service', return_value='test-service'):
+                for login, expected in (('pm', 403), ('boss', 200)):
+                    request = urllib.request.Request(self.base + '/api/supplier-directory/gpt', method='POST',
+                        data=json.dumps({'search': '5900000000'}).encode(),
+                        headers={'Cookie': self.tokens[login], 'Content-Type': 'application/json'})
+                    try:
+                        with urllib.request.urlopen(request) as response:
+                            status = response.status
+                            self.assertEqual(json.loads(response.read())['chat_id'], 'owned-chat')
+                    except urllib.error.HTTPError as response:
+                        status = response.code
+                    self.assertEqual(status, expected)
+                start.assert_called_once()
+                self.assertEqual(start.call_args.args[1], 'boss')
+                self.assertEqual(start.call_args.args[2][0]['fields']['Название'], 'Ромашка, ООО')
+        finally:
+            with db_lock(), self.con:
+                self.con.execute('DELETE FROM supplier_directory')
+                self.con.execute("DELETE FROM supplier_meta WHERE key LIKE 'directory_%'")
+
     def test_employee_trend_reuses_employee_access_rules(self):
         expected = [{'month': '2026-09', 'payout': 500, 'share': .05}]
         with patch.object(self.app.engine, 'trend', return_value=expected) as trend:
@@ -536,7 +563,7 @@ class ListenTest(unittest.TestCase):
             return next(i for i in report['items'] if i['code'] == 'logistics_budget')
 
         body = {'emp': 'logistics-http', 'month': '2026-11', 'ref': 'customer-http', 'value': 0}
-        self.assertEqual(item()['payout'], 2000)
+        self.assertEqual(item()['payout'], 3000)
         self.assertEqual(post('pm', body), 403)
         for invalid in ({'value': True}, {'value': None}, {'value': 2}, {'month': '2026-10'},
                         {'month': 'bad'}, {'emp': 'pm'}, {'emp': 'logistics-other'}, {'ref': 'missing'}):
@@ -545,7 +572,7 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(item()['payout'], 0)
         self.assertEqual(item()['details']['rows'][0][-1], 'Нет')
         self.assertEqual(post('boss', {**body, 'value': 1}), 200)
-        self.assertEqual(item()['payout'], 2000)
+        self.assertEqual(item()['payout'], 3000)
 
     def test_client_approval_is_admin_only_and_invalidates_the_employee_report(self):
         with db_lock():

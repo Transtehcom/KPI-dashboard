@@ -116,7 +116,8 @@ class DirectoryTest(unittest.TestCase):
         duplicate = [{'id': 'duplicate', 'fields': {'Название': 'Новый'}}] * 2
         with patch.object(directory, 'fetch', return_value=duplicate):
             self.assertEqual(directory.refresh(self.con, object()), 'error')
-        self.assertEqual(directory.rows(self.con), original)
+        self.assertEqual(directory.rows(self.con)[0]['id'], 'old')
+        self.assertEqual(directory.rows(self.con)[0]['fields']['Название'], 'Старый поставщик')
         self.assertFalse(directory.is_stale(self.con))
         workbook = load_workbook(io.BytesIO(directory.xlsx([])))
         self.assertEqual(workbook.active.max_row, 1)

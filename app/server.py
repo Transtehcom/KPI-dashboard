@@ -21,6 +21,7 @@ from .crm_links import employee_url, portal_origin
 from . import call_feedback, call_recheck, operations, operations_views
 from . import tender_followups, daily_calls
 from . import supplier_directory
+from . import supplier_export
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -667,6 +668,18 @@ class Handler(BaseHTTPRequestHandler):
                 return JsonResponse({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
             month = self.month_param(q["month"]) if q.get("month") else current_month()
+
+            if path == '/api/supplier-directory/gpt' and method == 'POST':
+                if not is_mgr:
+                    return JsonResponse({'error': 'Доступно только руководителю'}, 403)
+                with app.lock:
+                    if not supplier_directory.meta(app.con)['synced_at']:
+                        return JsonResponse({'error': 'Дождитесь загрузки базы поставщиков из 1С'}, 409)
+                    data = supplier_directory.rows(app.con, b.get('search', ''))
+                result = supplier_export.start(app.gpt_service(), me['login'], data,
+                                               model=b.get('model') or 'gpt-6-luna',
+                                               effort=b.get('effort') or 'medium', fast=b.get('fast', False))
+                return JsonResponse(result)
 
             if path in ('/api/supplier-directory', '/api/supplier-directory.xlsx') and method == 'GET':
                 if not is_mgr:

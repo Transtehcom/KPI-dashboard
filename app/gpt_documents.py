@@ -138,8 +138,10 @@ def load(name, raw):
                     units.append({"id": f"line:{index}", "text": records[-1].rstrip("\r\n"),
                                   "cells": cells, "semantics": semantics, "dialect": dialect})
                 obj = (records or [""], encoding)
-        if len(units) > 8000 or sum(len(u["text"]) for u in units) > 250000:
-            raise ValueError("Документ превышает лимит 8 000 блоков или 250 000 символов")
+        # Spreadsheets expose one block per populated cell and are read in bounded pages.
+        max_units, max_characters = (65536, 2000000) if suffix == '.xlsx' else (8000, 250000)
+        if len(units) > max_units or sum(len(u["text"]) for u in units) > max_characters:
+            raise ValueError(f"Документ превышает лимит {max_units} блоков или {max_characters} символов")
         if any(len(u["text"]) > 20000 for u in units):
             raise ValueError("Один текстовый блок превышает 20 000 символов")
         return obj, units

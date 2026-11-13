@@ -3394,6 +3394,38 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       return words.every(word => text.includes(word));
     });
   }
+  async function startSupplierExport(button) {
+    if (state.supplierExportStarting) return;
+    state.supplierExportStarting = true;
+    const scope = state.sup;
+    button.disabled = true;
+    button.textContent = "Открываю ttkGPT…";
+    try {
+      const result = await api("/api/supplier-directory/gpt", {
+        search: scope.search || "", model: state.gptModel || "gpt-6-luna",
+        effort: state.gptEffort || "medium", fast: !!state.gptFast,
+      });
+      if (state.view !== "suppliers" || state.sup !== scope) return;
+      state.gptChat = result.chat_id;
+      state.view = "gpt";
+      location.hash = "gpt";
+      renderShell();
+      await load();
+    } catch (error) {
+      if (error.message !== "auth") toast(error.message);
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = scope.search ? "Скачать найденные в Excel" : "Скачать Excel";
+      }
+    } finally {
+      state.supplierExportStarting = false;
+      const currentButton = document.getElementById("supplierDirectoryDownload");
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.textContent = state.sup.search ? "Скачать найденные в Excel" : "Скачать Excel";
+      }
+    }
+  }
   function renderSupplierDirectory(d) {
     const main = document.getElementById("main"), s = state.sup, meta = d.meta || {};
     const restoreView = globalThis.DashboardUI?.keepView(main, "renderSupplierDirectory") || (() => {});
@@ -3402,9 +3434,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     main.innerHTML = `<section class="panel"><div class="panel-h"><h2>База поставщиков</h2>
       <div class="sp-add" style="gap:8px;align-items:center">
         <button class="btn primary" id="supplierDirectoryRefresh" type="button" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button>
-        ${meta.synced_at ? `<a class="btn" id="supplierDirectoryDownload" download href="/api/supplier-directory.xlsx">Скачать Excel</a>` : ""}</div>
+        ${meta.synced_at ? `<button class="btn" id="supplierDirectoryDownload" type="button" ${state.supplierExportStarting ? "disabled" : ""}>Скачать Excel</button>` : ""}</div>
       <span class="muted small">${meta.synced_at ? "Из 1С: " + ruMoment(meta.synced_at) : "Первая загрузка из 1С"} · автообновление каждый час</span>
-      </div><div class="panel-b"><p class="muted small">Справочник поставщиков и перевозчиков 1С, включая компании без закупок. Теги определяются по связанной номенклатуре. Excel сохраняет все 81 столбец исходной таблицы, поля без данных остаются пустыми.</p>
+      </div><div class="panel-b"><p class="muted small">Excel подготавливается в ttkGPT. Ассистент приводит названия компаний к единому виду и ищет недостающие регионы по ИНН. Итоговый файл с 81 столбцом и источниками регионов появится в чате.</p>
       ${meta.error ? `<p class="small" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(meta.error)}. ${meta.synced_at ? "Показана последняя успешная загрузка." : "Повторите загрузку кнопкой выше."}</p>` : ""}
       <label class="small">Поиск по базе <input type="search" id="supplierDirectorySearch" value="${esc(s.search || "")}" placeholder="Название, ИНН, контакт или тег" style="width:min(100%,420px)"></label>
       <div id="supplierDirectoryList"></div></div></section>`;
@@ -3413,14 +3445,14 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const page = pgInfo(s, rows.length), box = document.getElementById("supplierDirectoryList");
       const download = document.getElementById("supplierDirectoryDownload");
       if (download) {
-        download.href = "/api/supplier-directory.xlsx?" + new URLSearchParams({search: s.search || ""});
-        download.textContent = s.search ? "Скачать найденные в Excel" : "Скачать Excel";
+        download.textContent = state.supplierExportStarting ? "Открываю ttkGPT…" : s.search ? "Скачать найденные в Excel" : "Скачать Excel";
       }
       box.innerHTML = pgHtml(s, rows.length, "поставщиков") + (rows.length ? `<div class="scroll" style="max-height:65vh"><table class="mt"><thead><tr>${d.columns.map(column => `<th>${esc(column)}</th>`).join("")}</tr></thead>
         <tbody>${rows.slice(page.from, page.to).map(row => `<tr>${d.columns.map(column => `<td class="wrap">${esc(row.fields[column] || "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<p class="muted">${d.refreshing && !meta.synced_at ? "Идёт загрузка базы поставщиков из 1С…" : "Поставщики не найдены"}</p>`);
       pgBind(box, s, draw);
     };
     draw();
+    document.getElementById("supplierDirectoryDownload")?.addEventListener("click", event => startSupplierExport(event.currentTarget));
     document.getElementById("supplierDirectoryRefresh").addEventListener("click", () => loadSuppliers(true));
     const input = document.getElementById("supplierDirectorySearch");
     input.addEventListener("input", () => { s.search = input.value; s.page = 0; draw(); });

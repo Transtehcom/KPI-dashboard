@@ -7,6 +7,7 @@ import threading
 
 from .common import db_lock
 from .supplier_categories import CATEGORIES, classify
+from .supplier_format import company_name, region
 
 HEADERS = json.loads(Path(__file__).with_name('supplier_directory_columns.json').read_text('utf-8'))
 DISPLAY = ['Название', 'Реквизит: ИНН', 'Рабочий телефон', 'Мобильный телефон',
@@ -188,18 +189,46 @@ def refresh(con, onec, log=lambda message: None):
         _running.release()
 
 
+def tax_id(value):
+    value = str(value or '').strip()
+    return value if value.isascii() and value.isdigit() and len(value) in (10, 12) else ''
+
+
+def supplier_key(row):
+    inn = tax_id(row['fields'].get('Реквизит: ИНН'))
+    return 'inn:' + inn if inn else 'ref:' + row['id']
+
+
+def formatted_fields(fields):
+    fields = dict(fields)
+    fields['Название'] = company_name(fields.get('Название'))
+    fields['Регион'] = region(fields.get('Регион')) or str(fields.get('Регион') or '').strip()
+    return fields
+
+
+def region_enrichment(con):
+    cutoff = (dt.datetime.now() - dt.timedelta(days=30)).isoformat(timespec='seconds')
+    return {row['supplier_key']: dict(row) for row in con.execute(
+        'SELECT * FROM supplier_region_enrichment WHERE checked_at>=?', (cutoff,))}
+
+
 def rows(con, search=''):
     words = str(search or '').casefold().replace('ё', 'е').split()
+    regions = region_enrichment(con)
     result = []
     for row in con.execute('SELECT id,fields FROM supplier_directory ORDER BY name COLLATE NOCASE,id'):
-        fields = json.loads(row['fields'])
+        fields = formatted_fields(json.loads(row['fields']))
+        if not region(fields['Регион']):
+            saved = regions.get(supplier_key({'id': row['id'], 'fields': fields}))
+            if saved:
+                fields['Регион'] = saved['region']
         text = ' '.join(str(value) for value in fields.values()).casefold().replace('ё', 'е')
         if all(word in text for word in words):
             result.append({'id': row['id'], 'fields': fields})
-    return result
+    return sorted(result, key=lambda row: (row['fields']['Название'].casefold(), row['id']))
 
 
-def xlsx(data):
+def xlsx(data, audit=None):
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -228,6 +257,15 @@ def xlsx(data):
     for entry in data:
         fields = entry['fields']
         sheet.append([cell(fields[header]) if fields.get(header) else None for header in HEADERS])
+    if audit:
+        sheet = book.create_sheet('Источники регионов')
+        sheet.freeze_panes = 'A2'
+        for index, width in enumerate((38, 18, 38, 65, 25), 1):
+            sheet.column_dimensions[get_column_letter(index)].width = width
+        sheet.append([cell(header, heading=True) for header in ('Поставщик', 'ИНН', 'Регион', 'Источник', 'Проверено')])
+        for values in audit:
+            sheet.append([cell(value) for value in values])
+        sheet.auto_filter.ref = f'A1:E{len(audit) + 1}'
     stream = io.BytesIO()
     book.save(stream)
     return stream.getvalue()
