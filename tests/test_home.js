@@ -3,6 +3,7 @@ const html=fs.readFileSync('web/index.html','utf8');
 const start=html.indexOf('  function homeGreeting('),end=html.indexOf('  // ---------- каркас',start);
 assert.ok(start>=0 && end>start,'home helpers exist');
 const context={Intl,Date,esc:String,PREVIEW:null,homeTimer:null,state:{view:'home',boot:{me:{name:'Кирилл Бартов',role:'manager'}}},
+  DashboardTheme:{button:()=>'<button data-theme-toggle>Тёмная тема</button>'},
   document:{getElementById:()=>null},clearTimeout:()=>{},setTimeout:()=>0};
 vm.createContext(context);vm.runInContext(html.slice(start,end),context);
 vm.runInContext(html.slice(html.indexOf('  const METRICS ='),html.indexOf('  const metricsView =')),context);

@@ -18,6 +18,9 @@ class NavigationTest(unittest.TestCase):
     def test_home_screen(self):
         self.run_script("test_home.js")
 
+    def test_theme_switching(self):
+        self.run_script("test_theme.js")
+
     def test_supplier_directory(self):
         self.run_script("test_supplier_directory.js")
 
