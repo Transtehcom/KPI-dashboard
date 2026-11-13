@@ -33,7 +33,7 @@ class LogisticsBudgetTest(unittest.TestCase):
     def test_customer_order_152_actual_mp_is_within_expected_mp(self):
         self.add('00ЦБ-000152')
         item = self.result()
-        self.assertEqual(item['payout'], 2000)
+        self.assertEqual(item['payout'], 3000)
         self.assertEqual(item['details']['rows'][0][2:5], [208196.72, 49323.72, 158873])
         self.assertEqual(item['details']['rows'][0][-2], 'Засчитан')
         self.assertEqual(item['details']['money_cols'], [2, 3, 4])
@@ -43,7 +43,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.add('excess', expected=100, actual=122.01)
         item = self.result()
         self.assertEqual(item['components'][0]['fact'], .5)
-        self.assertEqual(item['payout'], 1000)
+        self.assertEqual(item['payout'], 1500)
         self.assertEqual(item['details']['rows'][1][-2], 'Не засчитан')
 
     def test_unique_customer_orders_in_procurement_do_not_require_quote_basis(self):
@@ -52,7 +52,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.add('closed', status='Закрыт')
         item = self.result()
         self.assertEqual(len(item['details']['rows']), 1)
-        self.assertEqual(item['payout'], 2000)
+        self.assertEqual(item['payout'], 3000)
 
     def test_missing_actual_cannot_use_previous_transport_comparison_or_zero(self):
         self.add('missing', actual=None)
@@ -65,7 +65,7 @@ class LogisticsBudgetTest(unittest.TestCase):
 
     def test_zero_is_valid_and_missing_expected_or_coverage_waits(self):
         self.add('zero', expected=0, actual=0)
-        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(self.result()['payout'], 3000)
         self.add('missing', expected=None)
         self.assertIsNone(self.result()['components'][0]['fact'])
         self.con.execute('DELETE FROM logistics_deliveries WHERE id=?', ('missing',))
@@ -77,13 +77,13 @@ class LogisticsBudgetTest(unittest.TestCase):
         self.add('complete')
         item = self.result()
         self.assertEqual(item['components'][0]['fact'], .5)
-        self.assertEqual(item['payout'], 1000)
+        self.assertEqual(item['payout'], 1500)
         self.con.execute("UPDATE logistics_deliveries SET shipment_pct=100 WHERE id='partial'")
-        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(self.result()['payout'], 3000)
         self.con.execute("UPDATE logistics_deliveries SET shipment_pct=99.999,actual_delivery_vat=NULL WHERE id='partial'")
-        self.assertEqual(self.result()['payout'], 1000)
+        self.assertEqual(self.result()['payout'], 1500)
         manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'partial', 0, 'admin')
-        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(self.result()['payout'], 3000)
 
     def test_unknown_shipment_cannot_be_treated_as_full(self):
         self.add('unknown', shipment=None)
@@ -99,7 +99,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         with patch.object(source, '_load', return_value=[raw]):
             rows = source.fetch(self.con, {'логист': 'logist'}, dt.date(2026, 11, 1), dt.date(2026, 11, 30))['logistics_deliveries']
         replace_rows(self.con, 'logistics_deliveries', rows)
-        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(self.result()['payout'], 3000)
 
     def test_malformed_imported_audit_does_not_break_employee_report(self):
         self.add('imported')
@@ -107,7 +107,7 @@ class LogisticsBudgetTest(unittest.TestCase):
             with self.subTest(audit=audit):
                 self.con.execute('UPDATE logistics_deliveries SET delivery_cost_sources=?', (audit,))
                 item = self.result()
-                self.assertEqual(item['payout'], 2000)
+                self.assertEqual(item['payout'], 3000)
 
     def test_odata_reconstructs_actual_mp_from_supplier_settlement_objects(self):
         customer = {'Ref_Key': 'order', 'Number': '00ЦБ-000152', 'Date': '2026-10-08',
@@ -209,12 +209,12 @@ class LogisticsBudgetTest(unittest.TestCase):
         manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'unknown', 0, 'admin')
         item = self.result()
         self.assertEqual(item['components'][0]['fact'], 1)
-        self.assertEqual(item['payout'], 2000)
+        self.assertEqual(item['payout'], 3000)
         self.assertEqual(item['details']['rows'][1][-2:], ['Исключён из расчёта', 'Нет'])
         self.assertEqual(item['details']['budget_inclusion']['rows'][1], {'ref': 'unknown', 'value': 0})
         self.con.execute("DELETE FROM logistics_deliveries WHERE id='unknown'")
         self.add('replacement', customer='unknown', actual=None)
-        self.assertEqual(self.result()['payout'], 2000)
+        self.assertEqual(self.result()['payout'], 3000)
         self.assertEqual(manual.logistics_budget_inclusions(self.con, 'logist', '2026-12'), {})
         self.assertEqual(manual.logistics_budget_inclusions(self.con, 'other', '2026-11'), {})
         manual.set_logistics_budget_inclusion(self.con, 'logist', '2026-11', 'unknown', 1, 'admin')
@@ -239,7 +239,7 @@ class LogisticsBudgetTest(unittest.TestCase):
         item = self.result()
         amounts = {row[0]: row[3] for row in item['details']['rows']}
         self.assertEqual(amounts, {'151': 273196.72, '133': 51969.67, '144': 0, '152': 49323.72})
-        self.assertEqual(item['payout'], 1000)
+        self.assertEqual(item['payout'], 1500)
         self.con.execute("UPDATE logistics_deliveries SET actual_delivery_novat=10 WHERE id='151'")
         self.assertEqual({row[0]: row[3] for row in self.result()['details']['rows']}['151'], 10)
 

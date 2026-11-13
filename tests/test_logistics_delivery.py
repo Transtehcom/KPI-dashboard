@@ -27,7 +27,7 @@ class LogisticsDeliveryTest(unittest.TestCase):
         return result, result['items'][0]
 
     def test_98_percent_pays_full_and_49_percent_pays_half(self):
-        for good, expected in ((98, 2000), (49, 1000), (100, 2000), (0, 0)):
+        for good, expected in ((98, 2500), (49, 1250), (100, 2500), (0, 0)):
             with self.subTest(good=good):
                 self.con.execute('DELETE FROM logistics_deliveries')
                 for index in range(100):

@@ -36,8 +36,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertFalse(p['items'][5]['enabled'])
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
-        self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
-        self.assertAlmostEqual(sum(i["weight"] for i in p["items"]), 1)
+        self.assertEqual([i["weight"] for i in p["items"]], [.25, .30, .15, .15, .15, .15])
+        self.assertAlmostEqual(sum(i["weight"] for i in Engine.items_for(p, "2026-11")), 1)
         self.assertEqual([i["n"] for i in p["items"]], list(range(1, 7)))
         self.assertEqual(len({i["code"] for i in p["items"]}), 6)
         self.assertFalse(any("85%" in issue for issue in p["setup_issues"]))
@@ -68,8 +68,8 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertFalse(r["draft"])
                 self.assertEqual(r["salary"], 70000)
                 self.assertEqual(r["kpi_bonus"], 10000)
-                self.assertEqual([item["amount"] for item in r["items"]], [2000, 2000, 1500, 1500, 1500])
-                self.assertEqual(sum(item["amount"] for item in r["items"]), 8500)
+                self.assertEqual([item["amount"] for item in r["items"]], [2500, 3000, 1500, 1500, 1500])
+                self.assertEqual(sum(item["amount"] for item in r["items"]), 10000)
                 self.assertEqual(r["payout"], 0)
                 self.assertEqual(r["met_count"], 0)
                 self.assertEqual(len(r["items"]), 5)
@@ -254,7 +254,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(len(p["items"]), 5)
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
-        self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15])
+        self.assertEqual([i["weight"] for i in p["items"]], [.25, .30, .15, .15, .15])
 
 
 if __name__ == "__main__":

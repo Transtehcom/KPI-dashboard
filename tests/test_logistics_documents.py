@@ -26,7 +26,7 @@ class LogisticsDocumentsTest(unittest.TestCase):
     def test_disabled_sixth_item_is_absent_in_reports_and_methodology(self):
         result = self.engine.compute('logist', '2026-11')
         self.assertEqual([row['n'] for row in result['items']], [1, 2, 3, 4, 5])
-        self.assertEqual(sum(row['amount'] for row in result['items']), 8500)
+        self.assertEqual(sum(row['amount'] for row in result['items']), 10000)
         self.assertNotIn('logistics_discipline', [row['code'] for row in result['items']])
         app = App.__new__(App)
         app.config, app.rules, app.con = self.config, self.rules, self.con
