@@ -730,15 +730,42 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
   text-transform: none; letter-spacing: -.035em; margin: 0 0 30px; }
 .home-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .home-tile { display: flex; flex-direction: column; justify-content: space-between; gap: 22px; min-height: 144px;
-  padding: 20px 22px; border: 2px solid transparent; border-radius: 4px; background: linear-gradient(145deg, #3a4185 0%, #3d6fa7 54%, #4bbbb8 100%);
+  --home-gradient: linear-gradient(145deg, #3a4185 0%, #3d6fa7 54%, #4bbbb8 100%);
+  padding: 20px 22px; border: 2px solid transparent; border-radius: 4px; background: var(--home-gradient);
   color: #fff; text-decoration: none; transition: transform 180ms ease, border-color 180ms ease, filter 100ms ease, box-shadow 180ms ease; }
-.home-tile h2 { margin: 0; font: 600 28px/1.15 var(--head); letter-spacing: .025em; text-transform: uppercase; color: inherit; }
-.home-tile p { margin: 0; padding-top: 12px; border-top: 1px solid #ffffff45; font-size: 12px; line-height: 1.5; color: #ffffffdf; }
+.home-tile h2, .home-split-title { margin: 0; font: 600 28px/1.15 var(--head); letter-spacing: .025em; text-transform: uppercase; color: inherit; }
+.home-tile p, .home-split-description { margin: 0; padding-top: 12px; border-top: 1px solid #ffffff45; font-size: 12px; line-height: 1.5; color: #ffffffdf; }
 @media (hover: hover) and (pointer: fine) {
   .home-tile:hover { transform: scale(1.025); border-color: var(--teal); color: #fff; text-decoration: none; box-shadow: 0 8px 22px #22304d22; }
 }
 .home-tile:active { transform: scale(1); border-color: transparent; filter: brightness(.88); box-shadow: none; }
 .home-tile:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+.home-split { position: relative; display: block; padding: 0; background: transparent; }
+.home-split-front { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between;
+  gap: 22px; width: 100%; padding: 18px 20px; border: 0; border-radius: 2px; color: #fff;
+  text-align: left; background: var(--home-gradient); cursor: pointer;
+  transition: opacity 220ms ease, transform 320ms ease; }
+.home-split-pages { position: absolute; inset: -2px; display: grid;
+  grid-template-columns: repeat(var(--home-page-count), minmax(0, 1fr)); gap: 0;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: gap 320ms ease, opacity 220ms ease, visibility 0s 320ms; }
+.home-split-link { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 12px 6px;
+  border: 2px solid transparent; border-radius: 4px; background: var(--home-gradient);
+  background-size: calc(var(--home-page-count) * 100%) 100%; color: #fff; text-align: center;
+  font: 600 clamp(12px, 1vw, 16px)/1.25 var(--head); letter-spacing: .025em; text-transform: uppercase;
+  white-space: nowrap; overflow-wrap: normal; text-decoration: none; opacity: 0; transform: translateY(8px) scaleX(.92);
+  transition: transform 300ms ease, opacity 220ms ease, border-color 180ms ease, filter 100ms ease;
+  transition-delay: calc(var(--home-page-index) * 25ms); }
+.home-split.is-open { border-color: transparent; box-shadow: none; }
+.home-split.is-open .home-split-front { opacity: 0; transform: scaleX(1.04); pointer-events: none; }
+.home-split.is-open .home-split-pages { gap: 8px; opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
+.home-split.is-open .home-split-link { opacity: 1; transform: none; }
+.home-split-link:hover { color: #fff; text-decoration: none; border-color: var(--teal); filter: brightness(1.08); }
+.home-split:active { filter: none; }
+.home-split-link:active { transform: scale(.98); filter: brightness(.88); transition-delay: 0s; }
+.home-split:focus-within { outline: 2px solid var(--teal); outline-offset: 4px; }
+.home-split-front:focus-visible { outline: none; }
+.home-split-link:focus-visible { outline: 2px solid #fff; outline-offset: -6px; }
 .brand-home { color: var(--fg); text-decoration: none; }
 .brand-home:hover { text-decoration: none; }
 .brand-home .brand-word, .brand-home .brand-app { transition: text-shadow 180ms ease; }
@@ -1102,24 +1129,67 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   function homeSections(isMgr) {
     const sections = [
       {key:"kpi",href:isMgr ? "#team" : "#kpi",title:isMgr ? "KPI сотрудников" : "Мой KPI",description:isMgr ? "Показатели, планы и премии команды" : "Мои показатели, планы и премия"},
-      {key:"funnel",href:"#funnel",title:"Воронки",description:"По дате и фактическим изменениям"},
+      {key:"funnel",href:"#funnel",title:"Воронки",description:"По дате и фактическим изменениям",
+        pages:PREVIEW ? null : [{title:"По дате",href:"#funnel"},{title:"Факт",href:"#funnel-fact"}]},
       {key:"calls",href:"#calls",title:"Звонки",description:"Записи, расшифровки и оценки"},
       {key:"gpt",href:"#gpt",title:"ttkGPT",description:"Ассистент по рабочим данным"},
       {key:"workload",href:"#workload",title:"Загрузка",description:"Задачи и занятость сотрудников",admin:true},
-      {key:"metrics",href:"#metrics-sales",title:"Метрики",description:"Продажи, снабжение и логистика",admin:true},
+      {key:"metrics",href:"#metrics-sales",title:"Метрики",description:"Продажи, снабжение и логистика",admin:true,
+        pages:Object.values(METRICS).map(page => ({title:page.title,href:"#" + page.hash}))},
       {key:"money",href:"#money",title:"Деньги",description:"Платежи, планы и задолженность",admin:true},
-      {key:"suppliers",href:"#suppliers",title:"Поставщики",description:"Поставщики, закупки и заявки",admin:true},
+      {key:"suppliers",href:"#suppliers",title:"Поставщики",description:"Поставщики, закупки и заявки",admin:true,
+        pages:[{title:"Закупки",label:"Закупки у поставщиков",href:"#suppliers"},{title:"Заявки",label:"Заявки поставщикам",href:"#suppliers?mode=requests"},
+               {title:"База",label:"База поставщиков",href:"#suppliers?mode=directory"}]},
       {key:"staff",href:"#staff",title:"Сотрудники",description:"Команда, должности и профили"}
     ];
     return sections.filter(section => (!section.admin || isMgr) && (!PREVIEW || ["kpi", "funnel"].includes(section.key)));
+  }
+
+  function homeTile(section) {
+    if (!section.pages) return `<a class="home-tile" href="${section.href}"><h2>${esc(section.title)}</h2><p>${esc(section.description)}</p></a>`;
+    return `<div class="home-tile home-split" data-home-split style="--home-page-count:${section.pages.length}">
+      <button type="button" class="home-split-front" aria-expanded="false" aria-controls="home-pages-${section.key}">
+        <span class="home-split-title">${esc(section.title)}</span><span class="home-split-description">${esc(section.description)}</span></button>
+      <nav class="home-split-pages" id="home-pages-${section.key}" aria-label="${esc(section.title)}" inert>
+        ${section.pages.map((page, index) => `<a class="home-split-link" href="${page.href}" aria-label="${esc(section.title + ' — ' + (page.label || page.title))}" style="--home-page-index:${index};background-position:${index * 100 / (section.pages.length - 1)}% 0">${esc(page.title)}</a>`).join("")}
+      </nav></div>`;
+  }
+
+  function bindHomeSplits(main) {
+    const cards = [...main.querySelectorAll("[data-home-split]")];
+    const setOpen = (card, open) => {
+      card.classList.toggle("is-open", open);
+      card.querySelector(".home-split-front").setAttribute("aria-expanded", String(open));
+      card.querySelector(".home-split-pages").inert = !open;
+    };
+    for (const card of cards) {
+      const button = card.querySelector(".home-split-front");
+      card.addEventListener("pointerenter", event => { if (event.pointerType !== "touch") setOpen(card, true); });
+      card.addEventListener("pointerleave", () => { if (!card.contains(document.activeElement)) setOpen(card, false); });
+      card.addEventListener("focusin", () => setOpen(card, true));
+      card.addEventListener("focusout", event => { if (!card.contains(event.relatedTarget)) setOpen(card, false); });
+      button.addEventListener("click", event => {
+        setOpen(card, true);
+        if (event.detail === 0) card.querySelector(".home-split-link").focus();
+      });
+      card.addEventListener("keydown", event => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        button.focus();
+        setOpen(card, false);
+      });
+    }
+    main.addEventListener("pointerdown", event => {
+      for (const card of cards) if (!card.contains(event.target)) setOpen(card, false);
+    });
   }
 
   function renderHome() {
     clearTimeout(homeTimer);
     const main = document.getElementById("main"), me = state.boot.me;
     if (!document.getElementById("homeGreeting")) {
-      main.innerHTML = `<section class="home"><h1 id="homeGreeting"></h1><nav class="home-grid" aria-label="Разделы дашборда">${homeSections(me.role === "manager").map(section =>
-        `<a class="home-tile" href="${section.href}"><h2>${esc(section.title)}</h2><p>${esc(section.description)}</p></a>`).join("")}</nav></section>`;
+      main.innerHTML = `<section class="home"><h1 id="homeGreeting"></h1><nav class="home-grid" aria-label="Разделы дашборда">${homeSections(me.role === "manager").map(homeTile).join("")}</nav></section>`;
+      bindHomeSplits(main);
     }
     const update = () => {
       const heading = document.getElementById("homeGreeting");
