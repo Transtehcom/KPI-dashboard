@@ -32,7 +32,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
         self.assertFalse(p["draft"])
-        self.assertEqual([item["n"] for item in p["items"] if item.get("draft")], [3, 5, 6])
+        self.assertEqual([item["n"] for item in p["items"] if item.get("draft")], [5, 6])
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
@@ -76,7 +76,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertTrue(r["warnings"])
                 self.assertIsNone(r["items"][0]["pct"])
                 self.assertEqual(r["items"][1]["payout"], 0)
-                drafts = [r["items"][n - 1] for n in (3, 5, 6)]
+                drafts = [r["items"][n - 1] for n in (5, 6)]
                 self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in drafts))
                 self.assertEqual(r["items"][3]["status"], "awaiting")
                 self.assertEqual(engine.summary("logist", month)["payout"], 0)
@@ -184,7 +184,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertIsNone(item["components"][0]["fact"])
         self.assertEqual(item["details"]["rows"], [])
 
-    def test_request_speed_previews_first_arrival_to_last_completion_without_payout(self):
+    def test_request_speed_uses_first_arrival_and_last_completion_with_24_hour_norm(self):
         engine = self.engine_with_draft()
         history = [["Отработана", "2026-08-05T07:58:32"],
                    ["Поступила", "2026-08-04T19:18:33"],
@@ -203,12 +203,12 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                     if i["code"] == "logistics_request_speed")
         self.assertIn("details", item)
         self.assertEqual(item["details"]["columns"],
-                         ["Заявка", "Дата заявки", "Ответственный логист", "Статус", "Поступила", "Отработана", "Время обработки"])
+                         ["Заявка", "Дата заявки", "Ответственный логист", "Статус", "Поступила", "Отработана", "Время обработки", "Результат"])
         self.assertEqual(item["details"]["rows"], [["000001973", "2026-08-04", "Логист", "Отработана",
-                         "2026-08-04T19:18:33", "2026-08-05T07:58:32", "12 ч 39 мин 59 с"]])
-        self.assertEqual(item["status"], "draft")
-        self.assertIsNone(item["pct"])
-        self.assertEqual(item["payout"], 0)
+                         "2026-08-04T19:18:33", "2026-08-05T07:58:32", "12 ч 39 мин 59 с", "В норматив"]])
+        self.assertEqual(item["status"], "met")
+        self.assertEqual(item["pct"], 1)
+        self.assertEqual(item["payout"], 1500)
 
     def test_request_speed_missing_or_invalid_dates_stay_unknown(self):
         engine = self.engine_with_draft()
@@ -228,7 +228,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         item = next(i for i in engine.compute("logist", "2026-11")["items"]
                     if i["code"] == "logistics_request_speed")
         self.assertIn("details", item)
-        self.assertEqual([r[-1] for r in item["details"]["rows"]],
+        self.assertEqual([r[-2] for r in item["details"]["rows"]],
                          [expected for _, expected in cases] + ["Нет дат статусов"])
         self.assertEqual(item["extra"][-1]["value"], "Период загружен не полностью")
         self.assertEqual(item["payout"], 0)

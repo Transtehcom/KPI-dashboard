@@ -39,7 +39,7 @@ class LogisticsDeliveryTest(unittest.TestCase):
                 self.assertEqual(report['payout'], expected)
                 self.assertEqual(report['items'][1]['payout'], 0)
                 self.assertTrue(all(report['items'][n - 1]['status'] == 'draft' and report['items'][n - 1]['payout'] == 0
-                                    for n in (3, 5, 6)))
+                                    for n in (5, 6)))
                 self.assertEqual(report['items'][3]['status'], 'awaiting')
 
     def test_one_customer_counts_once_across_documents_and_uses_document_month(self):

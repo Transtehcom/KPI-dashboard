@@ -460,51 +460,45 @@ class Engine:
                             "money_cols": [2, 3, 4], "rows": details}}
 
     def calc_logistics_request_speed(self, e, ctx, p):
-        from .operations import local_datetime
+        from .operations import TZ
+        from .logistics_request_speed import request_timing
 
         rows = self.q("SELECT * FROM transport_requests WHERE emp=? AND dt>=? AND dt<=? "
                       "AND NOT COALESCE(deleted,0) ORDER BY dt,doc,id", e["login"],
                       ctx["first"].isoformat(), ctx["last"].isoformat())
         details, timed = [], 0
+        counts = dict.fromkeys(("good", "late", "pending", "unknown"), 0)
+        now = dt.datetime.now(TZ).replace(tzinfo=None)
         for row in rows:
-            try:
-                history = json.loads(row["history"] or "[]")
-            except (TypeError, ValueError):
-                history = []
-            dates = {"Поступила": [], "Отработана": []}
-            for event in history if isinstance(history, list) else []:
-                if not isinstance(event, list) or len(event) != 2 or not isinstance(event[0], str):
-                    continue
-                if event[0] in dates:
-                    moment = local_datetime(event[1])
-                    if moment:
-                        dates[event[0]].append(moment)
-            received = min(dates["Поступила"], default=None)
-            finished = max(dates["Отработана"], default=None)
-            if received is None and finished is None:
-                duration = "Нет дат статусов"
-            elif received is None:
-                duration = "Нет даты «Поступила»"
-            elif finished is None:
-                duration = "Нет даты «Отработана»"
-            elif finished < received:
-                duration = "«Отработана» раньше «Поступила»"
-            else:
-                hours, remainder = divmod(int((finished - received).total_seconds()), 3600)
-                minutes, seconds = divmod(remainder, 60)
-                duration = f"{hours} ч {minutes:02} мин {seconds:02} с"
-                timed += 1
+            timing = request_timing(row["history"], row["status"], now, p["processing_minutes"])
+            counts[timing["category"]] += 1
+            received, finished = timing["received"], timing["finished"]
+            timed += timing["category"] in ("good", "late") and finished is not None
             status = {"ВРаботе": "В работе", "ЗапросИнформации": "Запрос информации"}.get(row["status"], row["status"])
             details.append([row["doc"] or row["id"], row["dt"], e.get("onec_manager") or e["name"], status,
                             received.isoformat(timespec="seconds") if received else None,
-                            finished.isoformat(timespec="seconds") if finished else None, duration])
+                            finished.isoformat(timespec="seconds") if finished else None,
+                            timing["duration"], timing["result"]])
         known = not self._missing_datasets(ctx, ("transport_requests",))
-        return {"components": [],
+        assessed = counts["good"] + counts["late"]
+        share = counts["good"] / assessed if known and assessed and not counts["unknown"] else None
+        component = comp("Заявки, отработанные не дольше 24 часов", share, p["target"], "%", source=SRC_1C)
+        if share is not None:
+            completion = min(Decimal(1), Decimal(counts["good"]) / Decimal(assessed) / Decimal(str(p["target"])))
+            component["pct"] = float(completion.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+                                     .quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        return {"components": [component],
                 "extra": [{"label": "Заявок за месяц", "value": len(rows)},
                           {"label": "С рассчитанным временем", "value": timed},
+                          {"label": "В норматив", "value": counts["good"]},
+                          {"label": "Просрочены", "value": counts["late"]},
+                          {"label": "Время ещё есть", "value": counts["pending"]},
+                          {"label": "Нет данных для оценки", "value": counts["unknown"]},
                           {"label": "Данные 1С", "value": "Загружены за период" if known else "Период загружен не полностью"}],
+                "warnings": (["История транспортных заявок загружена не за весь период."] if not known else []) +
+                            (["Для части заявок не хватает корректной истории статусов. Расчёт ожидает данных."] if counts["unknown"] else []),
                 "details": {"columns": ["Заявка", "Дата заявки", "Ответственный логист", "Статус",
-                                        "Поступила", "Отработана", "Время обработки"], "rows": details}}
+                                        "Поступила", "Отработана", "Время обработки", "Результат"], "rows": details}}
 
     def calc_logistics_cargo_safety(self, e, ctx, p):
         from .logistics_cargo import report
