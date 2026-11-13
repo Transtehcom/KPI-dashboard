@@ -1088,8 +1088,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   }
 
   function homeGreeting(name, now = new Date()) {
-    const hour = Number(new Intl.DateTimeFormat("ru-RU", {timeZone: "Asia/Yekaterinburg", hour: "numeric", hourCycle: "h23"}).format(now));
-    const greeting = hour >= 5 && hour < 12 ? "Доброе утро" : hour >= 12 && hour < 18 ? "Добрый день" : hour >= 18 && hour < 23 ? "Добрый вечер" : "Доброй ночи";
+    const parts = new Intl.DateTimeFormat("ru-RU", {timeZone: "Asia/Yekaterinburg", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).formatToParts(now);
+    const minutes = Number(parts.find(part => part.type === "hour").value) * 60 + Number(parts.find(part => part.type === "minute").value);
+    let greeting;
+    if (minutes >= 361 && minutes <= 720) greeting = "Доброе утро";
+    else if (minutes >= 721 && minutes <= 1080) greeting = "Добрый день";
+    else if (minutes === 0 || minutes >= 1081) greeting = "Добрый вечер";
+    else greeting = "Доброй ночи";
     const firstName = String(name || "").trim().split(/\s+/)[0];
     return greeting + (firstName ? ", " + firstName : "");
   }
@@ -1120,7 +1125,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const heading = document.getElementById("homeGreeting");
       if (state.view !== "home" || !heading) return;
       heading.textContent = homeGreeting(state.boot.me.name);
-      homeTimer = setTimeout(update, 60000);
+      homeTimer = setTimeout(update, 60000 - Date.now() % 60000 + 10);
     };
     update();
   }
@@ -4428,6 +4433,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     button.disabled = true;
     if (document.getElementById("main") && state.boot) load();
     else start();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.boot && state.view === "home" && document.getElementById("main")) renderHome();
   });
 
   window.addEventListener("hashchange", () => {

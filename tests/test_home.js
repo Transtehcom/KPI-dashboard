@@ -9,6 +9,11 @@ for(const [utc,word] of [['2026-11-13T02:00:00Z','Доброе утро'],['2026
   ['2026-11-13T14:00:00Z','Добрый вечер'],['2026-11-13T20:00:00Z','Доброй ночи']]) {
   assert.equal(context.homeGreeting('Кирилл Бартов',new Date(utc)),word+', Кирилл');
 }
+for(const [local,word] of [['00:00','Добрый вечер'],['00:01','Доброй ночи'],
+  ['06:00','Доброй ночи'],['06:01','Доброе утро'],['12:00','Доброе утро'],
+  ['12:01','Добрый день'],['18:00','Добрый день'],['18:01','Добрый вечер'],['23:59','Добрый вечер']]) {
+  assert.equal(context.homeGreeting('Кирилл Бартов',new Date('2026-11-13T'+local+':59+05:00')),word+', Кирилл');
+}
 assert.equal(context.homeSections(true).length,9);
 assert.equal(context.homeSections(false).length,5);
 assert.deepEqual(Array.from(context.homeSections(false),x=>x.href),['#kpi','#funnel','#calls','#gpt','#staff']);
