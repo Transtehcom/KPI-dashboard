@@ -8,6 +8,7 @@ from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, merge_rows, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
 from . import b24_sales_register, onec_money, onec_sales_register, operations, onec_operations, tender_followups
+from . import supplier_directory
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC, supplier_date_from
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -156,6 +157,8 @@ def run(con, config, force_demo=False):
                             **{k: {**ds, "order_managers": owners} for k, ds in onec_cfg["datasets"].items()
                                if k in ("sales", "receivables") and isinstance(ds, dict)}}}
                     onec = OneC(onec_cfg, log=log.append)
+                    if supplier_directory.is_stale(con) and supplier_directory.refresh(con, onec, log.append) == 'error':
+                        status = 'error'
                     managers = {str(e["onec_manager"]).strip().lower(): e["login"] for e in emps if e.get("onec_manager")}
                     data = onec.fetch(con, managers, date_from, date_to)
                     supplier_ds = onec_cfg.get("datasets", {}).get("supplier_orders", {})

@@ -1,0 +1,22 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const html = fs.readFileSync('web/index.html', 'utf8');
+const context = {state: {}, URLSearchParams};
+vm.createContext(context);
+const routing = html.slice(html.indexOf('  const supQuery ='), html.indexOf('  async function loadSuppliers('));
+vm.runInContext(routing, context);
+context.supFromHash('suppliers?mode=directory');
+assert.equal(context.state.sup.mode, 'directory');
+assert.equal(context.supParams().get('mode'), 'directory');
+const filter = html.slice(html.indexOf('  function supplierDirectoryFiltered('), html.indexOf('  function renderSupplierDirectory('));
+vm.runInContext(filter, context);
+const rows = [{fields: {'Название': 'Ёмкости А', 'Реквизит: ИНН': '00123', 'Теги отдела снабжения': 'Резервуары'}},
+              {fields: {'Название': 'Б', 'Реквизит: ИНН': '456'}}];
+assert.equal(context.supplierDirectoryFiltered(rows, 'емкости 00123').length, 1);
+assert.equal(context.supplierDirectoryFiltered(rows, 'резервуары').length, 1);
+assert.equal(context.supplierDirectoryFiltered(rows, 'unknown').length, 0);
+assert.ok(html.includes('href="#suppliers?mode=directory" data-tab="suppliers" data-mode="directory"'));
+assert.ok(html.includes('"/api/supplier-directory.xlsx?" + new URLSearchParams'));
+assert.ok(html.includes('if (d.mode === "directory") { renderSupplierDirectory(d); return; }'));
+console.log('Supplier directory navigation, filtering and download: OK');

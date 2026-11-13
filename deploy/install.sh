@@ -15,7 +15,7 @@ REPO=https://github.com/Transtehcom/KPI-dashboard.git
 
 echo "== Пакеты"
 apt-get update -q
-apt-get install -y -q python3 git sqlite3
+apt-get install -y -q python3 python3-openpyxl git sqlite3
 if ! apt-get install -y -q caddy; then
   # Caddy нет в репозиториях Ubuntu — ставим из официального репозитория Caddy
   apt-get install -y -q debian-keyring debian-archive-keyring apt-transport-https curl gnupg

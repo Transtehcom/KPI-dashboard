@@ -204,6 +204,7 @@ class OrderConversionTest(unittest.TestCase):
                "onec": {"base_url": "https://example.test/", "datasets": {"conversion_orders": {"source": "conversion_orders"}}}}
         self.loaded("2025-01-01", "2025-12-31")
         with mock.patch("app.sync.OneC") as api, mock.patch("app.sync.onec_sales_register.fetch", return_value=[]), \
+                mock.patch("app.sync.supplier_directory.refresh", return_value='ok'), \
                 mock.patch("app.sync.onec_money.fetch", return_value={"cash": [], "plan": []}):
             api.return_value.fetch.return_value = {"conversion_orders": []}
             r = sync.run(self.con, cfg)

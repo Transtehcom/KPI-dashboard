@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 from .crm_links import employee_url, portal_origin
 from . import call_feedback, call_recheck, operations, operations_views
 from . import tender_followups, daily_calls
+from . import supplier_directory
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
@@ -51,6 +52,13 @@ class JsonResponse:
     data: object
     code: int = 200
     cookie: str | None = None
+
+
+@dataclass
+class FileResponse:
+    body: bytes
+    filename: str
+    content_type: str
 
 
 def hash_password(password, salt=None):
@@ -159,6 +167,13 @@ class App:
             finally:
                 self.suppliers_busy.release()
         threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def refresh_supplier_directory(self):
+        if supplier_directory.refreshing():
+            return False
+        onec = OneC(self.config['onec'], log=lambda *args: None)
+        threading.Thread(target=supplier_directory.refresh, args=(self.con, onec), daemon=True).start()
         return True
 
     def sales_team(self):  # сотрудники отдела ОП для панели «Метрики → Отдел продаж»
@@ -607,6 +622,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def api(self, method, path, q):
         response = self.api_response(method, path, q)
+        if isinstance(response, FileResponse):
+            self.send_response(200)
+            self.send_header('Content-Type', response.content_type)
+            self.send_header('Content-Disposition', 'attachment; filename="' + response.filename + '"')
+            self.send_header('Content-Length', str(len(response.body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self.wfile.write(response.body)
+            return
         if response is not None:
             # Socket writes can wait on a slow client. Release database locks first.
             self.send_json(response.data, response.code, response.cookie)
@@ -642,6 +667,25 @@ class Handler(BaseHTTPRequestHandler):
                 return JsonResponse({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
             month = self.month_param(q["month"]) if q.get("month") else current_month()
+
+            if path in ('/api/supplier-directory', '/api/supplier-directory.xlsx') and method == 'GET':
+                if not is_mgr:
+                    return JsonResponse({'error': 'Доступно только руководителю'}, 403)
+                started = False
+                with app.lock:
+                    if path.endswith('.xlsx'):
+                        if not supplier_directory.meta(app.con)['synced_at']:
+                            return JsonResponse({'error': 'Дождитесь первой загрузки базы поставщиков из 1С'}, 409)
+                    elif q.get('refresh') or supplier_directory.is_stale(app.con):
+                        started = app.refresh_supplier_directory()
+                    data = supplier_directory.rows(app.con, q.get('search', ''))
+                    source_meta = supplier_directory.meta(app.con)
+                if path.endswith('.xlsx'):
+                    return FileResponse(supplier_directory.xlsx(data), 'supplier-directory.xlsx',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                return JsonResponse({'mode': 'directory', 'list': data, 'meta': source_meta,
+                                     'columns': supplier_directory.DISPLAY,
+                                     'refreshing': started or supplier_directory.refreshing()})
 
             if path == '/api/operations' or path.startswith('/api/operations/'):
                 return self.operations_response(method,path,q,b,me)

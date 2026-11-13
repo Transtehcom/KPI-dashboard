@@ -262,6 +262,8 @@ CREATE TABLE IF NOT EXISTS supplier_lines (
 CREATE INDEX IF NOT EXISTS supplier_lines_partner ON supplier_lines (partner_key, doc_date);
 CREATE INDEX IF NOT EXISTS supplier_lines_item ON supplier_lines (item_key, doc_date);
 CREATE TABLE IF NOT EXISTS supplier_meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS supplier_directory (
+  id TEXT PRIMARY KEY, name TEXT, inn TEXT, fields TEXT);
 -- «Заявки поставщикам»: предложения поставщиков из заявок в отдел снабжения (статус «Отработана»), по строке заявки и поставщику;
 -- price пусто — поставщика запрашивали, цены нет; best — лучшая цена в строке; chosen — выбран текущим поставщиком строки
 CREATE TABLE IF NOT EXISTS supplier_quotes (

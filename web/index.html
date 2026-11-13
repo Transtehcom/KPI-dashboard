@@ -1240,7 +1240,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
         <a class="brand brand-home" href="#home" aria-label="На главную"><span class="brand-logo-wrap"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg></span><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></a>
-        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${!PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">ttkGPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${!PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
+        <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${!PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">ttkGPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && !["requests", "directory"].includes((state.sup || {}).mode) ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a><a href="#suppliers?mode=directory" data-tab="suppliers" data-mode="directory" class="${state.view === "suppliers" && (state.sup || {}).mode === "directory" ? "on" : ""}">База поставщиков</a></div></details>` : ""}${!PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
           <label class="muted small" for="month" ${noMonth ? "hidden" : ""}>Период</label>
@@ -1261,8 +1261,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       else if (a.dataset.tab === "workload") { state.view = "workload"; location.hash = "workload"; }
       else if (a.dataset.tab === "money") { state.view = "money"; location.hash = "money"; }
       else if (a.dataset.tab === "suppliers") {
-        const req = a.dataset.mode === "requests", h = req ? "suppliers?mode=requests" : "suppliers";
-        state.view = "suppliers"; state.sup = { partner: "", inn: "", item: "", date_from: "", date_to: "", hq: h, mode: req ? "requests" : "", size: (state.sup || {}).size, page: 0 }; location.hash = h;
+        const mode = ["requests", "directory"].includes(a.dataset.mode) ? a.dataset.mode : "", h = mode ? "suppliers?mode=" + mode : "suppliers";
+        state.view = "suppliers"; state.sup = { partner: "", inn: "", item: "", date_from: "", date_to: "", hq: h, mode, size: (state.sup || {}).size, page: 0 }; location.hash = h;
       }
       else if (a.dataset.tab === "calls") { state.view = "calls"; location.hash = "calls"; }
       else if (METRICS[a.dataset.tab]) { state.view = a.dataset.tab; location.hash = METRICS[a.dataset.tab].hash; }
@@ -3254,12 +3254,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   const supQuery = (h) => { const i = h.indexOf("?"); return Object.fromEntries(new URLSearchParams(i < 0 ? "" : h.slice(i + 1))); };
   function supFromHash(h) {  // ссылка из карточки поставщика: #suppliers?inn=… или ?partner=…
     const q = supQuery(h);
-    state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h, mode: q.mode === "requests" ? "requests" : "" };
+    state.sup = { partner: q.partner || "", inn: q.inn || "", item: "", date_from: q.date_from || "", date_to: q.date_to || "", hq: h, mode: ["requests", "directory"].includes(q.mode) ? q.mode : "" };
   }
   function supParams(refresh) {
     const s = (state.sup = state.sup || {}), p = new URLSearchParams();
     for (const k of ["partner", "inn", "item", "date_from", "date_to"]) if (s[k]) p.set(k, s[k]);
     if (s.mode === "requests") { p.set("mode", "requests"); if (s.notBought) p.set("not_bought", "1"); }
+    if (s.mode === "directory") p.set("mode", "directory");
     if (s.search && !s.partner && !s.inn) p.set("search", s.search);  // поиск по списку; в карточке поставщика фильтруются её таблицы
     if (refresh) p.set("refresh", "1");
     return p;
@@ -3270,13 +3271,15 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     clearTimeout(supTimer);
     const p = supParams(refresh);
     try {
-      const d = await api("/api/suppliers?" + p);
+      const directory = state.sup.mode === "directory";
+      const d = await api(directory ? "/api/supplier-directory" + (refresh ? "?refresh=1" : "") : "/api/suppliers?" + p);
       if (!current()) return;
       await paint(() => renderSuppliers(d));
       if (d.refreshing) supTimer = setTimeout(() => { if (state.view === "suppliers") loadSuppliers(); }, 4000);  // идёт загрузка из 1С
     } catch (e) { if (current() && e.message !== "auth") main.innerHTML = loadError(e); }
   }
   function renderSuppliers(d) {
+    if (d.mode === "directory") { renderSupplierDirectory(d); return; }
     const restoreView = globalThis.DashboardUI?.keepView(document.getElementById("main"), "renderSuppliers") || (() => {});
     const s = state.sup, M = d.meta || {}, T = d.tiles, pr = (v) => (v == null ? "—" : nf(v, 2) + " ₽");
     const pc = (v) => {  // изменение цены: чёрные цифры на бледном красном (рост) или зелёном (снижение) квадрате; ноль — без заливки
@@ -3381,6 +3384,47 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         if (changed) el.dispatchEvent(new Event("input"));  // применить набранное: обновить список или таблицы карточки
       }
     }
+    restoreView();
+  }
+  function supplierDirectoryFiltered(rows, search) {
+    const normalize = value => String(value || "").toLowerCase().replace(/ё/g, "е");
+    const words = normalize(search).split(/\s+/).filter(Boolean);
+    return rows.filter(row => {
+      const text = normalize(Object.values(row.fields).join(" "));
+      return words.every(word => text.includes(word));
+    });
+  }
+  function renderSupplierDirectory(d) {
+    const main = document.getElementById("main"), s = state.sup, meta = d.meta || {};
+    const restoreView = globalThis.DashboardUI?.keepView(main, "renderSupplierDirectory") || (() => {});
+    const focused = document.activeElement?.id === "supplierDirectorySearch";
+    const selection = focused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+    main.innerHTML = `<section class="panel"><div class="panel-h"><h2>База поставщиков</h2>
+      <div class="sp-add" style="gap:8px;align-items:center">
+        <button class="btn primary" id="supplierDirectoryRefresh" type="button" ${d.refreshing ? "disabled" : ""}>${d.refreshing ? "Загружаю из 1С…" : "Обновить из 1С"}</button>
+        ${meta.synced_at ? `<a class="btn" id="supplierDirectoryDownload" download href="/api/supplier-directory.xlsx">Скачать Excel</a>` : ""}</div>
+      <span class="muted small">${meta.synced_at ? "Из 1С: " + ruMoment(meta.synced_at) : "Первая загрузка из 1С"} · автообновление каждый час</span>
+      </div><div class="panel-b"><p class="muted small">Справочник поставщиков и перевозчиков 1С, включая компании без закупок. Теги определяются по связанной номенклатуре. Excel сохраняет все 81 столбец исходной таблицы, поля без данных остаются пустыми.</p>
+      ${meta.error ? `<p class="small" style="color:var(--bad)">Не удалось обновить из 1С: ${esc(meta.error)}. ${meta.synced_at ? "Показана последняя успешная загрузка." : "Повторите загрузку кнопкой выше."}</p>` : ""}
+      <label class="small">Поиск по базе <input type="search" id="supplierDirectorySearch" value="${esc(s.search || "")}" placeholder="Название, ИНН, контакт или тег" style="width:min(100%,420px)"></label>
+      <div id="supplierDirectoryList"></div></div></section>`;
+    const draw = () => {
+      const rows = supplierDirectoryFiltered(d.list || [], s.search);
+      const page = pgInfo(s, rows.length), box = document.getElementById("supplierDirectoryList");
+      const download = document.getElementById("supplierDirectoryDownload");
+      if (download) {
+        download.href = "/api/supplier-directory.xlsx?" + new URLSearchParams({search: s.search || ""});
+        download.textContent = s.search ? "Скачать найденные в Excel" : "Скачать Excel";
+      }
+      box.innerHTML = pgHtml(s, rows.length, "поставщиков") + (rows.length ? `<div class="scroll" style="max-height:65vh"><table class="mt"><thead><tr>${d.columns.map(column => `<th>${esc(column)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.slice(page.from, page.to).map(row => `<tr>${d.columns.map(column => `<td class="wrap">${esc(row.fields[column] || "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<p class="muted">${d.refreshing && !meta.synced_at ? "Идёт загрузка базы поставщиков из 1С…" : "Поставщики не найдены"}</p>`);
+      pgBind(box, s, draw);
+    };
+    draw();
+    document.getElementById("supplierDirectoryRefresh").addEventListener("click", () => loadSuppliers(true));
+    const input = document.getElementById("supplierDirectorySearch");
+    input.addEventListener("input", () => { s.search = input.value; s.page = 0; draw(); });
+    if (focused) { input.focus(); input.setSelectionRange(...selection); }
     restoreView();
   }
   // постраничный показ списков: по 20 / 50 / 100 строк, выбор запоминается в браузере и общий для всех списков.

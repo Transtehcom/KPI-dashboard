@@ -92,6 +92,31 @@ class ListenTest(unittest.TestCase):
         return [(r["login"], r["record"], r["emp"], r["result"]) for r in
                 self.con.execute("SELECT * FROM listen_log ORDER BY id")]
 
+    def test_supplier_directory_permissions_and_download(self):
+        import io
+        from openpyxl import load_workbook
+        from app import supplier_directory
+        with db_lock(), self.con:
+            supplier_directory.store(self.con, [
+                {'id': 'supplier-test', 'fields': {'Название': 'Проверка', 'Реквизит: ИНН': '0012345678'}}])
+        try:
+            for path in ('/api/supplier-directory', '/api/supplier-directory.xlsx'):
+                self.assertEqual(self.get('pm', path)[0], 403)
+            status, _, body = self.get('boss', '/api/supplier-directory')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['list'][0]['fields']['Название'], 'Проверка')
+            status, headers, body = self.get('boss', '/api/supplier-directory.xlsx')
+            self.assertEqual(status, 200)
+            self.assertIn('attachment', headers['Content-Disposition'])
+            self.assertEqual(load_workbook(io.BytesIO(body)).active['CC2'].value, '0012345678')
+            status, _, body = self.get('boss', '/api/supplier-directory.xlsx?search=not-found')
+            self.assertEqual(status, 200)
+            self.assertEqual(load_workbook(io.BytesIO(body)).active.max_row, 1)
+        finally:
+            with db_lock(), self.con:
+                self.con.execute('DELETE FROM supplier_directory')
+                self.con.execute("DELETE FROM supplier_meta WHERE key LIKE 'directory_%'")
+
     def test_employee_trend_reuses_employee_access_rules(self):
         expected = [{'month': '2026-09', 'payout': 500, 'share': .05}]
         with patch.object(self.app.engine, 'trend', return_value=expected) as trend:

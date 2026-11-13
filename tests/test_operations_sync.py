@@ -15,6 +15,7 @@ class OperationsSyncTest(unittest.TestCase):
 
     def run_sync(self,legacy_error=False,operations_error=False):
         with mock.patch('app.sync.OneC') as client, \
+             mock.patch('app.sync.supplier_directory.refresh',return_value='ok'), \
              mock.patch('app.sync.onec_sales_register.fetch',return_value=[]), \
              mock.patch('app.sync.onec_money.fetch',return_value=None), \
              mock.patch('app.sync.onec_operations.fetch') as operational:

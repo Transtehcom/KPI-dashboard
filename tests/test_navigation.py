@@ -18,6 +18,9 @@ class NavigationTest(unittest.TestCase):
     def test_home_screen(self):
         self.run_script("test_home.js")
 
+    def test_supplier_directory(self):
+        self.run_script("test_supplier_directory.js")
+
     def test_home_logo_assembly(self):
         self.run_script("test_home_effects.js")
 
