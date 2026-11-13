@@ -20,6 +20,11 @@ function setup(saved, systemDark = false, storageBlocked = false) {
 const saved = setup('dark');
 assert.equal(saved.document.documentElement.dataset.theme, 'dark');
 assert.match(saved.context.DashboardTheme.button(), /role="switch"[^>]*aria-checked="true"/);
+assert.match(saved.context.DashboardTheme.button(), /aria-label="Тёмная тема"/);
+assert.match(saved.context.DashboardTheme.button(), /class="theme-orb"/);
+assert.ok(!saved.context.DashboardTheme.button().includes('theme-toggle-track'));
+assert.match(html, /\.theme-orb\s*\{[^}]*box-shadow:\s*inset/s);
+assert.match(html, /\.theme-toggle\[aria-checked="true"\] \.theme-icon[^}]*rotate\(180deg\)/s);
 saved.events.click({target:{closest:() => saved.buttons[0]}});
 assert.equal(saved.document.documentElement.dataset.theme, 'light');
 assert.equal(saved.buttons[0]['aria-checked'], 'false');

@@ -17,7 +17,7 @@
 
   globalThis.DashboardTheme = {
     button() {
-      return `<button type="button" class="btn theme-toggle" data-theme-toggle role="switch" aria-checked="${document.documentElement.dataset.theme === "dark"}"><span class="theme-toggle-track" aria-hidden="true"></span><span>Тёмная тема</span></button>`;
+      return `<button type="button" class="theme-toggle" data-theme-toggle role="switch" aria-checked="${document.documentElement.dataset.theme === "dark"}" aria-label="Тёмная тема" title="Переключить светлую и тёмную тему"><span class="theme-icon" aria-hidden="true"><span class="theme-rays"></span><span class="theme-orb"></span></span></button>`;
     }
   };
   apply();
