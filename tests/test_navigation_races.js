@@ -10,7 +10,7 @@ function fixture(source,view) {
   const pending=[], painted=[], sides=[];
   const main={innerHTML:''};
   const state={view,login:'tender',month:'2026-11',boot:{me:{role:'employee'},current_month:'2026-11',employees:[{login:'tender',position:'tender'}]}};
-  const context={state,PREVIEW:null,METRICS:{},sideCache:{},loadGeneration:0,callsGeneration:0,
+  const context={state,PREVIEW:null,METRICS:{},sideCache:{},loadGeneration:0,callsGeneration:0,homeTimer:null,
     document:{getElementById:()=>main},api:url=>new Promise((resolve,reject)=>pending.push({url,resolve,reject})),
     esc:x=>{throw new Error('unexpected loader error: '+x);},
     renderEmp:d=>painted.push(d),renderFunnel:d=>painted.push(d),renderCalls:d=>painted.push(d),

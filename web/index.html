@@ -725,6 +725,30 @@ body::after { content: none; position: fixed; right: -90px; bottom: -60px; width
 #root { position: relative; z-index: 1; }
 .brand-field { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
 .brand-field--back { z-index: 0; }
+.home { width: 100%; max-width: 1140px; margin: clamp(12px, 3vh, 36px) auto; }
+.home h1 { font-size: clamp(30px, 3.5vw, 44px); font-family: inherit; font-weight: 600; line-height: 1.25;
+  text-transform: none; letter-spacing: -.035em; margin: 0 0 30px; }
+.home-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.home-tile { display: flex; flex-direction: column; justify-content: space-between; gap: 22px; min-height: 144px;
+  padding: 20px 22px; border: 2px solid transparent; border-radius: 4px; background: linear-gradient(145deg, #3a4185 0%, #3d6fa7 54%, #4bbbb8 100%);
+  color: #fff; text-decoration: none; transition: transform 180ms ease, border-color 180ms ease, filter 100ms ease, box-shadow 180ms ease; }
+.home-tile h2 { margin: 0; font: 600 28px/1.15 var(--head); letter-spacing: .025em; text-transform: uppercase; color: inherit; }
+.home-tile p { margin: 0; padding-top: 12px; border-top: 1px solid #ffffff45; font-size: 12px; line-height: 1.5; color: #ffffffdf; }
+@media (hover: hover) and (pointer: fine) {
+  .home-tile:hover { transform: scale(1.025); border-color: var(--teal); color: #fff; text-decoration: none; box-shadow: 0 8px 22px #22304d22; }
+}
+.home-tile:active { transform: scale(1); border-color: transparent; filter: brightness(.88); box-shadow: none; }
+.home-tile:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+.brand-home { color: var(--fg); text-decoration: none; }
+.brand-home:hover { text-decoration: none; }
+.brand-home .brand-word, .brand-home .brand-app { transition: text-shadow 180ms ease; }
+.brand-home:hover .brand-word, .brand-home:hover .brand-app,
+.brand-home:focus-visible .brand-word, .brand-home:focus-visible .brand-app { -webkit-text-stroke: .4px var(--teal); text-shadow: 0 0 6px #4bbbb830; }
+.brand-logo-wrap { display: inline-flex; position: relative; width: 40px; height: 27px; flex: none; }
+.brand-dust { position: absolute; pointer-events: none; }
+.brand-home.is-assembling .brand-logo { opacity: 0; }
+@media (max-width: 850px) { .home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .home-grid { grid-template-columns: minmax(0, 1fr); } .home-tile { min-height: 120px; } }
 @media print { .brand-field { display: none !important; } }
 
 /* Short feedback for navigation, controls and disclosures. */
@@ -920,7 +944,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     nodata: ["Нет данных", "s-nodata"], awaiting: ["Ждёт оценки", "s-awaiting"], absent: ["Не работал(а)", "s-nodata"], draft: ["Черновик", "s-nodata"], penalty_zero: ["Обнулён: штраф", "s-fail"],
     progress_fail: ["Месяц идёт", "s-progress"], progress_close: ["Месяц идёт", "s-progress"], progress_nodata: ["Месяц идёт", "s-progress"],
   };
-  const state = { boot: null, month: null, view: "team", login: null, data: null, loading: false, previewRole: "manager" };
+  const state = { boot: null, month: null, view: "home", login: null, data: null, loading: false, previewRole: "manager" };
+  let homeTimer = null;
 
   // ---------- форматирование
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1042,6 +1067,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 
   // ---------- вход
   function renderLogin() {
+    clearTimeout(homeTimer);
+    state.boot = null; state.login = null; state.view = "home"; sideCache = {};
     clearTimeout(syncTimer); syncGeneration++;
     gptReleasePreviews();
     clearTimeout(state.gptTimer); state.gptChat = null; state.gptDrafts = {}; state.gptEpoch = (state.gptEpoch || 0) + 1;
@@ -1055,9 +1082,47 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       <button class="btn primary" type="submit">Войти</button></form></div>`;
     document.getElementById("loginForm").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      try { await api("/api/login", { login: lg.value, password: pw.value }); start(); }
+      try { await api("/api/login", { login: lg.value, password: pw.value }); history.replaceState(null, "", "#home"); start(); }
       catch (e) { document.getElementById("lerr").textContent = e.message; }
     });
+  }
+
+  function homeGreeting(name, now = new Date()) {
+    const hour = Number(new Intl.DateTimeFormat("ru-RU", {timeZone: "Asia/Yekaterinburg", hour: "numeric", hourCycle: "h23"}).format(now));
+    const greeting = hour >= 5 && hour < 12 ? "Доброе утро" : hour >= 12 && hour < 18 ? "Добрый день" : hour >= 18 && hour < 23 ? "Добрый вечер" : "Доброй ночи";
+    const firstName = String(name || "").trim().split(/\s+/)[0];
+    return greeting + (firstName ? ", " + firstName : "");
+  }
+
+  function homeSections(isMgr) {
+    const sections = [
+      {key:"kpi",href:isMgr ? "#team" : "#kpi",title:isMgr ? "KPI сотрудников" : "Мой KPI",description:isMgr ? "Показатели, планы и премии команды" : "Мои показатели, планы и премия"},
+      {key:"funnel",href:"#funnel",title:"Воронки",description:"По дате и фактическим изменениям"},
+      {key:"calls",href:"#calls",title:"Звонки",description:"Записи, расшифровки и оценки"},
+      {key:"gpt",href:"#gpt",title:"ttkGPT",description:"Ассистент по рабочим данным"},
+      {key:"workload",href:"#workload",title:"Загрузка",description:"Задачи и занятость сотрудников",admin:true},
+      {key:"metrics",href:"#metrics-sales",title:"Метрики",description:"Продажи, снабжение и логистика",admin:true},
+      {key:"money",href:"#money",title:"Деньги",description:"Платежи, планы и задолженность",admin:true},
+      {key:"suppliers",href:"#suppliers",title:"Поставщики",description:"Поставщики, закупки и заявки",admin:true},
+      {key:"staff",href:"#staff",title:"Сотрудники",description:"Команда, должности и профили"}
+    ];
+    return sections.filter(section => (!section.admin || isMgr) && (!PREVIEW || ["kpi", "funnel"].includes(section.key)));
+  }
+
+  function renderHome() {
+    clearTimeout(homeTimer);
+    const main = document.getElementById("main"), me = state.boot.me;
+    if (!document.getElementById("homeGreeting")) {
+      main.innerHTML = `<section class="home"><h1 id="homeGreeting"></h1><nav class="home-grid" aria-label="Разделы дашборда">${homeSections(me.role === "manager").map(section =>
+        `<a class="home-tile" href="${section.href}"><h2>${esc(section.title)}</h2><p>${esc(section.description)}</p></a>`).join("")}</nav></section>`;
+    }
+    const update = () => {
+      const heading = document.getElementById("homeGreeting");
+      if (state.view !== "home" || !heading) return;
+      heading.textContent = homeGreeting(state.boot.me.name);
+      homeTimer = setTimeout(update, 60000);
+    };
+    update();
   }
 
   // ---------- каркас
@@ -1069,7 +1134,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const isMgr = b.me.role === "manager";
     const h = (location.hash || "").replace("#", "");
     if (isFunnelHash(h)) state.fMode = h === "funnel-fact" ? "fact" : "date";
-    if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
+    if (!isMgr) state.login = b.me.login;
+    if (!h || h === "home") { state.view = "home"; }
+    else if (h === "calls" && !PREVIEW) { state.view = "calls"; if (!isMgr) state.login = b.me.login; }
     else if (h === "gpt" && !PREVIEW) { state.view = "gpt"; }
     else if (h === "workload" && isMgr && !PREVIEW) { state.view = "workload"; }
     else if (h === "staff" && !PREVIEW) { state.view = "staff"; }
@@ -1161,13 +1228,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     syncRefreshPending = false;
     const b = state.boot, isMgr = b.me.role === "manager";
     const months = [...new Set([...(PREVIEW ? PREVIEW.months : b.months), state.month])].sort().reverse();
-    const noSide = ["funnel", "staff", "calls", "workload", "money", "suppliers", "gpt"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
+    const noSide = ["home", "funnel", "staff", "calls", "workload", "money", "suppliers", "gpt"].includes(state.view) || !!METRICS[state.view], noMonth = noSide;
     const pv = PREVIEW ? `<div class="preview-bar"><b>Превью на демо-данных.</b>
       <span>Это интерфейс дашборда; рабочая версия запускается на вашем сервере и берёт данные из Битрикс24 и 1С.</span>
       <label for="pvRole">Смотреть как:</label><select id="pvRole"><option value="manager">Руководитель (вся команда)</option>
       ${PREVIEW.bootstrap.employees.map((e) => `<option value="${e.login}" ${state.previewRole === e.login ? "selected" : ""}>Сотрудник: ${esc(e.name)}</option>`).join("")}</select></div>` : "";
     root.innerHTML = `${pv}<header class="top">
-        <div class="brand"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></div>
+        <a class="brand brand-home" href="#home" aria-label="На главную"><span class="brand-logo-wrap"><svg class="brand-logo" viewBox="0 0 1306 875" aria-hidden="true"><path fill="#3A4185" d="M1118,464 L1006,623 L1114,776 L1129,794 L1153,818 L1183,840 L1221,858 L1266,870 L1305,874 L1305,690 L1289,688 L1278,683 L1269,676 L1255,660Z M0,0 L1,24 L7,57 L18,90 L33,120 L53,149 L82,179 L99,193 L124,209 L149,221 L178,231 L226,238 L325,240 L707,239 L727,242 L740,250 L756,266 L893,460 L912,436 L1004,304 L1004,301 L909,166 L880,130 L857,108 L835,92 L812,80 L773,65 L727,57 L244,57 L222,53 L206,44 L191,27 L185,13 L184,0Z"/><path fill="#4BBBB8" d="M1304,57 L1285,57 L1256,61 L1232,67 L1210,75 L1189,85 L1166,99 L1142,118 L1126,134 L1109,155 L1008,298 L995,320 L894,461 L847,531 L769,641 L739,678 L731,684 L713,691 L659,692 L639,686 L626,679 L614,667 L605,646 L603,632 L603,240 L420,241 L420,641 L422,666 L429,701 L438,726 L456,760 L483,796 L508,819 L552,848 L577,859 L599,866 L648,873 L726,873 L769,865 L797,855 L816,846 L842,830 L868,809 L892,783 L1255,266 L1267,253 L1278,245 L1291,240 L1304,239Z"/></svg></span><span class="brand-word">транстех<b>ком</b></span><span class="brand-sep"></span><span class="brand-app">Дашборд</span></a>
         <nav class="tabs" aria-label="Разделы"><a href="#${isMgr ? "team" : "kpi"}" data-tab="kpi" class="${noSide ? "" : "on"}">${isMgr ? "KPI сотрудников" : "Мой KPI"}</a>${PREVIEW ? `<a href="#funnel" data-tab="funnel" class="${state.view === "funnel" ? "on" : ""}">Воронки</a>` : `<details class="tab-menu${state.view === "funnel" ? " on" : ""}" id="fMenu"><summary>Воронки</summary><div class="tab-menu-pop"><a href="#funnel" data-tab="funnel" data-fmode="date" class="${state.view === "funnel" && state.fMode !== "fact" ? "on" : ""}">По дате</a><a href="#funnel-fact" data-tab="funnel" data-fmode="fact" class="${state.view === "funnel" && state.fMode === "fact" ? "on" : ""}">Факт</a></div></details>`}${PREVIEW ? "" : `<a href="#calls" data-tab="calls" class="${state.view === "calls" ? "on" : ""}">Звонки</a>`}${!PREVIEW ? `<a href="#gpt" data-tab="gpt" class="${state.view === "gpt" ? "on" : ""}">ttkGPT</a>` : ""}${isMgr && !PREVIEW ? `<a href="#workload" data-tab="workload" class="${state.view === "workload" ? "on" : ""}">Загрузка</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${METRICS[state.view] ? " on" : ""}" id="mMenu"><summary>Метрики</summary><div class="tab-menu-pop">${Object.entries(METRICS).map(([v, m]) => `<a href="#${m.hash}" data-tab="${v}" class="${state.view === v ? "on" : ""}">${m.title}</a>`).join("")}</div></details>` : ""}${isMgr && !PREVIEW ? `<a href="#money" data-tab="money" class="${state.view === "money" ? "on" : ""}">Деньги</a>` : ""}${isMgr && !PREVIEW ? `<details class="tab-menu${state.view === "suppliers" ? " on" : ""}" id="sMenu"><summary>Поставщики</summary><div class="tab-menu-pop"><a href="#suppliers" data-tab="suppliers" data-mode="" class="${state.view === "suppliers" && (state.sup || {}).mode !== "requests" ? "on" : ""}">Закупки у поставщиков</a><a href="#suppliers?mode=requests" data-tab="suppliers" data-mode="requests" class="${state.view === "suppliers" && (state.sup || {}).mode === "requests" ? "on" : ""}">Заявки поставщикам</a></div></details>` : ""}${!PREVIEW ? `<a href="#staff" data-tab="staff" class="${state.view === "staff" ? "on" : ""}">Сотрудники</a>` : ""}</nav>
         <div class="ctrl">
           ${syncInfo()}
@@ -1246,12 +1313,14 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     return { main, current, paint };
   }
   async function load() {
+    clearTimeout(homeTimer);
     const quiet = !!state.quietLoad; state.quietLoad = false;
     if (state.view !== "gpt") gptReleasePreviews();
     const main = document.getElementById("main");
     const generation = ++loadGeneration, view = state.view, month = state.month, login = state.login;
     const current = () => generation === loadGeneration && state.view === view && document.getElementById("main") === main;
     const paint = (render) => quiet && globalThis.DashboardUI ? DashboardUI.whenIdle(render, current) : current() && render();
+    if (state.view === "home") { renderHome(); return; }
     if (!quiet) main.innerHTML = `<div class="empty">Загрузка…</div>`;
     const isMgr = state.boot.me.role === "manager";
     if (state.view === "staff") {
@@ -4364,13 +4433,17 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   window.addEventListener("hashchange", () => {
     if (!state.boot) return;
     const h = location.hash.replace("#", "");
+    if (!h || h === "home") {
+      if (state.view !== "home") { state.view = "home"; renderShell(); load(); }
+      return;
+    }
     if (state.boot.me.role !== "manager") {
       const view = isFunnelHash(h) ? "funnel" : h === "calls" && !PREVIEW ? "calls" : h === "gpt" && !PREVIEW ? "gpt" : h === "staff" && !PREVIEW ? "staff" : "emp";
       const fm = h === "funnel-fact" ? "fact" : "date";
       if (view !== state.view || (view === "funnel" && state.fMode !== fm)) { state.view = view; if (view === "funnel") state.fMode = fm; renderShell(); load(); }
       return;
     }
-    if (h.startsWith("emp-") && h.slice(4) !== state.login) { state.view = "emp"; state.login = h.slice(4); load(); }
+    if (h.startsWith("emp-") && (state.view !== "emp" || h.slice(4) !== state.login)) { state.view = "emp"; state.login = h.slice(4); renderShell(); load(); }
     else if (h === "team" && state.view !== "team") { state.view = "team"; renderShell(); load(); }
     else if (isFunnelHash(h) && (state.view !== "funnel" || state.fMode !== (h === "funnel-fact" ? "fact" : "date"))) { state.view = "funnel"; state.fMode = h === "funnel-fact" ? "fact" : "date"; renderShell(); load(); }
     else if (h === "staff" && state.view !== "staff") { state.view = "staff"; renderShell(); load(); }
@@ -4387,3 +4460,4 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
 <script src="/assets/brand-field.js?v=5" defer></script>
 <script src="/assets/view-state.js?v=1" defer></script>
 <script src="/assets/interface-motion.js?v=5" defer></script>
+<script src="/assets/home-effects.js?v=1" defer></script>

@@ -15,6 +15,12 @@ class NavigationTest(unittest.TestCase):
     def test_history_routes_and_admin_workload(self):
         self.run_script("test_navigation.js")
 
+    def test_home_screen(self):
+        self.run_script("test_home.js")
+
+    def test_home_logo_assembly(self):
+        self.run_script("test_home_effects.js")
+
     def test_funnel_direction_selection(self):
         self.run_script("test_funnel_directions.js")
 

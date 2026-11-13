@@ -30,5 +30,20 @@ console.log('Navigation history and Workload access: OK');
 
 location.hash='#gpt';hashChange();assert.equal(state.view,'gpt','manager can open GPT');
 state.boot.me.role='employee';hashChange();assert.equal(state.view,'gpt','employee can open own GPT by URL');
+location.hash='#home';hashChange();assert.equal(state.view,'home');
+state.boot.me.role='manager';state.view='emp';state.login='alice';
+location.hash='#home';hashChange();
+const rendersBeforeBack=renders;
+location.hash='#emp-alice';hashChange();
+assert.equal(state.view,'emp','back from home restores the same employee card');
+assert.ok(renders>rendersBeforeBack,'employee route restores the KPI shell');
+location.hash='#home';hashChange();
+location.hash='#emp-bob';hashChange();
+assert.equal(state.view,'emp');assert.equal(state.login,'bob');
+state.boot.me.role='employee';
+location.hash='#calls';hashChange();assert.equal(state.view,'calls');
+location.hash='';hashChange();assert.equal(state.view,'home');
+state.boot.me.role='manager';location.hash='#team';hashChange();assert.equal(state.view,'team');
+location.hash='#home';hashChange();assert.equal(state.view,'home');
 
 assert.ok(html.includes('else if (h === "gpt" && !PREVIEW)'),"employee can reload the GPT route");
