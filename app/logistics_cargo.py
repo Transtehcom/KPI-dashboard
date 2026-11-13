@@ -16,7 +16,7 @@ CRITERIA = (
 )
 
 
-def report(con, emp, month):
+def report(con, emp, month, safety_target=.95):
     saved = {r["criterion"]: dict(r) for r in con.execute(
         "SELECT * FROM logistics_cargo_checks WHERE emp=? AND month=?", (emp, month))}
     rows = []
@@ -26,9 +26,48 @@ def report(con, emp, month):
                      "damage": row.get("damage"), "comment": row.get("comment") or ""})
     cases = [r["cases"] for r in rows if r["cases"] is not None]
     damage = [Decimal(str(r["damage"])) for r in rows if r["damage"] is not None]
+    summary = con.execute("SELECT cargo_value,comment FROM logistics_cargo_summary WHERE emp=? AND month=?",
+                          (emp, month)).fetchone()
+    cargo_value = summary["cargo_value"] if summary else None
+    auto_score, safety_share = None, None
+    if len(damage) != len(CRITERIA):
+        reason = "Заполните ущерб по всем 10 критериям, включая нулевые значения"
+    elif cargo_value is None or cargo_value <= 0:
+        reason = "Укажите стоимость перевезённых грузов больше нуля"
+    else:
+        safety = max(Decimal(0), Decimal(1) - sum(damage) / Decimal(str(cargo_value)))
+        safety_share = float(safety)
+        completion = min(Decimal(100), safety / Decimal(str(safety_target)) * 100)
+        # The dashboard rounds to tenths first, then to whole completion percent.
+        auto_score = float(completion.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                           .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        reason = ""
     return {"rows": rows, "entered": sum(r["cases"] is not None or r["damage"] is not None or bool(r["comment"]) for r in rows),
             "cases_total": sum(cases) if cases else None,
-            "damage_total": float(sum(damage)) if damage else None}
+            "damage_total": float(sum(damage)) if damage else None,
+            "cargo_value": cargo_value, "comment": summary["comment"] if summary else "",
+            "auto_score": auto_score, "safety_share": safety_share, "safety_target": safety_target, "auto_reason": reason}
+
+
+def _money(value):
+    if value is None:
+        return None
+    try:
+        if isinstance(value, bool):
+            raise ValueError()
+        amount = Decimal(str(value))
+        if not amount.is_finite() or amount < 0:
+            raise ValueError()
+        return float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("Укажите неотрицательную сумму в рублях") from None
+
+
+def save_summary(con, emp, month, cargo_value, comment, author):
+    dt.date.fromisoformat(month + "-01")
+    value = _money(cargo_value)
+    con.execute("INSERT OR REPLACE INTO logistics_cargo_summary VALUES(?,?,?,?,?,datetime('now'))",
+                (emp, month, value, str(comment or "")[:500], author))
 
 
 def save(con, emp, month, entries, author):
@@ -47,17 +86,7 @@ def save(con, emp, month, entries, author):
         cases = entry.get("cases")
         if cases is not None and (type(cases) is not int or not 0 <= cases <= 9223372036854775807):
             raise ValueError("Количество случаев должно быть целым неотрицательным числом")
-        damage = entry.get("damage")
-        if damage is not None:
-            try:
-                if isinstance(damage, bool):
-                    raise ValueError()
-                amount = Decimal(str(damage))
-                if not amount.is_finite() or amount < 0:
-                    raise ValueError()
-                damage = float(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-            except (InvalidOperation, TypeError, ValueError):
-                raise ValueError("Ущерб должен быть неотрицательной суммой в рублях") from None
+        damage = _money(entry.get("damage"))
         comment = str(entry.get("comment") or "")[:500]
         validated.append((criterion, cases, damage, comment))
     for criterion, cases, damage, comment in validated:

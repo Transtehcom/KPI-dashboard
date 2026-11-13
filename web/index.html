@@ -1597,19 +1597,24 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const crit = it.manual.criteria, titles = state.boot.criteria_titles;
     if (it.manual.period === "month") {
       const criterion = crit[0], score = it.manual.scores[criterion], title = titles[criterion] || criterion;
-      const checks = it.manual.cargo_checks, scoreTitle = checks ? "Итоговое выполнение KPI" : title;
+      const checks = it.manual.cargo_checks, scoreTitle = checks ? "Ручная корректировка KPI" : title;
+      const effectiveScore = score.score ?? checks?.auto_score;
       const table = checks ? `<div class="scroll"><table><thead><tr><th>Критерий</th><th>Количество случаев</th><th>Ущерб, ₽</th><th>Комментарий</th></tr></thead><tbody>
         ${checks.rows.map((row) => `<tr data-cargo-row data-criterion="${esc(row.criterion)}"><td>${esc(row.title)}</td>
           <td>${isMgr ? `<input type="number" min="0" step="1" data-cargo-cases value="${esc(row.cases ?? "")}" aria-label="Количество случаев — ${esc(row.title)}" style="width:100px">` : row.cases == null ? "—" : esc(nf(row.cases))}</td>
           <td>${isMgr ? `<input type="number" min="0" step="0.01" data-cargo-damage value="${esc(row.damage ?? "")}" aria-label="Ущерб — ${esc(row.title)}" style="width:140px">` : row.damage == null ? "—" : esc(nf(row.damage, 2))}</td>
           <td>${isMgr ? `<input type="text" maxlength="500" data-cargo-comment value="${esc(row.comment)}" aria-label="Комментарий — ${esc(row.title)}" style="min-width:200px">` : esc(row.comment || "—")}</td></tr>`).join("")}
         </tbody></table></div><p class="small muted">Учитываются случаи по вине логистики. Ущерб одного случая укажите в одной строке. Пустое поле означает, что данные ещё не внесены, 0 — отсутствие случаев или ущерба.</p>` : "";
-      const controls = `<label>${esc(scoreTitle)}, %<input type="number" min="0" max="100" step="1" data-month-score value="${esc(score.score ?? "")}" aria-label="${esc(scoreTitle)} за ${esc(d.month)}"></label>
+      const calculation = checks ? `<div class="inline-form">
+        <label>Стоимость перевезённых грузов, ₽${isMgr ? `<input type="number" min="0" step="0.01" data-cargo-value value="${esc(checks.cargo_value ?? "")}" aria-label="Стоимость перевезённых грузов за ${esc(d.month)}">` : `<b>${checks.cargo_value == null ? "—" : esc(nf(checks.cargo_value, 2))}</b>`}</label>
+        <div>Автоматическое выполнение KPI · <b>${checks.auto_score == null ? "—" : esc(nf(checks.auto_score, 0)) + "%"}</b><div class="small muted">${checks.auto_score == null ? esc(checks.auto_reason || "Ожидаются данные") : `Норма сохранности ${nf((checks.safety_target ?? .95) * 100, 0)}%`}</div></div>
+        </div>` : "";
+      const controls = `<label>${esc(scoreTitle)}, %<input type="number" min="0" max="100" step="1" data-month-score value="${esc(score.score ?? "")}" ${checks ? 'placeholder="Автоматически"' : ""} aria-label="${esc(scoreTitle)} за ${esc(d.month)}"></label>
         <label>${checks ? "Общий комментарий" : "Комментарий"}<input type="text" maxlength="500" data-month-comment value="${esc(score.comment || "")}" aria-label="Комментарий за ${esc(d.month)}"></label>
         <button type="submit" class="btn">${checks ? "Сохранить критерии и оценку" : "Сохранить оценку за месяц"}</button>`;
       return `<div class="manual"><div class="eyebrow">Оценка руководителя за месяц · ${esc(d.month)}</div>${isMgr ?
-        `<form data-month-assessment data-month-criterion="${esc(criterion)}" ${checks ? 'data-cargo-assessment="1"' : 'class="inline-form"'}>${table}${checks ? `<div class="inline-form">${controls}</div>` : controls}</form><div class="small muted">От 0 до 100. Очистите оценку и сохраните, чтобы снять её.${criterion === "docs" ? " Эффективность задач загружается отдельно из Б24 за этот же месяц." : ""}</div>` :
-        `${table}<div>${esc(scoreTitle)} · <b>${score.score == null ? "—" : esc(nf(score.score)) + "%"}</b>${score.comment ? `<div class="small">${esc(score.comment)}</div>` : ""}</div>`}</div>`;
+        `<form data-month-assessment data-month-criterion="${esc(criterion)}" ${checks ? 'data-cargo-assessment="1"' : 'class="inline-form"'}>${table}${calculation}${checks ? `<div class="inline-form">${controls}</div>` : controls}</form><div class="small muted">${checks ? "Ручная корректировка от 0 до 100 имеет приоритет. Очистите её и сохраните, чтобы вернуть автоматический расчёт. Ущерб и стоимость грузов указываются на одной базе НДС." : "От 0 до 100. Очистите оценку и сохраните, чтобы снять её."}${criterion === "docs" ? " Эффективность задач загружается отдельно из Б24 за этот же месяц." : ""}</div>` :
+        `${table}${calculation}<div>${esc(checks ? "Итоговое выполнение KPI" : title)} · <b>${effectiveScore == null ? "—" : esc(nf(effectiveScore, 0)) + "%"}</b>${score.comment ? `<div class="small">${esc(score.comment)}</div>` : ""}</div>`}</div>`;
     }
     const opts = (v) => ["", 100, 75, 50, 25, 0].map((o) => `<option value="${o}" ${String(v ?? "") === String(o) ? "selected" : ""}>${o === "" ? "—" : o}</option>`).join("");
     return `<div class="manual"><div class="eyebrow">Еженедельная оценка руководителя</div>
@@ -1850,6 +1855,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         let path = "/api/month-score";
         if (form.dataset.cargoAssessment === "1") {
           path = "/api/logistics-cargo-assessment";
+          const cargoValue = form.querySelector("[data-cargo-value]").value;
+          body.cargo_value = cargoValue === "" ? null : Number(cargoValue);
           body.criteria = [...form.querySelectorAll("[data-cargo-row]")].map((row) => {
             const cases = row.querySelector("[data-cargo-cases]").value, damage = row.querySelector("[data-cargo-damage]").value;
             return {criterion:row.dataset.criterion,cases:cases === "" ? null : Number(cases),damage:damage === "" ? null : Number(damage),comment:row.querySelector("[data-cargo-comment]").value};

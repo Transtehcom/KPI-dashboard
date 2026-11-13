@@ -119,6 +119,41 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(rows[-1]["title"], "Претензии заказчика по транспортным причинам")
         self.assertTrue(all(r["cases"] is None and r["damage"] is None and r["comment"] == "" for r in rows))
 
+    def test_cargo_auto_score_manual_override_zero_and_clear(self):
+        from app import logistics_cargo
+
+        engine = self.engine_with_draft()
+        rows = [{"criterion": key, "cases": 0, "damage": 0} for key, _ in logistics_cargo.CRITERIA]
+        rows[0].update(cases=1, damage=100000)
+        logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "Автоматический расчёт", "boss")
+        item = engine.compute("logist", "2026-11")["items"][3]
+        self.assertEqual(item["pct"], .95)
+        self.assertEqual(item["payout"], 1425)
+        self.assertIsNone(item["manual"]["scores"]["cargo_safety"]["score"])
+        self.assertEqual(item["manual"]["scores"]["cargo_safety"]["comment"], "Автоматический расчёт")
+        for override, payout in ((50, 750), (0, 0)):
+            manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", override, "Корректировка", "boss")
+            item = engine.compute("logist", "2026-11")["items"][3]
+            self.assertEqual((item["pct"], item["payout"]), (override / 100, payout))
+        manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", None, "", "boss")
+        self.assertEqual(engine.compute("logist", "2026-11")["items"][3]["payout"], 1425)
+
+    def test_cargo_auto_half_percent_rounding_matches_payout(self):
+        from app import logistics_cargo
+
+        engine = self.engine_with_draft()
+        rows = [{"criterion": key, "cases": 0, "damage": 0} for key, _ in logistics_cargo.CRITERIA]
+        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "", "boss")
+        for damage, whole_pct in ((862250, 15), (729250, 29), (463250, 57), (453750, 58),
+                                  (862725, 15), (729725, 29)):
+            with self.subTest(damage=damage):
+                rows[0]["damage"] = damage
+                logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+                item = engine.compute("logist", "2026-11")["items"][3]
+                self.assertEqual(item["payout"], whole_pct * 15)
+                self.assertEqual(item["manual"]["cargo_checks"]["auto_score"], whole_pct)
+
     def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
         engine = self.engine_with_draft()
         self.con.execute("INSERT INTO dataset_state(dataset,date_from,date_to,updated_at) VALUES(?,?,?,?)",

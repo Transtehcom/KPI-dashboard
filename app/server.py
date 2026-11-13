@@ -957,6 +957,8 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         with db_lock(), app.con:
                             logistics_cargo.save(app.con, emp, month, b.get("criteria"), me["login"])
+                            if "cargo_value" in b:
+                                logistics_cargo.save_summary(app.con, emp, month, b.get("cargo_value"), b.get("comment"), me["login"])
                             manual.set_month_score(app.con, emp, month, "cargo_safety", b.get("score"), b.get("comment"), me["login"])
                     except (ValueError, TypeError) as exc:
                         raise BadRequest(str(exc)) from None

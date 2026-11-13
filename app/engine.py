@@ -511,15 +511,19 @@ class Engine:
 
         scores = self.q("SELECT score,comment FROM monthly_scores WHERE emp=? AND month=? AND criterion='cargo_safety'",
                         e["login"], ctx["month"])
-        score = dict(scores[0]) if scores else {"score": None, "comment": ""}
-        value = score["score"] / 100 if score["score"] is not None else None
-        checks = report(self.con, e["login"], ctx["month"])
-        return {"components": [comp("Оценка выполнения KPI", value, p["target"], "%", source=SRC_MAN)],
+        checks = report(self.con, e["login"], ctx["month"], p.get("safety_target", .95))
+        score = dict(scores[0]) if scores else {"score": None, "comment": checks["comment"]}
+        effective_score = score["score"] if score["score"] is not None else checks["auto_score"]
+        value = effective_score / 100 if effective_score is not None else None
+        return {"components": [comp("Выполнение KPI", value, p["target"], "%",
+                                     source=SRC_MAN if score["score"] is not None else SRC_HAND)],
                 "manual": {"period": "month", "month": ctx["month"], "criteria": ["cargo_safety"],
                            "scores": {"cargo_safety": score}, "cargo_checks": checks},
                 "extra": [{"label": "Критериев с данными", "value": f"{checks['entered']} из {len(checks['rows'])}"},
                           {"label": "Внесено случаев", "value": checks["cases_total"]},
-                          {"label": "Внесено ущерба", "value": checks["damage_total"], "fmt": "rub"}]}
+                          {"label": "Внесено ущерба", "value": checks["damage_total"], "fmt": "rub"},
+                          {"label": "Сохранность стоимости грузов", "value": checks["safety_share"], "fmt": "pct"},
+                          {"label": "Режим расчёта", "value": "Ручная корректировка" if score["score"] is not None else "Автоматический расчёт"}]}
 
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "

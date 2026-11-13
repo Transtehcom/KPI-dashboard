@@ -29,6 +29,7 @@ class LogisticsCargoTest(unittest.TestCase):
         self.assertIsNone(logistics_cargo.report(self.con, "logist", "2026-10")["damage_total"])
         self.assertEqual(self.con.execute("SELECT author FROM logistics_cargo_checks LIMIT 1").fetchone()[0], "boss")
         self.assertNotIn("logistics_cargo_checks", SYNC_TABLES)
+        self.assertNotIn("logistics_cargo_summary", SYNC_TABLES)
 
     def test_invalid_final_row_cannot_partially_replace_saved_values(self):
         original = entries()
@@ -67,3 +68,36 @@ class LogisticsCargoTest(unittest.TestCase):
         self.assertIsNone(report["damage_total"])
         logistics_cargo.save(self.con, "logist", "2026-11", entries(), "boss")
         self.assertEqual(self.con.execute("SELECT count(*) FROM logistics_cargo_checks").fetchone()[0], 0)
+
+    def test_auto_score_uses_damage_and_monthly_cargo_value(self):
+        self.assertTrue(hasattr(logistics_cargo, "save_summary"))
+        rows = entries()
+        for row in rows:
+            row.update(cases=0, damage=0)
+        rows[0].update(cases=1, damage=100000)
+        logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "Проверено", "boss")
+        report = logistics_cargo.report(self.con, "logist", "2026-11")
+        self.assertEqual(report["auto_score"], 95)
+        self.assertEqual(report["safety_share"], .9)
+        self.assertEqual(report["comment"], "Проверено")
+        self.assertIsNone(logistics_cargo.report(self.con, "logist", "2026-10")["auto_score"])
+        for damage, expected in ((0, 100), (50000, 100), (1000000, 0), (2000000, 0)):
+            rows[0]["damage"] = damage
+            logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+            self.assertEqual(logistics_cargo.report(self.con, "logist", "2026-11")["auto_score"], expected)
+
+    def test_auto_score_waits_for_cargo_value_and_all_damage_fields(self):
+        self.assertTrue(hasattr(logistics_cargo, "save_summary"))
+        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "", "boss")
+        self.assertIsNone(logistics_cargo.report(self.con, "logist", "2026-11")["auto_score"])
+        rows = entries()
+        for row in rows:
+            row["damage"] = 0
+        logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+        for value in (None, 0):
+            logistics_cargo.save_summary(self.con, "logist", "2026-11", value, "", "boss")
+            self.assertIsNone(logistics_cargo.report(self.con, "logist", "2026-11")["auto_score"])
+        for invalid in (-1, float("inf"), float("nan"), True):
+            with self.assertRaises(ValueError):
+                logistics_cargo.save_summary(self.con, "logist", "2026-11", invalid, "", "boss")

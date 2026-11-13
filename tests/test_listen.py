@@ -443,7 +443,7 @@ class ListenTest(unittest.TestCase):
                     return error.code
         rows = [{"criterion": key, "cases": 0, "damage": 0, "comment": "Проверено"} for key, _ in CRITERIA]
         rows[0].update(cases=1, damage=1250.75, comment="<скол>")
-        body = {"emp": "cargo-http", "month": "2026-11", "criteria": rows, "score": 50, "comment": "Итог"}
+        body = {"emp": "cargo-http", "month": "2026-11", "criteria": rows, "score": 50, "comment": "Итог", "cargo_value": 1000000}
         self.assertEqual(post('pm', body), 403)
         self.assertEqual(post('boss', {**body, 'emp': 'pm'}), 400)
         self.assertEqual(post('boss', body), 200)
@@ -460,6 +460,15 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(post('boss', {**body, 'score': None}), 200)
         self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='cargo-http'").fetchone())
         self.assertEqual(self.con.execute("SELECT count(*) FROM logistics_cargo_checks WHERE emp='cargo-http'").fetchone()[0], 10)
+        auto = json.loads(self.get('boss', '/api/employee?login=cargo-http&month=2026-11')[2])['items'][3]
+        self.assertEqual((auto['pct'], auto['payout']), (1, 1500))
+        self.assertEqual(auto['manual']['scores']['cargo_safety']['comment'], 'Итог')
+        self.assertEqual(post('boss', {**body, 'cargo_value': -1, 'score': 0}), 400)
+        self.assertEqual(self.con.execute("SELECT cargo_value FROM logistics_cargo_summary WHERE emp='cargo-http'").fetchone()[0], 1000000)
+        # Existing callers can save grades without erasing the new monthly cargo value.
+        legacy = {k: v for k, v in body.items() if k != 'cargo_value'}
+        self.assertEqual(post('boss', legacy), 200)
+        self.assertEqual(self.con.execute("SELECT cargo_value FROM logistics_cargo_summary WHERE emp='cargo-http'").fetchone()[0], 1000000)
 
     def test_logistics_budget_inclusion_is_admin_only_and_scoped_to_employee_month(self):
         added = [{'login': login, 'name': login, 'position': 'logistics', 'role': 'employee'}
