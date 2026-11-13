@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from app import employees
+from app import employees, manual
 from app.common import connect, load_rules
 from app.engine import Engine
 from app.server import App
@@ -32,7 +32,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         p = self.profile()
         self.assertEqual(p["title"], "Специалист отдела логистики")
         self.assertFalse(p["draft"])
-        self.assertTrue(all(item.get("draft") for item in p["items"][2:]))
+        self.assertEqual([item["n"] for item in p["items"] if item.get("draft")], [3, 5, 6])
         self.assertEqual(p["salary"], 70000)
         self.assertEqual(p["kpi_bonus"], 10000)
         self.assertEqual([i["weight"] for i in p["items"]], [.20, .20, .15, .15, .15, .15])
@@ -42,7 +42,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertFalse(any("85%" in issue for issue in p["setup_issues"]))
         self.assertFalse(any("Оклад и размер премии" in issue for issue in p["setup_issues"]))
         self.assertIn("X", p["items"][4]["description"])
-        self.assertIn("стоимость повреждений", p["items"][3]["description"].lower())
+        self.assertIn("руководитель", p["items"][3]["description"].lower())
         self.assertIn("15 минут", p["items"][5]["description"])
 
     def test_selectable_profile_does_not_assign_any_employee(self):
@@ -76,7 +76,9 @@ class LogisticsKPIDraftTest(unittest.TestCase):
                 self.assertTrue(r["warnings"])
                 self.assertIsNone(r["items"][0]["pct"])
                 self.assertEqual(r["items"][1]["payout"], 0)
-                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in r["items"][2:]))
+                drafts = [r["items"][n - 1] for n in (3, 5, 6)]
+                self.assertTrue(all(i["status"] == "draft" and i["pct"] is None and i["payout"] == 0 for i in drafts))
+                self.assertEqual(r["items"][3]["status"], "awaiting")
                 self.assertEqual(engine.summary("logist", month)["payout"], 0)
 
     def test_partially_active_profile_enters_team_fund(self):
@@ -89,6 +91,23 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         self.assertEqual(overview["totals"]["employees"], baseline["employees"] + 1)
         group = next(g for g in overview["groups"] if g["position"] == "logistics")
         self.assertFalse(group["employees"][0]["draft"])
+
+    def test_cargo_safety_monthly_manager_score_drives_proportional_payout(self):
+        engine = self.engine_with_draft()
+        for score, payout in ((50, 750), (100, 1500), (0, 0)):
+            with self.subTest(score=score):
+                manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", score, "Проверено", "boss")
+                item = engine.compute("logist", "2026-11")["items"][3]
+                self.assertEqual((item["pct"], item["payout"]), (score / 100, payout))
+                self.assertEqual(item["manual"]["criteria"], ["cargo_safety"])
+                self.assertEqual(item["manual"]["scores"]["cargo_safety"]["comment"], "Проверено")
+        self.assertIsNone(engine.compute("logist", "2026-10")["items"][3]["pct"])
+        manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", None, "", "boss")
+        item = engine.compute("logist", "2026-11")["items"][3]
+        self.assertEqual((item["status"], item["pct"], item["payout"]), ("awaiting", None, 0))
+        for invalid in (-1, 101, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", invalid, "", "boss")
 
     def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
         engine = self.engine_with_draft()

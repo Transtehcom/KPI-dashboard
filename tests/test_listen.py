@@ -394,8 +394,10 @@ class ListenTest(unittest.TestCase):
 
     def test_monthly_supply_score_access_and_validation(self):
         employee={"login":"supply-test","name":"Снабжение","position":"supply","role":"employee"}
-        self.app.config['employees'].append(employee)
+        logistics={"login":"logistics-score-test","name":"Логист","position":"logistics","role":"employee"}
+        self.app.config['employees'].extend([employee,logistics])
         self.addCleanup(lambda:self.app.config['employees'].remove(employee))
+        self.addCleanup(lambda:self.app.config['employees'].remove(logistics))
         def post(login,body):
             req=urllib.request.Request(self.base+'/api/month-score',data=json.dumps(body).encode(),
                 headers={'Cookie':self.tokens[login],'Content-Type':'application/json'},method='POST')
@@ -411,6 +413,18 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(post('boss',{**body,'emp':'pm'}),400)
         row=self.con.execute("SELECT score FROM monthly_scores WHERE emp='supply-test' AND month='2026-11'").fetchone()
         self.assertEqual(row['score'],90)
+        cargo={**body,'emp':'logistics-score-test','criterion':'cargo_safety','score':50}
+        self.assertEqual(post('boss',cargo),200)
+        self.assertEqual(post('pm',cargo),403)
+        self.assertEqual(post('boss',{**cargo,'criterion':'docs'}),400)
+        self.assertEqual(post('boss',{**body,'criterion':'cargo_safety'}),400)
+        self.assertEqual(post('boss',{**cargo,'emp':'pm'}),400)
+        self.assertEqual(post('boss',{**cargo,'score':101}),400)
+        self.assertEqual(post('boss',{**cargo,'month':'2026-13'}),400)
+        row=self.con.execute("SELECT score,comment,author FROM monthly_scores WHERE emp='logistics-score-test' AND month='2026-11'").fetchone()
+        self.assertEqual((row['score'],row['comment'],row['author']),(50,'месяц','boss'))
+        self.assertEqual(post('boss',{**cargo,'score':None}),200)
+        self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='logistics-score-test' AND month='2026-11'").fetchone())
 
     def test_logistics_budget_inclusion_is_admin_only_and_scoped_to_employee_month(self):
         added = [{'login': login, 'name': login, 'position': 'logistics', 'role': 'employee'}

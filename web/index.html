@@ -1596,10 +1596,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const isMgr = state.boot.me.role === "manager";
     const crit = it.manual.criteria, titles = state.boot.criteria_titles;
     if (it.manual.period === "month") {
-      const score = it.manual.scores.docs;
+      const criterion = crit[0], score = it.manual.scores[criterion], title = titles[criterion] || criterion;
       return `<div class="manual"><div class="eyebrow">Оценка руководителя за месяц · ${esc(d.month)}</div>${isMgr ?
-        `<form data-month-assessment class="inline-form"><label>Документооборот, %<input type="number" min="0" max="100" step="1" data-month-score value="${esc(score.score ?? "")}" aria-label="Документооборот за ${esc(d.month)}"></label><label>Комментарий<input type="text" maxlength="500" data-month-comment value="${esc(score.comment || "")}" aria-label="Комментарий за ${esc(d.month)}"></label><button type="submit" class="btn">Сохранить оценку за месяц</button></form><div class="small muted">От 0 до 100. Очистите оценку и сохраните, чтобы снять её. Эффективность задач загружается отдельно из Б24 за этот же месяц.</div>` :
-        `<div>Документооборот: <b>${score.score == null ? "—" : esc(nf(score.score)) + "%"}</b>${score.comment ? `<div class="small">${esc(score.comment)}</div>` : ""}</div>`}</div>`;
+        `<form data-month-assessment data-month-criterion="${esc(criterion)}" class="inline-form"><label>${esc(title)}, %<input type="number" min="0" max="100" step="1" data-month-score value="${esc(score.score ?? "")}" aria-label="${esc(title)} за ${esc(d.month)}"></label><label>Комментарий<input type="text" maxlength="500" data-month-comment value="${esc(score.comment || "")}" aria-label="Комментарий за ${esc(d.month)}"></label><button type="submit" class="btn">Сохранить оценку за месяц</button></form><div class="small muted">От 0 до 100. Очистите оценку и сохраните, чтобы снять её.${criterion === "docs" ? " Эффективность задач загружается отдельно из Б24 за этот же месяц." : ""}</div>` :
+        `<div>${esc(title)} · <b>${score.score == null ? "—" : esc(nf(score.score)) + "%"}</b>${score.comment ? `<div class="small">${esc(score.comment)}</div>` : ""}</div>`}</div>`;
     }
     const opts = (v) => ["", 100, 75, 50, 25, 0].map((o) => `<option value="${o}" ${String(v ?? "") === String(o) ? "selected" : ""}>${o === "" ? "—" : o}</option>`).join("");
     return `<div class="manual"><div class="eyebrow">Еженедельная оценка руководителя</div>
@@ -1836,7 +1836,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       event.preventDefault();
       const value = form.querySelector("[data-month-score]").value;
       try {
-        await save("/api/month-score", {emp:d.login,month:d.month,criterion:"docs",score:value === "" ? null : Number(value),comment:form.querySelector("[data-month-comment]").value});
+        await save("/api/month-score", {emp:d.login,month:d.month,criterion:form.dataset.monthCriterion,score:value === "" ? null : Number(value),comment:form.querySelector("[data-month-comment]").value});
         if (!PREVIEW) {toast("Оценка за месяц сохранена");sideCache={};refreshKpi(d);}
       } catch (e) {toast(e.message);}
     }));

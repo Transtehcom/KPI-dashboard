@@ -950,8 +950,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest(str(e))
                 if path == "/api/month-score" and method == "POST":
                     emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
-                    if app.engine.employee(emp).get("position") != "supply":
-                        raise BadRequest("Оценка за месяц доступна для отдела снабжения")
+                    criterion = b.get("criterion")
+                    if not isinstance(criterion, str) or manual.MONTH_CRITERIA.get(criterion) != app.engine.employee(emp).get("position"):
+                        raise BadRequest("Этот критерий недоступен для должности сотрудника")
                     try:
                         with db_lock():
                             manual.set_month_score(app.con,emp,month,b.get("criterion"),b.get("score"),b.get("comment"),me["login"])

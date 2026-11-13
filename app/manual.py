@@ -11,11 +11,13 @@ import math
 from .supply_delivery import delivery_groups, delivery_key, delivery_overrides, delivery_deviation
 from .supply_purchases import qualifying_purchase_groups
 
+MONTH_CRITERIA = {"docs": "supply", "cargo_safety": "logistics"}
+
 
 def set_month_score(con, emp, month, criterion, score, comment, author):
     """Отдельная оценка за месяц: недельные значения сохраняются для истории."""
-    if criterion != "docs":
-        raise ValueError("За месяц вручную оценивается только документооборот; задачи — из Б24")
+    if not isinstance(criterion, str) or criterion not in MONTH_CRITERIA:
+        raise ValueError("Этот критерий не поддерживает ручную оценку за месяц")
     dt.date.fromisoformat(month + "-01")
     if score is None:
         con.execute("DELETE FROM monthly_scores WHERE emp=? AND month=? AND criterion=?", (emp,month,criterion))

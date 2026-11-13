@@ -19,7 +19,8 @@ SRC_B24, SRC_1C, SRC_MAN = "Битрикс24", "1С", "Оценка руково
 SRC_INPUT = "1С + ввод руководителя"  # данные из 1С, дополненные вручную в дашборде (app/manual.py)
 SRC_HAND = "Ввод руководителя"  # записи, которые руководитель вносит в дашборде (штрафы)
 REJECTED = "Отклонён"  # статус тендера 1С для KPI «Операционная дисциплина и качество подачи»
-CRITERIA_TITLES = {"docs": "Документооборот", "tasks": "Задачи в Битрикс24", "quality": "Качество документации"}
+CRITERIA_TITLES = {"docs": "Документооборот", "tasks": "Задачи в Битрикс24", "quality": "Качество документации",
+                   "cargo_safety": "Сохранность груза и рекламации"}
 EPS = 1e-9
 
 
@@ -504,6 +505,15 @@ class Engine:
                           {"label": "Данные 1С", "value": "Загружены за период" if known else "Период загружен не полностью"}],
                 "details": {"columns": ["Заявка", "Дата заявки", "Ответственный логист", "Статус",
                                         "Поступила", "Отработана", "Время обработки"], "rows": details}}
+
+    def calc_logistics_cargo_safety(self, e, ctx, p):
+        scores = self.q("SELECT score,comment FROM monthly_scores WHERE emp=? AND month=? AND criterion='cargo_safety'",
+                        e["login"], ctx["month"])
+        score = dict(scores[0]) if scores else {"score": None, "comment": ""}
+        value = score["score"] / 100 if score["score"] is not None else None
+        return {"components": [comp("Оценка выполнения KPI", value, p["target"], "%", source=SRC_MAN)],
+                "manual": {"period": "month", "month": ctx["month"], "criteria": ["cargo_safety"],
+                           "scores": {"cargo_safety": score}}}
 
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
