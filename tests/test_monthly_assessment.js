@@ -28,6 +28,22 @@ assert.ok(!cargoHtml.includes('<input'));
 assert.ok(!cargoHtml.includes('<form'));
 assert.ok(cargoHtml.includes('50%'));
 assert.ok(cargoHtml.includes('Проверка груза'));
+cargo.manual.cargo_checks={rows:Array.from({length:10},(_,index)=>({
+  criterion:index===0?'damage':'criterion-'+index,title:'Критерий '+index,
+  cases:index===0?1:null,damage:index===0?1250.75:null,comment:index===0?'Причина установлена':''}))};
+context.state.boot.me.role='manager';
+cargoHtml=context.manualBlock({month:'2026-11'},cargo);
+assert.equal((cargoHtml.match(/data-cargo-row/g)||[]).length,10);
+assert.equal((cargoHtml.match(/data-cargo-cases/g)||[]).length,10);
+assert.equal((cargoHtml.match(/data-cargo-damage/g)||[]).length,10);
+assert.equal((cargoHtml.match(/data-cargo-comment/g)||[]).length,10);
+assert.ok(cargoHtml.includes('data-cargo-assessment="1"'));
+assert.ok(cargoHtml.includes('Сохранить критерии и оценку'));
+context.state.boot.me.role='employee';
+cargoHtml=context.manualBlock({month:'2026-11'},cargo);
+assert.ok(!cargoHtml.includes('<input'));
+assert.ok(!cargoHtml.includes('<form'));
+assert.ok(cargoHtml.includes('Причина установлена'));
 console.log('Monthly supply assessment rendering: OK');
 
 const componentLine=html.split('\n').find(line=>line.includes('<div class="card-b">${i.components.map'));
@@ -70,5 +86,16 @@ vm.runInContext(html.slice(handlerStart,handlerEnd),context);
   input.value='90';
   await submit({preventDefault:()=>{}});
   assert.equal(requests[2].body.criterion,'docs');
+  form.dataset.monthCriterion='cargo_safety';
+  form.dataset.cargoAssessment='1';
+  const cargoValues=[{criterion:'damage',cases:'1',damage:'1250.75',comment:'Причина'},
+    {criterion:'loss',cases:'',damage:'0',comment:''}];
+  form.querySelectorAll=()=>cargoValues.map(row=>({dataset:{criterion:row.criterion},querySelector:selector=>({
+    value:row[{'[data-cargo-cases]':'cases','[data-cargo-damage]':'damage','[data-cargo-comment]':'comment'}[selector]]})}));
+  await submit({preventDefault:()=>{}});
+  assert.equal(requests[3].path,'/api/logistics-cargo-assessment');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[3].body.criteria)),[
+    {criterion:'damage',cases:1,damage:1250.75,comment:'Причина'},
+    {criterion:'loss',cases:null,damage:0,comment:''}]);
   console.log('Monthly form saves the selected criterion and supports clearing the grade');
 })().catch(error=>{console.error(error);process.exitCode=1;});

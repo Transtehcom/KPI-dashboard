@@ -288,6 +288,10 @@ CREATE TABLE IF NOT EXISTS monthly_scores (
   emp TEXT, month TEXT, criterion TEXT, score REAL, comment TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (emp, month, criterion));
 
+CREATE TABLE IF NOT EXISTS logistics_cargo_checks (
+  emp TEXT, month TEXT, criterion TEXT, cases INTEGER, damage REAL, comment TEXT, author TEXT, updated TEXT,
+  PRIMARY KEY (emp, month, criterion));
+
 CREATE TABLE IF NOT EXISTS client_approvals (
   emp TEXT, month TEXT, ref TEXT, approved INTEGER, author TEXT, updated TEXT,
   PRIMARY KEY (emp, month, ref));

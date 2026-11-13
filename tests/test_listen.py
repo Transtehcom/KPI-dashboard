@@ -426,6 +426,41 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(post('boss',{**cargo,'score':None}),200)
         self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='logistics-score-test' AND month='2026-11'").fetchone())
 
+    def test_logistics_cargo_criteria_save_with_grade_atomically_and_admin_only(self):
+        from app.logistics_cargo import CRITERIA
+
+        employee = {"login": "cargo-http", "name": "Логист", "position": "logistics", "role": "employee"}
+        self.app.config['employees'].append(employee)
+        self.addCleanup(lambda: self.app.config['employees'].remove(employee))
+        def post(login, body):
+            req = urllib.request.Request(self.base + '/api/logistics-cargo-assessment', data=json.dumps(body).encode(),
+                headers={'Cookie': self.tokens[login], 'Content-Type': 'application/json'}, method='POST')
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code
+        rows = [{"criterion": key, "cases": 0, "damage": 0, "comment": "Проверено"} for key, _ in CRITERIA]
+        rows[0].update(cases=1, damage=1250.75, comment="<скол>")
+        body = {"emp": "cargo-http", "month": "2026-11", "criteria": rows, "score": 50, "comment": "Итог"}
+        self.assertEqual(post('pm', body), 403)
+        self.assertEqual(post('boss', {**body, 'emp': 'pm'}), 400)
+        self.assertEqual(post('boss', body), 200)
+        report = json.loads(self.get('boss', '/api/employee?login=cargo-http&month=2026-11')[2])
+        item = report['items'][3]
+        self.assertEqual((item['pct'], item['payout']), (.5, 750))
+        self.assertEqual(item['manual']['cargo_checks']['rows'][0]['damage'], 1250.75)
+        self.assertEqual(self.get('pm', '/api/employee?login=cargo-http&month=2026-11')[0], 403)
+        changed = [{**row, 'damage': 9000} for row in rows]
+        self.assertEqual(post('boss', {**body, 'criteria': changed, 'score': 101}), 400)
+        self.assertEqual(self.con.execute("SELECT damage FROM logistics_cargo_checks WHERE emp='cargo-http' AND criterion='damage'").fetchone()[0], 1250.75)
+        self.assertEqual(post('boss', {**body, 'criteria': rows[:-1]}), 400)
+        self.assertEqual(post('boss', {**body, 'month': 'wrong'}), 400)
+        self.assertEqual(post('boss', {**body, 'score': None}), 200)
+        self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='cargo-http'").fetchone())
+        self.assertEqual(self.con.execute("SELECT count(*) FROM logistics_cargo_checks WHERE emp='cargo-http'").fetchone()[0], 10)
+
     def test_logistics_budget_inclusion_is_admin_only_and_scoped_to_employee_month(self):
         added = [{'login': login, 'name': login, 'position': 'logistics', 'role': 'employee'}
                  for login in ('logistics-http', 'logistics-other')]

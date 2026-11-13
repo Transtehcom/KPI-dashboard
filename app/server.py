@@ -948,6 +948,19 @@ class Handler(BaseHTTPRequestHandler):
                         return JsonResponse({"error": str(e)}, 409)
                     except ValueError as e:
                         raise BadRequest(str(e))
+                if path == "/api/logistics-cargo-assessment" and method == "POST":
+                    from . import logistics_cargo
+
+                    emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
+                    if app.engine.employee(emp).get("position") != "logistics":
+                        raise BadRequest("Оценка KPI 4 доступна для логиста")
+                    try:
+                        with db_lock(), app.con:
+                            logistics_cargo.save(app.con, emp, month, b.get("criteria"), me["login"])
+                            manual.set_month_score(app.con, emp, month, "cargo_safety", b.get("score"), b.get("comment"), me["login"])
+                    except (ValueError, TypeError) as exc:
+                        raise BadRequest(str(exc)) from None
+                    return JsonResponse({"ok": True})
                 if path == "/api/month-score" and method == "POST":
                     emp, month = self.employee_param(b.get("emp")), self.month_param(b.get("month"))
                     criterion = b.get("criterion")

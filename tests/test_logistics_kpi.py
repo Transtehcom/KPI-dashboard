@@ -109,6 +109,16 @@ class LogisticsKPIDraftTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", invalid, "", "boss")
 
+    def test_cargo_safety_exposes_ten_manual_incident_criteria(self):
+        engine = self.engine_with_draft()
+        item = engine.compute("logist", "2026-11")["items"][3]
+        self.assertIn("cargo_checks", item["manual"])
+        rows = item["manual"]["cargo_checks"]["rows"]
+        self.assertEqual(len(rows), 10)
+        self.assertEqual(rows[0]["title"], "Повреждения груза")
+        self.assertEqual(rows[-1]["title"], "Претензии заказчика по транспортным причинам")
+        self.assertTrue(all(r["cases"] is None and r["damage"] is None and r["comment"] == "" for r in rows))
+
     def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
         engine = self.engine_with_draft()
         self.con.execute("INSERT INTO dataset_state(dataset,date_from,date_to,updated_at) VALUES(?,?,?,?)",

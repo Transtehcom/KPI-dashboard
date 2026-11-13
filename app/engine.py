@@ -507,13 +507,19 @@ class Engine:
                                         "Поступила", "Отработана", "Время обработки"], "rows": details}}
 
     def calc_logistics_cargo_safety(self, e, ctx, p):
+        from .logistics_cargo import report
+
         scores = self.q("SELECT score,comment FROM monthly_scores WHERE emp=? AND month=? AND criterion='cargo_safety'",
                         e["login"], ctx["month"])
         score = dict(scores[0]) if scores else {"score": None, "comment": ""}
         value = score["score"] / 100 if score["score"] is not None else None
+        checks = report(self.con, e["login"], ctx["month"])
         return {"components": [comp("Оценка выполнения KPI", value, p["target"], "%", source=SRC_MAN)],
                 "manual": {"period": "month", "month": ctx["month"], "criteria": ["cargo_safety"],
-                           "scores": {"cargo_safety": score}}}
+                           "scores": {"cargo_safety": score}, "cargo_checks": checks},
+                "extra": [{"label": "Критериев с данными", "value": f"{checks['entered']} из {len(checks['rows'])}"},
+                          {"label": "Внесено случаев", "value": checks["cases_total"]},
+                          {"label": "Внесено ущерба", "value": checks["damage_total"], "fmt": "rub"}]}
 
     def calc_logistics_discipline(self, e, ctx, p):
         rows = self.q("SELECT * FROM forwarder_orders WHERE emp=? AND dt>=? AND dt<=? "
