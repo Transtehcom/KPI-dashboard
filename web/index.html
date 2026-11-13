@@ -1252,7 +1252,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     if (b.mode === "demo") return `<span class="sync"><span class="dot demo"></span>Демо-данные</span>`;
     if (!s) return `<span class="sync"><span class="dot"></span>Данные ещё не загружены</span>`;
     const t = fmtCell((s.finished || "").slice(0, 16), "", false);
-    return `<span class="sync" title="${esc(s.message)}"><span class="dot ${s.status === "ok" ? "ok" : "err"}"></span>Б24 и 1С: ${esc(t)}</span>`;
+    return `<span class="sync" title="${esc(s.message)}"><span class="dot ${s.status === "ok" ? "ok" : "err"}"></span>${esc(t)}</span>`;
   }
 
   // синхронизация идёт в фоне несколько минут: кнопка показывает текущий шаг, по окончании данные перечитываются

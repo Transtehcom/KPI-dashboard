@@ -2,6 +2,13 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const html=fs.readFileSync('web/index.html','utf8');
+const badgeContext={state:{boot:{last_sync:{status:'ok',finished:'2026-11-13T14:52:00',message:'Обновлено'}}},
+  esc:String,fmtCell:()=> '13-11-2026 14:52'};
+vm.runInNewContext(html.slice(html.indexOf('  function syncInfo()'),html.indexOf('  // синхронизация идёт')),badgeContext);
+const badge=badgeContext.syncInfo();
+assert.ok(badge.includes('class="dot ok"'));
+assert.equal(badge.replace(/<[^>]*>/g,''),'13-11-2026 14:52','sync badge displays only the date and time');
+assert.ok(badge.includes('title="Обновлено"'),'sync details remain available on hover');
 const start=html.indexOf('  let syncTimer = null;');
 const source=html.slice(start,html.indexOf('  function renderShell()',start));
 function fixture(){
