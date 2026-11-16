@@ -70,4 +70,30 @@ context.state.wl.dept='ФО';
 context.renderWorkload(data);
 assert.ok(main.innerHTML.includes('data-wl-list="1|card"'));
 assert.ok(!main.innerHTML.includes('data-wl-list="2|card"'),'finance matches the specific role, not the shared department');
+context.state.wl.dept='';
+for (const group of ['IT','HR','Маркетолог','ЮО']) {
+  const person={uid:20,name:group,group};
+  context.renderWorkload({...data,people:[person],documents:[{uid:20,date:'2026-11-02T09:00:00',posted:0}]});
+  assert.ok(!main.innerHTML.includes('data-wl-docs='),`${group} has no 1C metrics`);
+  assert.equal((main.innerHTML.match(/class="n muted">Нет данных<\/td>/g)||[]).length,6);
+  assert.ok(main.innerHTML.includes('data-wl-list="20|open"'),'Bitrix metrics remain available');
+}
+context.renderWorkload(data);
+for (const uid of [3,4]) {
+  for (const key of ['open','done']) assert.ok(!main.innerHTML.includes(`data-wl-docs="${uid}|${key}"`));
+  for (const key of ['received','late','ontime']) assert.ok(main.innerHTML.includes(`data-wl-docs="${uid}|${key}"`));
+}
+const documentsForTotals=[
+  {uid:1,date:'2026-11-02T09:00:00',posted:1},
+  {uid:2,date:'2026-11-02T09:00:00',posted:1},
+  {uid:3,date:'2026-11-02T09:00:00',posted:1},
+  {uid:4,date:'2026-11-02T09:00:00',posted:0},
+];
+context.renderWorkload({...data,documents:documentsForTotals});
+assert.ok(main.innerHTML.includes('data-wl-docs="all|received">3</button>'),'totals exclude roles that do not work in 1C');
+assert.ok(main.innerHTML.includes('data-wl-docs="all|done">1</button>'),'closed total excludes assistants');
+assert.ok(main.innerHTML.includes('data-wl-docs="all|open">0</button>'),'working total excludes assistants');
+context.state.wl.dept='Помощники руководителя';
+context.renderWorkload(data);
+assert.ok(!main.innerHTML.includes('data-wl-docs="all|done"'),'unavailable assistant totals are not shown as zero');
 console.log('Workload six-column groups and independent on-time/overdue calculations: OK');

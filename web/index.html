@@ -3649,6 +3649,11 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     };
   }
 
+  function workloadOnecAvailable(group, metric) {
+    return !!group && !["IT","HR","Маркетолог","ЮО"].includes(group)
+      && !(group === "Помощники руководителя" && ["open","done"].includes(metric));
+  }
+
   async function loadWorkload() {
     if (state.view !== "workload") return;
     const { main, current, paint } = viewRequest();
@@ -3680,7 +3685,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       && (!st.status || (st.status === "open" ? t.open : st.status === "done" ? !!t.closed : st.status === "review" ? t.on_review : st.status === "rework" ? t.on_rework : t.blocked))
       && (st.only !== "overdue" || t.overdue_days > 0) && (st.only !== "remarks" || t.remarks.length > 0);
     const tasks = d.tasks.filter(pass);
-    const documents = (d.documents || []).filter(row => rosterUids.has(row.uid) && (!st.dept || person[row.uid].group === st.dept) && (!st.uid || String(row.uid) === st.uid));
+    const documents = (d.documents || []).filter(row => rosterUids.has(row.uid) && workloadOnecAvailable(person[row.uid].group,"received")
+      && (!st.dept || person[row.uid].group === st.dept) && (!st.uid || String(row.uid) === st.uid));
     const onecErrors = Object.entries(d.onec?.errors || {}).map(([entity,error]) => entity + " — " + error);
     // показатели: открытые — срез сейчас, остальное — за выбранный период
     const M = {
@@ -3713,9 +3719,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       return `<td class="n${key === "late" && count ? " wl-bad" : ""}"><button type="button" class="link-btn" ${attr}="${uid}|${key}">${unknown && !count ? "нет данных" : count}</button>${unknown ? `<div class="muted small">без даты или срока: ${unknown}</div>` : ""}</td>`;
     };
     const summaryCells = (rows, uid, source) => {
-      if (source === "onec" && !d.onec?.loaded) return `<td colspan="6" class="muted small">${onecErrors.length ? "Ошибка загрузки 1С" : "Нет данных 1С"}</td>`;
+      const emptyCell = `<td class="n muted">Нет данных</td>`;
+      const available = key => uid === "all" ? people.some(p => workloadOnecAvailable(p.group,key)) : workloadOnecAvailable(person[uid]?.group,key);
+      if (source === "onec" && (!d.onec?.loaded || !available("received"))) return emptyCell.repeat(6);
       const stats = workloadStats(rows, a, b, d.generated, source);
-      return COLS.map(key => summaryCell(stats, uid, key, source)).join("") + `<td class="nw">${ruMoment(stats.nearest)}</td>`;
+      const stateStats = source === "onec" ? workloadStats(rows.filter(row => workloadOnecAvailable(person[row.uid]?.group,"open")),a,b,d.generated,source) : stats;
+      return COLS.map(key => source === "onec" && !available(key) ? emptyCell
+        : summaryCell(["open","done"].includes(key) ? stateStats : stats,uid,key,source)).join("") + `<td class="nw">${ruMoment(stats.nearest)}</td>`;
     };
     const row = (p) => { const ts = tasks.filter((t) => t.uid === p.uid);
       return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}<div class="muted small">${esc([p.position, p.group].filter(Boolean).join(" · "))}</div></td>${summaryCells(ts,p.uid,"bitrix")}${summaryCells(documents.filter(row => row.uid === p.uid),p.uid,"onec")}</tr>`; };
@@ -3750,7 +3760,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     }
     if (st.list?.source === "onec") {
       const {uid,key} = st.list;
-      const base = uid === "all" ? documents : documents.filter(row => String(row.uid) === uid);
+      const base = documents.filter(row => (uid === "all" || String(row.uid) === uid) && workloadOnecAvailable(person[row.uid]?.group,key));
       const stats = workloadStats(base,a,b,d.generated,"onec");
       const selected = ["ontime","late"].includes(key) ? [...stats[key],...stats.unknown] : stats[key] || base;
       const who = uid === "all" ? "Все сотрудники" : (person[uid] || {}).name || uid;
