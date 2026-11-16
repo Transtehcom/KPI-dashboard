@@ -24,6 +24,7 @@ import datetime as dt
 from .crm_links import object_url
 import json
 import math
+from .common import merge_rows
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -57,6 +58,41 @@ def members(config):
             out.append({"uid": uid, "login": e["login"], "name": e.get("name") or e["login"],
                         "title": e.get("title"), "department": e.get("department")})
     return out
+
+
+def store_onec(con, data, updated=None):
+    """Обновить успешные типы документов, сохраняя срезы источников с ошибкой. Транзакцией управляет синхронизация."""
+    updated = updated or dt.datetime.now(EKB).replace(tzinfo=None).isoformat(timespec="seconds")
+    con.execute("DELETE FROM workload_onec_state WHERE entity IN ('__fetch__','$metadata','Catalog_Пользователи')")
+    errors = data.get("errors") or {}
+    successful = set(data.get("entities") or ()) - set(errors)
+    for entity in successful:
+        con.execute("DELETE FROM workload_onec_documents WHERE entity=?", (entity,))
+        con.execute("INSERT INTO workload_onec_state(entity,updated,since,error) VALUES(?,?,?,NULL) "
+                    "ON CONFLICT(entity) DO UPDATE SET updated=excluded.updated,since=excluded.since,error=NULL",
+                    (entity, updated, data.get("since")))
+    merge_rows(con, "workload_onec_documents", [r for r in data.get("rows", []) if r["entity"] in successful],
+               commit=False)
+    for entity, error in errors.items():
+        con.execute("INSERT INTO workload_onec_state(entity,error) VALUES(?,?) "
+                    "ON CONFLICT(entity) DO UPDATE SET error=excluded.error", (entity, error))
+
+
+def _onec_data(con, people):
+    by_login = {p["login"]: p["uid"] for p in people}
+    documents = []
+    for row in con.execute("SELECT * FROM workload_onec_documents ORDER BY date DESC, id"):
+        if row["emp"] not in by_login:
+            continue
+        document = dict(row)
+        document.update(uid=by_login[row["emp"]], posted=bool(row["posted"]), open=not bool(row["posted"]))
+        documents.append(document)
+    states = [dict(r) for r in con.execute("SELECT * FROM workload_onec_state ORDER BY entity")]
+    updated = [s["updated"] for s in states if s["updated"]]
+    since = [s["since"] for s in states if s["updated"] and s["since"]]
+    return documents, {"loaded": bool(updated), "updated": min(updated, default=None),
+                       "since": max(since, default=None),
+                       "errors": {s["entity"]: s["error"] for s in states if s["error"]}}
 
 
 def _t(s):
@@ -107,9 +143,15 @@ def analyze(t, now, block_tags=(), help_tags=()):
     agreed = chain[-1][1]
 
     remarks = [{"type": "качество", "at": r, "reason": "Возврат на доработку", "review": False} for r in returns]
+    late_intervals = []
     seen = set()
     for i, (since, d) in enumerate(chain):
         nxt = chain[i + 1][0] if i + 1 < len(chain) else None
+        if d:
+            late_start = max(since, d)
+            late_end = min(at for at in (now, nxt, exec_at) if at)
+            if late_start < late_end:
+                late_intervals.append({"start": late_start, "end": late_end})
         if not d or d >= now or since > d or (nxt and nxt <= d) or (exec_at and exec_at <= d) or d in seen:
             continue  # срок не наступил, перенесён до срока, результат сдан вовремя или замечание уже есть
         seen.add(d)
@@ -144,6 +186,7 @@ def analyze(t, now, block_tags=(), help_tags=()):
         "on_rework": status in WORKING and bool(returns) and (not submits or returns[-1] > submits[-1]),
         "returns": returns, "remarks": remarks, "quality": quality,
         "moves_ok": moves_ok, "moves_late": moves_late, "self_moves": asked,
+        "late_intervals": late_intervals,
         "overdue_days": _days(agreed, now) if overdue else 0,
         "review_delay_days": _days(agreed, now) if review_delay else 0,
         "blocked": status == "6" or bool(low & set(block_tags)), "help": bool(low & set(help_tags)),
@@ -174,9 +217,10 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
         t["creator_url"] = object_url(link_config,"user",t["creator"])
         t["project_url"] = object_url(link_config,"group",t["project_id"])
     tasks.sort(key=lambda t: t["created"] or "", reverse=True)
+    documents, onec = _onec_data(con, people)
     dept_titles = dept_titles or {}
     return {"generated": now, "portal": portal, "has_data": bool(rows), "director": director,
             "people": [{"uid": p["uid"], "name": p["name"], "position": p["title"],
                         "url": object_url(link_config,"user",p["uid"]),
                         "dept": dept_titles.get(p["department"], p["department"]) or "Без отдела"} for p in people],
-            "tasks": tasks}
+            "tasks": tasks, "documents": documents, "onec": onec}

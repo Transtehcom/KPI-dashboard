@@ -234,6 +234,7 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         from app import sync
         config = {**self.config, "mode": "real", "onec": {"base_url": "https://example.test", "datasets": {}}}
         with patch("app.sync.OneC") as source, patch("app.sync.onec_sales_register.fetch", return_value=[]), \
+                patch("app.sync.onec_workload.fetch", return_value={"rows": [], "entities": [], "errors": {}}), \
                 patch("app.sync.supplier_directory.refresh", return_value='ok'), \
                 patch("app.sync.onec_money.fetch", return_value={"cash": [], "plan": []}):
             source.return_value.fetch.return_value = {"forwarder_orders": [], "transport_requests": []}

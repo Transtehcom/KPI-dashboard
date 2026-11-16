@@ -176,6 +176,14 @@ CREATE TABLE IF NOT EXISTS task_ledger (
 -- tracked — входит в панель (workload.include_b24_ids), остальные — только для имён постановщиков
 CREATE TABLE IF NOT EXISTS task_people (id TEXT PRIMARY KEY, uid INTEGER, name TEXT, position TEXT, dept TEXT, tracked INTEGER);
 
+-- документы 1С для «Загрузки», независимый срез по каждому типу документа и сотруднику
+CREATE TABLE IF NOT EXISTS workload_onec_documents (
+  id TEXT PRIMARY KEY, emp TEXT, entity TEXT, ref TEXT, number TEXT, date TEXT, posted INTEGER,
+  deadline TEXT, deadline_source TEXT, closed_at TEXT, owner_field TEXT, url TEXT);
+CREATE INDEX IF NOT EXISTS ix_workload_onec_emp ON workload_onec_documents(emp);
+CREATE TABLE IF NOT EXISTS workload_onec_state (
+  entity TEXT PRIMARY KEY, updated TEXT, since TEXT, error TEXT);
+
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY, emp TEXT, dt TEXT, doc TEXT, client TEXT, revenue REAL, cost REAL, signed INTEGER,
   signed_date TEXT, due_date TEXT, paid_date TEXT);

@@ -21,6 +21,9 @@ class NavigationTest(unittest.TestCase):
     def test_theme_switching(self):
         self.run_script("test_theme.js")
 
+    def test_workload_summary_table(self):
+        self.run_script("test_workload_table.js")
+
     def test_supplier_directory(self):
         self.run_script("test_supplier_directory.js")
 

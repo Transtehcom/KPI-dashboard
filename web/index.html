@@ -944,6 +944,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   .wl-table th { white-space: normal; min-width: 64px; vertical-align: bottom; }
   .wl-table td:first-child { min-width: 240px; white-space: normal; }
   .wl-table td { vertical-align: top; }
+  .wl-table thead tr:first-child th[colspan] { text-align: center; background: var(--accent-soft); border-bottom-color: var(--teal); }
+  .wl-table tbody td:nth-child(8), .wl-table thead tr:nth-child(2) th:nth-child(7) { border-left: 2px solid var(--line-strong); }
   .wl-total td { border-top: 2px solid var(--line); background: var(--surface-2); }
   .wl-sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   .wl-tasks td.wrap { white-space: normal; min-width: 220px; max-width: 340px; }
@@ -3624,6 +3626,29 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       ${hist.map((r) => `<tr><td>${day(r.date)}</td><td>${esc(r.doc)}</td><td class="wrap">${esc(r.item)}</td><td>${esc(r.unit || "—")}</td><td class="n">${nf(r.qty, 3)}</td><td class="n">${r.price != null ? nf(r.price, 2) : `<span class="muted">без цены</span>`}</td><td class="n">${r.amount != null ? nf(r.amount, 2) : "—"}</td><td class="n">${r.term != null ? nf(r.term) : "—"}</td><td>${mark(r)}</td></tr>`).join("")}</tbody></table></div>` : `<span class="muted">Данных нет</span>`}</div></section>`;
   }
   // ---------- «Загрузка»: загрузка сотрудников по задачам Битрикс24 (расчёт — app/workload.py)
+  function workloadStats(rows, from, to, now, source = "bitrix") {
+    const inPeriod = value => !!value && (!from || value.slice(0, 10) >= from) && (!to || value.slice(0, 10) <= to);
+    const opened = row => source === "onec" ? !row.posted : row.open;
+    const completed = row => source === "onec" ? row.posted && row.date : row.closed;
+    const executed = row => source === "onec" ? row.closed_at : row.exec_at;
+    const done = rows.filter(row => inPeriod(completed(row)));
+    const unknown = done.filter(row => !row.deadline || !executed(row));
+    const late = rows.filter(row => {
+      if (source !== "onec" && Array.isArray(row.late_intervals)) {
+        return row.late_intervals.some(interval => (!to || interval.start.slice(0,10) <= to) && (!from || interval.end.slice(0,10) >= from));
+      }
+      if (!row.deadline || row.deadline >= now) return false;
+      const end = executed(row) || (opened(row) ? now : null);
+      return !!end && end > row.deadline && (!to || row.deadline.slice(0, 10) <= to) && (!from || end.slice(0, 10) >= from);
+    });
+    const nearest = rows.filter(row => opened(row) && row.deadline >= now).map(row => row.deadline).sort()[0] || null;
+    return {
+      received: rows.filter(row => source === "onec" ? inPeriod(row.date) : inPeriod(row.created) || inPeriod(row.transferred)),
+      open: rows.filter(opened), done, late, unknown, nearest,
+      ontime: done.filter(row => row.deadline && executed(row) && executed(row) <= row.deadline),
+    };
+  }
+
   async function loadWorkload() {
     if (state.view !== "workload") return;
     const { main, current, paint } = viewRequest();
@@ -3651,6 +3676,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       && (!st.status || (st.status === "open" ? t.open : st.status === "done" ? !!t.closed : st.status === "review" ? t.on_review : st.status === "rework" ? t.on_rework : t.blocked))
       && (st.only !== "overdue" || t.overdue_days > 0) && (st.only !== "remarks" || t.remarks.length > 0);
     const tasks = d.tasks.filter(pass);
+    const documents = (d.documents || []).filter(row => (!st.dept || (person[row.uid] || {}).dept === st.dept) && (!st.uid || String(row.uid) === st.uid));
+    const onecErrors = Object.entries(d.onec?.errors || {}).map(([entity,error]) => entity + " — " + error);
     // показатели: открытые — срез сейчас, остальное — за выбранный период
     const M = {
       open: { t: "Открыто сейчас", f: (t) => t.open },
@@ -3660,6 +3687,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       nodl: { t: "Выполнено без срока", f: (t) => inP(t.closed) && !t.deadline },
       commit: { t: "Обязательства периода", f: (t) => inP(t.deadline), num: (t) => !!t.closed && (!b || day(t.closed) <= b) },
       overdue: { t: "Открытые просрочки", f: (t) => t.overdue_days > 0 },
+      late: { t: "Просрочено за период", f: t => workloadStats([t], a, b, d.generated).late.length > 0 },
       clean: { t: "Без замечаний", f: (t) => t.checked && inP(t.accepted), num: (t) => t.quality === "clean" },
       remarks: { t: "С замечаниями", f: (t) => confirmed(t).some((r) => inP(r.at)) },
       disputed: { t: "Замечания на разборе", f: (t) => t.remarks.some((r) => r.review && inP(r.at)) },
@@ -3671,43 +3699,41 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       moves: { t: "Переносы срока", f: (t) => t.moves_ok.some(inP) || t.moves_late.some(inP) },
     };
     const pick = (ts, k) => ts.filter(M[k].f);
-    const pct = (ts, k) => { const den = pick(ts, k), num = den.filter(M[k].num); return den.length ? `${num.length}/${den.length} · ${nf(num.length / den.length * 100)}%` : `<span class="muted">нет данных</span>`; };
     const cnt = (uid, k, html) => `<button type="button" class="link-btn" data-wl-list="${uid}|${k}">${html}</button>`;
-    const cell = (ts, uid, k) => {
-      const n = pick(ts, k).length;
-      if (k === "ontime" || k === "commit" || k === "clean") return `<td class="n">${pick(ts, k).length ? cnt(uid, k, pct(ts, k)) : pct(ts, k)}</td>`;
-      if (!n) return `<td class="n muted">0</td>`;
-      if (k === "overdue") { const mx = Math.max(...pick(ts, k).map((t) => t.overdue_days)); return `<td class="n wl-bad">${cnt(uid, k, `${n} · до ${mx} дн.`)}</td>`; }
-      if (k === "returns") { const ev = ts.reduce((s, t) => s + t.returns.filter(inP).length, 0), two = pick(ts, k).filter((t) => t.returns.length >= 2).length;
-        return `<td class="n wl-warn">${cnt(uid, k, `${ev}${two ? ` · повторных ${two}` : ""}`)}</td>`; }
-      if (k === "done") { const ts2 = pick(ts, k), acc = ts2.filter((t) => t.checked).length, nr = ts2.filter((t) => t.mode === "check" && !t.checked).length;
-        return `<td class="n">${cnt(uid, k, `${n}<div class="muted small">${[n - acc - nr ? `без проверки ${n - acc - nr}` : "", acc ? `принято ${acc}` : "", nr ? `не проверено ${nr}` : ""].filter(Boolean).join(" · ")}</div>`)}</td>`; }
-      if (k === "received") { const tr = pick(ts, k).filter((t) => inP(t.transferred)).length; return `<td class="n">${cnt(uid, k, `${n}${tr ? `<div class="muted small">передано ${tr}</div>` : ""}`)}</td>`; }
-      return `<td class="n${k === "remarks" || k === "rework" || k === "help" ? " wl-warn" : ""}">${cnt(uid, k, n)}</td>`;
-    };
-    const nearest = (ts) => { const xs = ts.filter((t) => t.open && t.deadline && t.deadline >= d.generated).map((t) => t.deadline).sort(); return xs.length ? ruMoment(xs[0]) : "—"; };
-    const COLS = ["open", "received", "done", "ontime", "commit", "overdue", "clean", "remarks", "rework", "returns", "help", "review", "blocked"];
+    const COLS = ["received", "open", "done", "late", "ontime"];
+    const labels = {received:"Поступило", open:"Открыто сейчас", done:"Выполнено задач за период", late:"Просрочено за период", ontime:"Сдано в срок"};
     const people = d.people.filter((p) => (!st.dept || p.dept === st.dept) && (!st.uid || String(p.uid) === st.uid));
+    const summaryCell = (stats, uid, key, source) => {
+      const count = stats[key].length, unknown = ["ontime","late"].includes(key) ? stats.unknown.length : 0;
+      const attr = source === "onec" ? "data-wl-docs" : "data-wl-list";
+      return `<td class="n${key === "late" && count ? " wl-bad" : ""}"><button type="button" class="link-btn" ${attr}="${uid}|${key}">${unknown && !count ? "нет данных" : count}</button>${unknown ? `<div class="muted small">без даты или срока: ${unknown}</div>` : ""}</td>`;
+    };
+    const summaryCells = (rows, uid, source) => {
+      if (source === "onec" && !d.onec?.loaded) return `<td colspan="6" class="muted small">${onecErrors.length ? "Ошибка загрузки 1С" : "Нет данных 1С"}</td>`;
+      const stats = workloadStats(rows, a, b, d.generated, source);
+      return COLS.map(key => summaryCell(stats, uid, key, source)).join("") + `<td class="nw">${ruMoment(stats.nearest)}</td>`;
+    };
     const row = (p) => { const ts = tasks.filter((t) => t.uid === p.uid);
-      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${COLS.map((k) => cell(ts, p.uid, k)).join("")}<td class="nw">${nearest(ts)}</td></tr>`; };
-    const totals = `<tr class="wl-total"><td><b>Итого</b></td>${COLS.map((k) => cell(tasks.filter((t) => people.some((p) => p.uid === t.uid)), "all", k)).join("")}<td class="nw">${nearest(tasks)}</td></tr>`;
-    const head = `<th>Сотрудник</th>${COLS.map((k) => `<th class="n">${M[k].t}</th>`).join("")}<th>Ближайший срок</th>`;
+      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${summaryCells(ts,p.uid,"bitrix")}${summaryCells(documents.filter(row => row.uid === p.uid),p.uid,"onec")}</tr>`; };
+    const totals = `<tr class="wl-total"><td><b>Итого</b></td>${summaryCells(tasks,"all","bitrix")}${summaryCells(documents,"all","onec")}</tr>`;
+    const head = `<tr><th rowspan="2">Сотрудник</th><th colspan="6">Битрикс24</th><th colspan="6">1С</th></tr><tr>${COLS.map(k => `<th class="n">${labels[k]}</th>`).join("")}<th>Ближайший срок</th>${COLS.map(k => `<th class="n">${k === "open" ? "В работе" : k === "done" ? "Закрыто" : labels[k]}</th>`).join("")}<th>Ближайший срок</th></tr>`;
     // блок ИД: делегированные поручения не суммируются с личными задачами ИД
     const dir = d.director, delegated = dir ? tasks.filter((t) => t.creator === dir && t.uid !== dir) : [];
     const dirBlock = dir && delegated.length ? `<section class="panel"><div class="panel-h"><h2>Контроль поручений ИД</h2><span class="muted small">Задачи, которые поставил ${esc((person[dir] || {}).name || "ИД")} другим сотрудникам; в личные показатели ИД не входят</span></div><div class="panel-b"><div class="wl-kpis">
         ${[["open", "Открыто"], ["overdue", "Просрочено"], ["review", "Ждут приёмки ИД"], ["done", "Выполнено за период"], ["remarks", "С замечаниями за период"], ["help", "Вопросы и блокировки"]].map(([k, t]) => `<div><b>${cnt("dir", k, pick(delegated, k).length)}</b><span>${t}</span></div>`).join("")}</div></div></section>` : "";
     // список задач по нажатию: сотрудник × показатель
     let listHtml = "";
-    if (st.list) {
+    if (st.list && st.list.source !== "onec") {
       const { uid, key } = st.list;
       const base = uid === "dir" ? delegated : uid === "all" ? tasks.filter((t) => people.some((p) => p.uid === t.uid)) : tasks.filter((t) => String(t.uid) === uid);
-      const ts = key === "card" ? base.filter((t) => t.open || inP(t.closed) || inP(t.created)) : pick(base, key);
+      const stats = workloadStats(base,a,b,d.generated);
+      const ts = key === "card" ? base.filter((t) => t.open || inP(t.closed) || inP(t.created)) : ["ontime","late"].includes(key) ? [...stats[key],...stats.unknown] : stats[key] || pick(base, key);
       const who = uid === "dir" ? "Поручения ИД" : uid === "all" ? "Все сотрудники" : (person[uid] || {}).name || uid;
       const fromDir = uid !== "dir" && uid !== "all" && dir && Number(uid) !== dir ? ts.filter((t) => t.creator === dir).length : 0;
       const q = (t) => t.mode === "check" ? (t.quality === "clean" ? "принято без замечаний" : t.quality === "remarks" ? "с замечаниями" : t.quality === "not_rated" ? "качество не оценено" : "ещё не принята")
         : (confirmed(t).length ? "есть замечания" : "замечания не зафиксированы");
       const rem = (t) => t.remarks.length ? t.remarks.map((r) => `<div class="${r.review ? "muted" : "wl-flag"}">${r.type === "срок" ? "Срок" : "Качество"} ${ruMoment(r.at)}: ${esc(r.reason)}${r.review ? " · на разборе" : ""}</div>`).join("") : "—";
-      listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · ${key === "card" ? "задачи" : esc(M[key].t.toLowerCase())}: ${ts.length}</h2>
+      listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · ${key === "card" ? "задачи" : ["ontime","late"].includes(key) ? "проверка сроков задач" : esc(M[key].t.toLowerCase())}: ${ts.length}</h2>
         ${fromDir ? `<span class="muted small">из них поручений ИД: ${fromDir}, прочих: ${ts.length - fromDir}</span>` : ""}<button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
         <div class="panel-b">${ts.length ? `<div class="scroll"><table class="dt wl-tasks"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Постановщик</th><th>Проект · тип</th><th>Приоритет</th><th>Статус</th><th>Первоначальный срок</th><th>Согласованный срок</th><th>Сдано</th><th>Принято</th><th>Просрочка</th><th>Проверка</th><th>Замечания</th><th class="n">Возвраты</th><th>Подтверждение</th></tr></thead><tbody>
         ${ts.map((t) => `<tr><td class="wrap">${taskA(t)}${t.blocked ? ' <b class="wl-flag">· блокировка</b>' : ""}${t.help ? ' <b class="wl-flag">· вопрос ИД</b>' : ""}</td><td>${crmLink((person[t.uid] || {}).name || "", (person[t.uid] || {}).url)}</td><td>${crmLink(t.creator_name || "—", t.creator_url)}</td>
@@ -3718,10 +3744,23 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           <td>${q(t)}</td><td class="wrap small">${rem(t)}</td><td class="n${t.returns.length ? " wl-warn" : ""}">${t.returns.length || "—"}</td><td>${t.has_result ? "результат приложен" : '<span class="muted">нет подтверждения</span>'}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="muted small">Задач нет.</div>`}</div></section>`;
     }
+    if (st.list?.source === "onec") {
+      const {uid,key} = st.list;
+      const base = uid === "all" ? documents : documents.filter(row => String(row.uid) === uid);
+      const stats = workloadStats(base,a,b,d.generated,"onec");
+      const selected = ["ontime","late"].includes(key) ? [...stats[key],...stats.unknown] : stats[key] || base;
+      const who = uid === "all" ? "Все сотрудники" : (person[uid] || {}).name || uid;
+      const documentLabels = {...labels,open:"В работе",done:"Закрыто"};
+      listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · 1С · ${["ontime","late"].includes(key) ? "Проверка сроков" : documentLabels[key]} · ${selected.length}</h2><button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
+        <div class="panel-b"><div class="scroll"><table class="dt"><thead><tr><th>Документ</th><th>Вид</th><th>Сотрудник</th><th>Поле сотрудника</th><th>Дата документа</th><th>Состояние</th><th>Срок</th><th>Завершён</th><th>Своевременность</th></tr></thead><tbody>
+        ${selected.map(row => `<tr><td>${crmLink(row.number || "Без номера",row.url)}</td><td>${esc(row.entity.replace(/^Document_/,"").replace(/([а-я])([А-Я])/g,"$1 $2"))}</td><td>${esc((person[row.uid] || {}).name || row.emp)}</td><td>${esc(row.owner_field.replace(/_Key$/,""))}</td><td class="nw">${ruMoment(row.date)}</td><td>${row.posted ? "Закрыт · проведён" : "В работе · не проведён"}</td><td class="nw" title="${esc(row.deadline_source || "")}">${ruMoment(row.deadline)}</td><td class="nw">${ruMoment(row.closed_at)}</td><td>${!row.deadline || row.posted && !row.closed_at ? "Нет данных" : row.closed_at ? row.closed_at <= row.deadline ? "В срок" : "С опозданием" : row.deadline < d.generated ? "Просрочен" : "Срок впереди"}</td></tr>`).join("")}
+        </tbody></table></div>${selected.length ? "" : `<div class="muted">Документов нет</div>`}</div></section>`;
+    }
     const sel = (id, label, cur, opts) => `<label for="${id}">${label}<select id="${id}"><option value="">Все</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
     document.getElementById("main").innerHTML = `
-      <div class="head"><div><div class="eyebrow">Задачи Битрикс24</div><h1>Кто чем занят и где нужна помощь</h1>
-        <div class="sub">Объём — количество задач, качество — сроки, проверка и замечания. Рабочие часы и процент загрузки не используются. Открытые задачи — срез на ${ruMoment(d.generated)}, остальное — за период ${periodLabel(a, b)}. Время — Екатеринбург.</div></div></div>
+      <div class="head"><div><div class="eyebrow">Битрикс24 и 1С</div><h1>Загрузка сотрудников</h1>
+        <div class="sub">Период ${periodLabel(a,b)}. Открытые задачи и документы — срез на ${ruMoment(d.generated)}. Время — Екатеринбург.</div></div></div>
+      ${onecErrors.length ? `<div class="panel"><div class="panel-b" role="status">Часть данных 1С не обновлена. Показаны последние доступные сведения.<details><summary>Источники с ошибками · ${onecErrors.length}</summary>${onecErrors.map(error => `<div class="muted small">${esc(error)}</div>`).join("")}</details></div></div>` : ""}
       ${d.has_data ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">Данных пока нет — нажмите «Обновить данные».</div></div>`}
       <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(st.per, "w")}
         ${sel("wDept", "Отдел", st.dept, depts.map((x) => [x, x]))}${d.people.length > 1 ? sel("wUid", "Сотрудник", st.uid, d.people.map((p) => [p.uid, p.name])) : ""}
@@ -3729,8 +3768,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         ${sel("wPrio", "Приоритет", st.prio, [["2", "Высокий"], ["1", "Обычный"]])}${sel("wStatus", "Статус", st.status, Object.entries(STATUSES))}
         ${sel("wOnly", "Отбор", st.only, [["overdue", "Только просрочки"], ["remarks", "Только с замечаниями"]])}
         <button class="btn" type="button" id="wReset">Сбросить</button></div></div>
-        <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead><tr>${head}</tr></thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
-        <div class="muted small" style="margin-top:8px">Нажмите на сотрудника или число — откроется список задач. «Сдано в срок» — выполненные со сроком; «Обязательства периода» — задачи со сроком в периоде, выполненные к его концу; «Без замечаний» — принятые с первой проверки, только для задач с проверкой («Принять работу после завершения»). Переносом считается изменение срока постановщиком; если срок сдвинул сам исполнитель, оценка идёт по прежнему сроку, а замечание после него — «на разборе». Помощь руководителя — задачи с тегом ${esc(["помощь", "нужна помощь", "вопрос ИД"].join(", "))} или в блокировке (статус «Отложена» или тег «блокировка»).</div></div></section>
+        <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead>${head}</thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
+        <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Закрыто» означает «Проведён», поступления и закрытые отбираются по дате документа. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние непроведённые также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
       ${dirBlock}${listHtml}`;
     const rerender = () => renderWorkload(d);
     bindPeriod("w", () => st.per, (v) => { st.per = v; }, rerender);
@@ -3743,6 +3782,11 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const [uid, key] = btn.dataset.wlList.split("|");
       st.list = { uid, key }; rerender();
       const el = document.getElementById("wlList"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+    document.querySelectorAll("#main [data-wl-docs]").forEach(btn => btn.addEventListener("click", () => {
+      const [uid,key] = btn.dataset.wlDocs.split("|");
+      st.list = {uid,key,source:"onec"}; rerender();
+      document.getElementById("wlList")?.scrollIntoView({behavior:"smooth",block:"start"});
     }));
     const cl = document.getElementById("wlClose");
     if (cl) cl.addEventListener("click", () => { st.list = null; rerender(); });

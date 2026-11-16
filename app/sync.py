@@ -8,7 +8,7 @@ from .bitrix24 import Bitrix24
 from .common import current_month, db_lock, load_rules, merge_rows, month_add, month_bounds, replace_rows, today
 from .letters import fetch_letters
 from . import b24_sales_register, onec_money, onec_sales_register, operations, onec_operations, tender_followups
-from . import supplier_directory
+from . import supplier_directory, onec_workload
 from .onec import DATASETS, KEEP_UNMAPPED, UNMAPPED, OneC, supplier_date_from
 
 B24_DATE_FIELDS = {"activities": "dt", "kp_letters": "dt", "tenders": None, "deals": "closed_date",
@@ -68,6 +68,7 @@ def run(con, config, force_demo=False):
             operations_enabled = bool(config.get('operations',{}).get('enabled'))
             operations_data, operations_error, operations_bitrix = None, None, None
             operations_bitrix_error = None
+            workload_onec_data = None
 
             if config.get("bitrix24", {}).get("webhook") and "ВАШ-ПОРТАЛ" not in config["bitrix24"]["webhook"]:
                 b24 = Bitrix24(config["bitrix24"], log=log.append)
@@ -199,6 +200,18 @@ def run(con, config, force_demo=False):
             else:
                 log.append("1С не настроена (onec.base_url)")
 
+            if config.get('onec', {}).get('base_url') and 'СЕРВЕР-1С' not in config['onec']['base_url']:
+                try:
+                    log.append('1С → документы для загрузки сотрудников')
+                    workload_onec_data = onec_workload.fetch(OneC(config['onec'], log=log.append), config, date_from)
+                except Exception as exc:
+                    workload_onec_data = {'rows': [], 'entities': [],
+                                          'errors': {'__fetch__': type(exc).__name__}, 'since': date_from.isoformat()}
+                if workload_onec_data.get('errors'):
+                    status = 'error'
+                    for entity, error in workload_onec_data['errors'].items():
+                        log.append(f'Ошибка 1С (загрузка сотрудников, {entity}): {error}')
+
             if operations_enabled and config.get('onec',{}).get('base_url') and 'СЕРВЕР-1С' not in config['onec']['base_url']:
                 try:
                     log.append('1С → история панелей продаж и снабжения')
@@ -224,9 +237,11 @@ def run(con, config, force_demo=False):
                 else:
                     operations_bitrix_error = 'Не завершена загрузка источников Б24 для панели'
 
-            if writes or operations_data is not None or operations_error or operations_bitrix is not None or operations_bitrix_error:
+            if writes or workload_onec_data is not None or operations_data is not None or operations_error or operations_bitrix is not None or operations_bitrix_error:
                 with db_lock():
                     try:
+                        if workload_onec_data is not None:
+                            workload.store_onec(con, workload_onec_data)
                         for src, table, rows, date_field in writes:
                             if table == "crm_followups":
                                 tender_followups.store(con, rows, followup_from.isoformat())

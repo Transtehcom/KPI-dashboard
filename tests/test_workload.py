@@ -4,10 +4,13 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import workload  # noqa: E402
+from app import sync  # noqa: E402
 from app.common import connect, replace_rows  # noqa: E402
 
 NOW = "2026-10-15T12:00:00"
@@ -63,6 +66,29 @@ class TaskRulesTest(unittest.TestCase):
         a = an(task(deadline=new, history=[mv("2026-10-12T09:00:00", DL, new)]))
         self.assertEqual((a["deadline"], a["moves_late"], a["overdue_days"]), (new, ["2026-10-12T09:00:00"], 0))
         self.assertEqual([r["at"] for r in a["remarks"]], [DL])
+
+    def test_late_interval_survives_a_creator_extension_after_deadline(self):
+        new = "2026-10-20T10:00:00"
+        a = an(task(deadline=new, history=[mv("2026-10-12T09:00:00", DL, new)]))
+        self.assertEqual(a.get("late_intervals"), [{"start": DL, "end": "2026-10-12T09:00:00"}])
+
+    def test_extension_before_deadline_does_not_create_a_late_interval(self):
+        new = "2026-10-20T10:00:00"
+        a = an(task(deadline=new, history=[mv("2026-10-09T09:00:00", DL, new)]))
+        self.assertEqual(a.get("late_intervals"), [])
+
+    def test_completion_and_review_submission_end_late_intervals(self):
+        cases = [task(status="5", closed="2026-10-11T12:00:00"),
+                 task(status="4", control=1, history=[st("2026-10-11T12:00:00", "3", "4")])]
+        for row in cases:
+            with self.subTest(status=row["status"]):
+                self.assertEqual(an(row).get("late_intervals"), [{"start": DL, "end": "2026-10-11T12:00:00"}])
+
+    def test_open_late_interval_reaches_now_and_new_deadline_can_add_another(self):
+        new = "2026-10-14T10:00:00"
+        a = an(task(deadline=new, history=[mv("2026-10-12T09:00:00", DL, new)]))
+        self.assertEqual(a.get("late_intervals"), [{"start": DL, "end": "2026-10-12T09:00:00"},
+                                                   {"start": new, "end": NOW}])
 
     def test_return_and_resubmit_after_deadline(self):
         h = [st("2026-10-09T10:00:00", "3", "4"), st("2026-10-09T15:00:00", "4", "2", BOSS),
@@ -126,6 +152,122 @@ class BuildTest(unittest.TestCase):
         d = workload.build(self.con, self.config, uids={ANNA})
         self.assertEqual(({t["uid"] for t in d["tasks"]}, [p["uid"] for p in d["people"]]), ({ANNA}, [ANNA]))
         self.assertEqual(workload.build(self.con, self.config, uids=set())["tasks"], [])
+
+
+def onec_document(ref="a", emp="anna", entity="Document_Order", posted=0):
+    return {"id": entity + ":" + ref + ":" + emp, "entity": entity, "ref": ref, "emp": emp,
+            "number": "001", "date": "2026-10-01T10:00:00", "posted": posted,
+            "deadline": "2026-10-10T23:59:59", "closed_at": None,
+            "deadline_source": "Срок", "owner_field": "Менеджер_Key", "url": None}
+
+
+class OneCWorkloadTest(unittest.TestCase):
+    def setUp(self):
+        self.con = connect(":memory:")
+        self.addCleanup(self.con.close)
+        self.config = {"employees": [{"login": "anna", "name": "Анна", "b24_user_id": ANNA},
+                                      {"login": "boss", "name": "Руководитель", "b24_user_id": BOSS}]}
+
+    def store(self, rows=(), entities=("Document_Order",), errors=None, at=NOW):
+        workload.store_onec(self.con, {"rows": list(rows), "entities": list(entities),
+                                      "errors": errors or {}, "since": "2026-01-01"}, updated=at)
+
+    def test_missing_snapshot_is_distinct_from_successful_empty_snapshot(self):
+        result = workload.build(self.con, self.config)
+        self.assertEqual(result.get("documents"), [])
+        self.assertFalse(result["onec"]["loaded"])
+        self.assertIsNone(result["onec"]["updated"])
+        self.store()
+        result = workload.build(self.con, self.config)
+        self.assertEqual(result["documents"], [])
+        self.assertTrue(result["onec"]["loaded"])
+        self.assertEqual(result["onec"]["since"], "2026-01-01")
+
+    def test_posted_flags_and_document_date_preserve_unknown_completion(self):
+        self.store([onec_document(), onec_document("b", posted=1)])
+        docs = {row["ref"]: row for row in workload.build(self.con, self.config)["documents"]}
+        self.assertEqual((docs["a"]["uid"], docs["a"]["posted"], docs["a"]["open"]), (ANNA, False, True))
+        self.assertEqual((docs["b"]["posted"], docs["b"]["open"], docs["b"]["closed_at"]), (True, False, None))
+        self.assertEqual(docs["a"]["date"], "2026-10-01T10:00:00")
+
+    def test_current_login_association_and_uid_scope_are_enforced(self):
+        self.store([onec_document(), onec_document("b", emp="boss"), onec_document("c", emp="removed")])
+        self.config["employees"][0]["b24_user_id"] = 80
+        result = workload.build(self.con, self.config, uids={80})
+        self.assertEqual([(d["ref"], d["uid"]) for d in result["documents"]], [("a", 80)])
+        self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
+        self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
+
+    def test_partial_failure_keeps_failed_entity_snapshot_and_records_error(self):
+        self.store([onec_document(), onec_document("b", entity="Document_Supply")],
+                   entities=("Document_Order", "Document_Supply"))
+        self.store([onec_document("new")], errors={"Document_Supply": "HTTP 401"}, at="2026-10-16T10:00:00")
+        result = workload.build(self.con, self.config)
+        self.assertEqual({d["ref"] for d in result["documents"]}, {"new", "b"})
+        self.assertEqual(result["onec"]["errors"], {"Document_Supply": "HTTP 401"})
+        self.store([], entities=("Document_Supply",))
+        self.assertEqual(workload.build(self.con, self.config)["onec"]["errors"], {})
+
+    def test_failed_first_snapshot_has_no_successful_coverage(self):
+        self.store(entities=(), errors={"Document_Order": "unavailable"})
+        result = workload.build(self.con, self.config)
+        self.assertFalse(result["onec"]["loaded"])
+        self.assertEqual(result["onec"]["errors"], {"Document_Order": "unavailable"})
+
+    def test_recovered_metadata_and_user_catalog_errors_clear(self):
+        self.store(entities=(), errors={"$metadata": "HTTP 503", "Catalog_Пользователи": "HTTP 401"})
+        self.store([onec_document()])
+        self.assertEqual(workload.build(self.con, self.config)["onec"]["errors"], {})
+
+    def test_store_can_be_rolled_back_with_sync_transaction(self):
+        self.store([onec_document()])
+        self.con.rollback()
+        self.assertEqual(workload.build(self.con, self.config)["documents"], [])
+        self.assertFalse(workload.build(self.con, self.config)["onec"]["loaded"])
+
+
+class OneCWorkloadSyncTest(unittest.TestCase):
+    def test_all_config_employees_are_loaded_even_when_kpi_fetch_fails(self):
+        con = connect(":memory:")
+        self.addCleanup(con.close)
+        config = {"mode": "real", "holidays": [], "employees": [
+            {"login": "anna", "name": "Анна", "b24_user_id": ANNA, "onec_manager": "Анна 1С"}],
+            "onec": {"base_url": "https://example.test", "datasets": {}}}
+
+        def fetch(onec, current_config, date_from):
+            rows = [onec_document(emp=e["login"]) for e in current_config["employees"] if e.get("onec_manager")]
+            return {"rows": rows, "entities": ["Document_Order"], "errors": {}, "since": "2026-01-01"}
+
+        with mock.patch("app.sync.OneC") as client, \
+             mock.patch("app.sync.supplier_directory.refresh", return_value="ok"), \
+             mock.patch("app.sync.onec_sales_register.fetch", return_value=[]), \
+             mock.patch("app.sync.onec_money.fetch", return_value=None), \
+             mock.patch.object(sync, "onec_workload", SimpleNamespace(fetch=fetch), create=True):
+            client.return_value.fetch.side_effect = RuntimeError("KPI unavailable")
+            sync.run(con, config)
+        docs = workload.build(con, config)["documents"]
+        self.assertEqual([(r["emp"], r["uid"]) for r in docs], [("anna", ANNA)])
+
+    def test_source_failure_keeps_snapshot_and_marks_coverage_error(self):
+        con = connect(":memory:")
+        self.addCleanup(con.close)
+        config = {"mode": "real", "employees": [], "holidays": [],
+                  "onec": {"base_url": "https://example.test", "datasets": {}}}
+        workload.store_onec(con, {"rows": [onec_document()], "entities": ["Document_Order"],
+                                  "errors": {}, "since": "2026-01-01"}, updated=NOW)
+        con.commit()
+        def fail(onec, current_config):
+            raise RuntimeError("unavailable")
+        with mock.patch("app.sync.OneC") as client, \
+             mock.patch("app.sync.supplier_directory.refresh", return_value="ok"), \
+             mock.patch("app.sync.onec_sales_register.fetch", return_value=[]), \
+             mock.patch("app.sync.onec_money.fetch", return_value=None), \
+             mock.patch.object(sync, "onec_workload", SimpleNamespace(fetch=fail), create=True):
+            client.return_value.fetch.return_value = {}
+            result = sync.run(con, config)
+        self.assertEqual(con.execute("SELECT ref FROM workload_onec_documents").fetchone()[0], "a")
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(workload.build(con, config)["onec"]["errors"])
 
 
 if __name__ == "__main__":
