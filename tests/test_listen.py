@@ -676,6 +676,41 @@ class ListenTest(unittest.TestCase):
             self.assertEqual(self.get(login,"/api/workload")[0],403)
         self.assertEqual(self.get("boss","/api/workload")[0],200)
 
+    def test_workload_member_settings_permissions_validation_and_reload(self):
+        def post(login, body):
+            request = urllib.request.Request(self.base + "/api/workload-members", data=json.dumps(body).encode(),
+                                             headers={"Cookie": self.tokens[login], "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, json.load(response)
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code, json.load(error)
+
+        def clean_settings():
+            with db_lock(), self.con:
+                self.con.execute("DELETE FROM workload_member_settings")
+
+        self.addCleanup(clean_settings)
+        change = {"login": "pm", "included": False, "direction": "ОС"}
+        for login in ("pm", "tender", "lead"):
+            self.assertEqual(post(login, {"members": [change]})[0], 403)
+        for invalid in ({}, {"members": None}, {"members": [change, {**change, "login": "missing"}]},
+                        {"members": [change, change]}, {"members": [{**change, "included": 0}]},
+                        {"members": [{**change, "direction": "unknown"}]}):
+            with self.subTest(body=invalid):
+                self.assertEqual(post("boss", invalid)[0], 400)
+                with db_lock():
+                    self.assertEqual(self.con.execute("SELECT COUNT(*) FROM workload_member_settings").fetchone()[0], 0)
+        self.assertEqual(post("boss", {"members": [change]}), (200, {"ok": True}))
+        result = json.loads(self.get("boss", "/api/workload")[2])
+        person = next(p for p in result["people"] if p["uid"] == 14)
+        self.assertEqual((person["included"], person["group"]), (False, "ОС"))
+        self.assertEqual(result["configuration"]["members"][0]["login"], "pm")
+        self.assertEqual(post("boss", {"members": [{**change, "included": True, "direction": None}]}), (200, {"ok": True}))
+        result = json.loads(self.get("boss", "/api/workload")[2])
+        self.assertEqual((result["people"][0]["included"], result["people"][0]["group"]), (True, "ОП"))
+
     def test_listen_journal_only_for_admin(self):
         self.get("pm", "/api/call-audio?id=call1")
         self.assertEqual(self.get("pm", "/api/listen-log")[0], 403)

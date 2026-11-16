@@ -188,6 +188,96 @@ class EmployeeGroupsTest(unittest.TestCase):
             self.assertIsNone(workload.employee_group({"department":department,"title":title}))
 
 
+class MemberSettingsTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = os.path.join(self.directory.name, "members.sqlite")
+        self.con = connect(self.path)
+        self.addCleanup(lambda: self.con.close())
+        self.config = {"employees": [
+            {"login": "anna", "name": "Анна", "department": "ОС", "b24_user_id": ANNA},
+            {"login": "boss", "name": "Директор", "title": "Исполнительный директор", "b24_user_id": BOSS},
+            {"login": "petrovaaa", "name": "Помощник", "department": "ОС", "b24_user_id": 80},
+            {"login": "without-id", "name": "Без Б24", "department": "ОП"}]}
+        replace_rows(self.con, "task_ledger", [task(), task("boss", uid=BOSS)])
+        workload.store_onec(self.con, {"rows": [onec_document()], "entities": ["Document_Order"]})
+        self.con.commit()
+
+    def configuration(self):
+        return {member["login"]: member for member in workload.build(self.con, self.config)["configuration"]["members"]}
+
+    def test_defaults_keep_matched_people_active_and_director_available(self):
+        result = workload.build(self.con, self.config)
+        members = self.configuration()
+        self.assertEqual(result["configuration"]["directions"],
+                         ["ОП", "ОС", "ОЛ", "Маркетолог", "ФО", "ЮО", "HR", "IT", "Помощники руководителя"])
+        self.assertEqual(set(members), {"anna", "boss", "petrovaaa"})
+        self.assertEqual(members["anna"], {"login": "anna", "name": "Анна", "uid": ANNA,
+                                          "direction": None, "default_group": "ОС", "group": "ОС", "included": True})
+        self.assertFalse(members["boss"]["included"])
+        self.assertIsNone(members["boss"]["group"])
+        self.assertTrue(members["petrovaaa"]["included"])
+        self.assertEqual({p["uid"]: p["included"] for p in result["people"]}, {ANNA: True, BOSS: False, 80: True})
+
+    def test_exclusion_retains_raw_tasks_documents_and_other_member_settings(self):
+        workload.save_members(self.con, self.config, [{"login": "boss", "included": True, "direction": "IT"}], "admin")
+        saved_boss = dict(self.con.execute("SELECT * FROM workload_member_settings WHERE login='boss'").fetchone())
+        workload.save_members(self.con, self.config, [{"login": "anna", "included": False, "direction": "ОП"}], "admin2")
+        result = workload.build(self.con, self.config)
+        anna = next(p for p in result["people"] if p["uid"] == ANNA)
+        self.assertEqual((anna["included"], anna["group"]), (False, "ОП"))
+        self.assertEqual({t["uid"] for t in result["tasks"]}, {ANNA, BOSS})
+        self.assertEqual([d["emp"] for d in result["documents"]], ["anna"])
+        self.assertEqual(dict(self.con.execute("SELECT * FROM workload_member_settings WHERE login='boss'").fetchone()), saved_boss)
+        self.assertEqual(self.configuration()["boss"]["group"], "IT")
+        row = self.con.execute("SELECT * FROM workload_member_settings WHERE login='anna'").fetchone()
+        self.assertEqual(row["updated_by"], "admin2")
+        self.assertTrue(row["updated_at"])
+
+    def test_override_survives_reload_and_source_changes_and_can_reset_to_auto(self):
+        workload.save_members(self.con, self.config, [{"login": "anna", "included": True, "direction": "ОП"}], "admin")
+        self.con.close()
+        self.con = connect(self.path)
+        self.config["employees"][0]["department"] = "ОЛ"
+        self.assertEqual((self.configuration()["anna"]["group"], self.configuration()["anna"]["default_group"]), ("ОП", "ОЛ"))
+        for direction in (None, ""):
+            workload.save_members(self.con, self.config, [{"login": "anna", "included": True, "direction": direction}], "admin")
+            self.assertEqual((self.configuration()["anna"]["group"], self.configuration()["anna"]["direction"]), ("ОЛ", None))
+        workload.save_members(self.con, self.config, [{"login": "anna", "included": True, "direction": "ОП"}], "admin")
+        self.assertEqual(self.config["employees"][0]["department"], "ОЛ")
+
+    def test_direction_changes_do_not_change_author_only_identity_rule(self):
+        workload.save_members(self.con, self.config, [{"login": "petrovaaa", "included": True, "direction": "ОП"}], "admin")
+        self.assertEqual(self.configuration()["petrovaaa"]["group"], "ОП")
+        self.assertIn("petrovaaa", workload.AUTHOR_ONLY)
+        self.assertNotIn("anna", workload.AUTHOR_ONLY)
+
+    def test_invalid_batch_is_rejected_before_any_writes(self):
+        valid = {"login": "anna", "included": False, "direction": "ОП"}
+        invalid_rows = [None, {}, [], {"login": "missing", "included": True, "direction": "ОП"},
+                        {"login": "without-id", "included": True, "direction": "ОП"},
+                        {"login": "boss", "included": True, "direction": "unknown"},
+                        {"login": "boss", "included": True, "direction": []},
+                        {"login": "boss", "included": 1, "direction": "IT"},
+                        {"login": "boss", "included": "false", "direction": "IT"},
+                        {"login": "boss", "direction": "IT"},
+                        {"login": "boss", "included": True, "direction": None},
+                        {"login": "boss", "included": True, "direction": ""}, valid]
+        for invalid in invalid_rows:
+            with self.subTest(row=invalid), self.assertRaises(ValueError):
+                workload.save_members(self.con, self.config, [valid, invalid], "admin")
+            self.assertEqual(self.con.execute("SELECT COUNT(*) FROM workload_member_settings").fetchone()[0], 0)
+        for invalid in (None, {}, "anna"):
+            with self.subTest(batch=invalid), self.assertRaises(ValueError):
+                workload.save_members(self.con, self.config, invalid, "admin")
+
+    def test_uid_scope_also_scopes_configuration(self):
+        result = workload.build(self.con, self.config, uids={ANNA})
+        self.assertEqual([m["login"] for m in result["configuration"]["members"]], ["anna"])
+        self.assertEqual({t["uid"] for t in result["tasks"]}, {ANNA})
+
+
 def onec_document(ref="a", emp="anna", entity="Document_Order", posted=0):
     return {"id": entity + ":" + ref + ":" + emp, "entity": entity, "ref": ref, "emp": emp,
             "number": "001", "date": "2026-10-01T10:00:00", "posted": posted,

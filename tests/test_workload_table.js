@@ -43,7 +43,7 @@ assert.match(html, /colspan="6">1С/);
 const main = {innerHTML:''};
 Object.assign(context, {
   state:{wl:{per:{mode:'month',month:'2026-11'},dept:'',uid:''}},
-  document:{getElementById:id=>id==='main'?main:{addEventListener(){}},querySelectorAll:()=>[]},
+  document:{getElementById:id=>id==='main'?main:{addEventListener(){},querySelectorAll:()=>[]},querySelectorAll:()=>[]},
   isoDay:date=>date.toISOString().slice(0,10),periodRange:()=>['2026-11-01','2026-11-30'],
   periodLabel:()=> 'Ноябрь 2026',periodHtml:()=>'',bindPeriod:()=>{},esc:String,crmLink:label=>label,
   ruMoment:value=>value||'—',ruDay:String,nf:String,
@@ -96,4 +96,59 @@ assert.ok(main.innerHTML.includes('data-wl-docs="all|open">0</button>'),'working
 context.state.wl.dept='Помощники руководителя';
 context.renderWorkload(data);
 assert.ok(!main.innerHTML.includes('data-wl-docs="all|done"'),'unavailable assistant totals are not shown as zero');
+context.state.wl.dept='';
+const configurable = {...data,people:data.people.map(person=>({...person,included:person.uid!==3})),configuration:{
+  directions:['ОП','ОС','ФО','ЮО','Помощники руководителя'],members:[
+    {login:'finance',name:'Финансовый менеджер',uid:1,included:true,direction:null,default_group:'ФО',group:'ФО'},
+    {login:'helper',name:'Анастасия Шашмурина',uid:3,included:false,direction:'ОП',default_group:'Помощники руководителя',group:'ОП'},
+  ]}};
+context.renderWorkload(configurable);
+assert.ok(main.innerHTML.includes('id="wlMembersForm"'));
+assert.ok(main.innerHTML.includes('data-wl-login="helper"'));
+assert.ok(main.innerHTML.includes('id="wlMemberIncluded-helper"'));
+assert.ok(main.innerHTML.includes('id="wlMemberDirection-helper"'),'drafts stay tied to employee identity after roster reordering');
+assert.ok(main.innerHTML.includes('aria-label="Направление поиска Анастасия Шашмурина"'));
+assert.ok(main.innerHTML.includes('value="ОП" selected'));
+assert.ok(!main.innerHTML.includes('data-wl-list="3|card"'),'excluded employee is available in settings and absent from table');
 console.log('Workload six-column groups and independent on-time/overdue calculations: OK');
+
+(async () => {
+  let sent, reloads=0;
+  const events={},error={textContent:''};
+  const makeRow = member => {
+    const included={checked:member.included,disabled:false,addEventListener(name,handler){events[member.login+':'+name]=handler;}};
+    const direction={value:member.direction||'',disabled:false,dataset:{defaultGroup:member.default_group||''}};
+    return {dataset:{wlLogin:member.login},included,direction,
+      querySelector:selector=>selector==='[data-wl-included]'?included:direction};
+  };
+  const formRows=configurable.configuration.members.map(makeRow);
+  const controls=formRows.flatMap(row=>[row.included,row.direction]);
+  const form={addEventListener:(name,handler)=>{events[name]=handler;},
+    querySelectorAll:selector=>selector==='[data-wl-login]'?formRows:controls};
+  context.document.getElementById=id=>id==='main'?main:id==='wlMembersForm'?form:id==='wlMembersError'?error:{addEventListener(){}};
+  context.api=async (path,body)=>{sent=JSON.parse(JSON.stringify({path,body}));};
+  context.loadWorkload=async ()=>{reloads++;};
+  context.toast=()=>{};
+  context.renderWorkload(configurable);
+  formRows[0].included.checked=false;
+  events['finance:change']();
+  assert.equal(sent,undefined,'checkbox changes stay local until Save');
+  await events.submit({preventDefault(){}});
+  assert.deepEqual(sent,{path:'/api/workload-members',body:{members:[{login:'finance',included:false,direction:null}]}});
+  assert.equal(reloads,1);
+  assert.ok(controls.every(control=>!control.disabled));
+  context.api=async ()=>{throw Error('Сохранение не удалось');};
+  await events.submit({preventDefault(){}});
+  assert.equal(error.textContent,'Сохранение не удалось');
+  assert.equal(reloads,1,'failed save preserves the draft and current table');
+  assert.equal(formRows[0].included.checked,false);
+  const unmappedMember={login:'director',name:'Руководитель',uid:99,included:true,direction:'IT',default_group:null,group:'IT'};
+  const restoredRow=makeRow(unmappedMember);
+  restoredRow.direction.required=true;
+  formRows.splice(0,formRows.length,restoredRow);
+  context.DashboardUI={keepView:()=>()=>{restoredRow.included.checked=false;restoredRow.direction.value='';}};
+  context.renderWorkload({...configurable,people:[{uid:99,name:'Руководитель',group:'IT',included:true}],
+    configuration:{directions:['IT'],members:[unmappedMember]}});
+  assert.equal(restoredRow.direction.required,false,'restoring an unchecked draft removes the direction requirement');
+  console.log('Workload member settings submit only changed rows and preserve failed drafts: OK');
+})().catch(error=>{console.error(error);process.exitCode=1;});

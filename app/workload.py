@@ -25,7 +25,7 @@ from .crm_links import object_url
 import json
 import math
 import re
-from .common import merge_rows
+from .common import db_lock, merge_rows
 from .onec_workload import AUTHOR_ONLY
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
@@ -36,6 +36,7 @@ STATUS = {"1": "Новая", "2": "Ждёт выполнения", "3": "Вып�
           "6": "Отложена", "7": "Отклонена"}
 BLOCK_TAGS = ["блокировка", "заблокирована"]
 HELP_TAGS = ["помощь", "нужна помощь", "помощь ИД", "вопрос ИД"]
+DIRECTIONS = ["ОП", "ОС", "ОЛ", "Маркетолог", "ФО", "ЮО", "HR", "IT", "Помощники руководителя"]
 
 
 def employee_group(employee):
@@ -85,6 +86,53 @@ def members(config):
             out.append({"uid": uid, "login": e["login"], "name": e.get("name") or e["login"],
                         "title": e.get("title"), "department": e.get("department")})
     return out
+
+
+def member_configuration(con, team):
+    """Личные настройки состава поверх категории, определённой по текущим сотрудникам."""
+    overrides = {row["login"]: row for row in con.execute("SELECT * FROM workload_member_settings")}
+    result = []
+    for person in team:
+        default_group = employee_group(person)
+        saved = overrides.get(person["login"])
+        direction = saved["direction"] if saved else None
+        result.append({"login": person["login"], "name": person["name"], "uid": person["uid"],
+                       "direction": direction, "default_group": default_group, "group": direction or default_group,
+                       "included": bool(saved["included"]) if saved else default_group is not None})
+    return result
+
+
+def save_members(con, config, rows, author):
+    """Проверить весь пакет и атомарно сохранить только переданные строки состава панели."""
+    with db_lock():
+        if not isinstance(rows, list):
+            raise ValueError("Ожидается список сотрудников")
+        candidates = {person["login"]: person for person in members(config)}
+        seen, values = set(), []
+        updated = dt.datetime.now(EKB).isoformat(timespec="seconds")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Некорректная запись сотрудника")
+            login = row.get("login")
+            if not isinstance(login, str) or login not in candidates:
+                raise ValueError("Сотрудник с ID Битрикс24 не найден")
+            if login in seen:
+                raise ValueError("Сотрудник повторяется в списке")
+            seen.add(login)
+            included = row.get("included")
+            if not isinstance(included, bool):
+                raise ValueError("Укажите, включён ли сотрудник в таблицу")
+            direction = row.get("direction")
+            if direction is not None and (not isinstance(direction, str) or direction and direction not in DIRECTIONS):
+                raise ValueError("Неизвестное направление")
+            direction = direction or None
+            if included and not (direction or employee_group(candidates[login])):
+                raise ValueError("Выберите направление для включаемого сотрудника")
+            values.append((login, int(included), direction, author, updated))
+        with con:
+            con.executemany("INSERT INTO workload_member_settings(login,included,direction,updated_by,updated_at) "
+                            "VALUES(?,?,?,?,?) ON CONFLICT(login) DO UPDATE SET included=excluded.included, "
+                            "direction=excluded.direction,updated_by=excluded.updated_by,updated_at=excluded.updated_at", values)
 
 
 def store_onec(con, data, updated=None):
@@ -230,6 +278,8 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     names = {p["uid"]: p["name"] for p in con.execute("SELECT uid, name FROM task_people")}  # постановщики не из раздела
     names.update({p["uid"]: p["name"] for p in team})
     people = sorted((p for p in team if uids is None or p["uid"] in uids), key=lambda p: p["name"])
+    configuration = member_configuration(con, people)
+    member_settings = {p["login"]: p for p in configuration}
     shown = {p["uid"] for p in people}
     director = st["director"] or next((p["uid"] for p in team
                                        if "исполнительный директор" in (p["title"] or "").lower()), None)
@@ -248,7 +298,9 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     dept_titles = dept_titles or {}
     return {"generated": now, "portal": portal, "has_data": bool(rows), "director": director,
             "people": [{"uid": p["uid"], "name": p["name"], "position": p["title"],
-                        "group": employee_group(p),
+                        "group": member_settings[p["login"]]["group"],
+                        "included": member_settings[p["login"]]["included"],
                         "url": object_url(link_config,"user",p["uid"]),
                         "dept": dept_titles.get(p["department"], p["department"]) or "Без отдела"} for p in people],
-            "tasks": tasks, "documents": documents, "onec": onec}
+            "tasks": tasks, "documents": documents, "onec": onec,
+            "configuration": {"directions": DIRECTIONS, "members": configuration}}

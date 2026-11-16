@@ -176,6 +176,11 @@ CREATE TABLE IF NOT EXISTS task_ledger (
 -- tracked — входит в панель (workload.include_b24_ids), остальные — только для имён постановщиков
 CREATE TABLE IF NOT EXISTS task_people (id TEXT PRIMARY KEY, uid INTEGER, name TEXT, position TEXT, dept TEXT, tracked INTEGER);
 
+-- состав таблицы «Загрузка» и направление сотрудника, независимо от синхронизации источников
+CREATE TABLE IF NOT EXISTS workload_member_settings (
+  login TEXT PRIMARY KEY, included INTEGER NOT NULL CHECK(included IN (0,1)), direction TEXT,
+  updated_by TEXT, updated_at TEXT NOT NULL);
+
 -- документы 1С для «Загрузки», независимый срез по каждому типу документа и сотруднику
 CREATE TABLE IF NOT EXISTS workload_onec_documents (
   id TEXT PRIMARY KEY, emp TEXT, entity TEXT, ref TEXT, number TEXT, date TEXT, posted INTEGER,

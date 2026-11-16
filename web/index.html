@@ -3654,6 +3654,22 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       && !(group === "Помощники руководителя" && ["open","done"].includes(metric));
   }
 
+  function workloadSettingsHtml(configuration, people) {
+    if (!configuration) return "";
+    return `<details class="panel" id="wlSettings" data-keep><summary class="panel-h" style="cursor:pointer"><h2>Состав таблицы и направления поиска</h2></summary>
+      <form class="panel-b" id="wlMembersForm"><p class="muted small">Отметьте сотрудников для показа в таблице и выберите направления поиска. «Автоматически» определяет направление по должности и отделу из вкладки «Сотрудники».</p>
+      <div class="scroll" style="max-height:420px"><table class="dt"><thead><tr><th>Показывать</th><th>Сотрудник</th><th>Направление поиска</th></tr></thead><tbody>
+      ${configuration.members.map(member => `<tr data-wl-login="${esc(member.login)}"><td><input type="checkbox" id="wlMemberIncluded-${esc(member.login)}" data-wl-included ${member.included ? "checked" : ""} aria-label="Показывать в таблице ${esc(member.name)}"></td><td>${crmLink(member.name,people[member.uid]?.url)}</td>
+        <td><select id="wlMemberDirection-${esc(member.login)}" data-wl-direction data-default-group="${esc(member.default_group || "")}" ${member.included && !member.default_group ? "required" : ""} aria-label="Направление поиска ${esc(member.name)}">
+          <option value="">${member.default_group ? `Автоматически — ${esc(member.default_group)}` : "Выберите направление"}</option>${configuration.directions.map(direction => `<option value="${esc(direction)}" ${member.direction === direction ? "selected" : ""}>${esc(direction)}</option>`).join("")}</select></td></tr>`).join("")}
+      </tbody></table></div><div class="inline-form" style="margin-top:12px"><button class="btn primary" type="submit">Сохранить</button><div id="wlMembersError" class="err" role="alert"></div></div></form></details>`;
+  }
+
+  function workloadUpdateDirectionRequired(row) {
+    const included = row.querySelector("[data-wl-included]"), direction = row.querySelector("[data-wl-direction]");
+    direction.required = included.checked && !direction.dataset.defaultGroup;
+  }
+
   async function loadWorkload() {
     if (state.view !== "workload") return;
     const { main, current, paint } = viewRequest();
@@ -3671,7 +3687,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const url = (t) => (d.portal ? `https://${d.portal}/company/personal/user/${t.uid}/tasks/task/view/${t.id}/` : null);
     const taskA = (t) => crmLink(`${t.id} · ${t.title || ""}`, t.url || url(t));
     const person = Object.fromEntries(d.people.map((p) => [p.uid, p]));
-    const roster = d.people.filter(p => p.group);
+    const roster = d.people.filter(p => p.included !== false && p.group);
     const rosterUids = new Set(roster.map(p => p.uid));
     const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort((x, y) => String(x).localeCompare(String(y), "ru"));
     const depts = uniq(roster.map(p => p.group)), projects = uniq(d.tasks.map((t) => t.project)), tags = uniq(d.tasks.flatMap((t) => t.tags));
@@ -3776,6 +3792,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         <div class="sub">Период ${periodLabel(a,b)}. Открытые задачи и документы — срез на ${ruMoment(d.generated)}. Время — Екатеринбург.</div></div></div>
       ${onecErrors.length ? `<div class="panel"><div class="panel-b" role="status">Часть данных 1С не обновлена. Показаны последние доступные сведения.<details><summary>Источники с ошибками · ${onecErrors.length}</summary>${onecErrors.map(error => `<div class="muted small">${esc(error)}</div>`).join("")}</details></div></div>` : ""}
       ${d.has_data ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">Данных пока нет — нажмите «Обновить данные».</div></div>`}
+      ${workloadSettingsHtml(d.configuration,person)}
       <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(st.per, "w")}
         ${sel("wDept", "Категория", st.dept, depts.map((x) => [x, x]))}${roster.length > 1 ? sel("wUid", "Сотрудник", st.uid, roster.map((p) => [p.uid, p.name])) : ""}
         ${sel("wProject", "Проект", st.project, projects.map((x) => [x, x]))}${tags.length ? sel("wTag", "Тип (тег)", st.tag, tags.map((x) => [x, x])) : ""}
@@ -3785,6 +3802,33 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead>${head}</thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
         <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Закрыто» означает «Проведён», поступления и закрытые отбираются по дате документа. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние непроведённые также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
       ${dirBlock}${listHtml}`;
+    if (d.configuration) {
+      const form = document.getElementById("wlMembersForm");
+      form.querySelectorAll("[data-wl-login]").forEach(row => {
+        row.querySelector("[data-wl-included]").addEventListener("change", () => workloadUpdateDirectionRequired(row));
+      });
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        const previous = Object.fromEntries(d.configuration.members.map(member => [member.login,member]));
+        const updates = [];
+        for (const row of form.querySelectorAll("[data-wl-login]")) {
+          const login = row.dataset.wlLogin, included = row.querySelector("[data-wl-included]").checked;
+          const direction = row.querySelector("[data-wl-direction]").value || null;
+          if (included !== previous[login].included || direction !== previous[login].direction) updates.push({login,included,direction});
+        }
+        if (!updates.length) { toast("Изменений нет"); return; }
+        const error = document.getElementById("wlMembersError"), controls = [...form.querySelectorAll("input,select,button")];
+        error.textContent = "";
+        controls.forEach(control => { control.disabled = true; });
+        try {
+          await api("/api/workload-members",{members:updates});
+          if (state.wl) state.wl.list = null;
+          await loadWorkload();
+          toast("Состав таблицы сохранён");
+        } catch (e) { if (e.message !== "auth") error.textContent = e.message; }
+        finally { controls.forEach(control => { control.disabled = false; }); }
+      });
+    }
     const rerender = () => renderWorkload(d);
     bindPeriod("w", () => st.per, (v) => { st.per = v; }, rerender);
     [["wDept", "dept"], ["wUid", "uid"], ["wProject", "project"], ["wTag", "tag"], ["wPrio", "prio"], ["wStatus", "status"], ["wOnly", "only"]].forEach(([id, k]) => {
@@ -3805,6 +3849,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const cl = document.getElementById("wlClose");
     if (cl) cl.addEventListener("click", () => { st.list = null; rerender(); });
     restoreView();
+    if (d.configuration) document.getElementById("wlMembersForm").querySelectorAll("[data-wl-login]").forEach(workloadUpdateDirectionRequired);
   }
 
   // ---------- «Деньги»: платёжный календарь, кто должен, плановые выплаты (макет «вкладка _Деньги_.xlsx» и «Краткое ТЗ»)

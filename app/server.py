@@ -1121,6 +1121,14 @@ class Handler(BaseHTTPRequestHandler):
                     portal = urlparse(portal_origin(app.config) or "").netloc
                     return JsonResponse(workload.build(app.con, app.config, uids=None,
                                                          portal=portal or None, dept_titles=app.rules.get("departments")))
+                if path == "/api/workload-members" and method == "POST":
+                    if not is_mgr:
+                        return JsonResponse({"error": "Доступно только администратору"}, 403)
+                    try:
+                        workload.save_members(app.con, app.config, b.get("members"), me["login"])
+                    except ValueError as error:
+                        raise BadRequest(str(error)) from None
+                    return JsonResponse({"ok": True})
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только руководителю"}, 403)
