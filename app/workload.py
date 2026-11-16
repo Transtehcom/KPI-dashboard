@@ -24,7 +24,9 @@ import datetime as dt
 from .crm_links import object_url
 import json
 import math
+import re
 from .common import merge_rows
+from .onec_workload import AUTHOR_ONLY
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -34,6 +36,31 @@ STATUS = {"1": "Новая", "2": "Ждёт выполнения", "3": "Вып�
           "6": "Отложена", "7": "Отклонена"}
 BLOCK_TAGS = ["блокировка", "заблокирована"]
 HELP_TAGS = ["помощь", "нужна помощь", "помощь ИД", "вопрос ИД"]
+
+
+def employee_group(employee):
+    """Категория сотрудника по отделу или конкретной должности из согласованной таблицы."""
+    if employee.get("login") in AUTHOR_ONLY:
+        return "Помощники руководителя"
+    role = str(employee.get("title") or "").strip().casefold()
+    department = str(employee.get("department") or "").strip().casefold()
+    if "финансов" in role and "менеджер" in role:
+        return "ФО"
+    if "юрист" in role:
+        return "ЮО"
+    if re.search(r"(?:^|\W)(?:it|ит)[\s-]+специалист(?:\W|$)", role):
+        return "IT"
+    if department == "оп" or department.startswith("отдел продаж"):
+        return "ОП"
+    if department == "ос" or department.startswith("отдел снабжения"):
+        return "ОС"
+    if department == "ол" or department.startswith("отдел логистики"):
+        return "ОЛ"
+    if "маркетинг" in department:
+        return "Маркетолог"
+    if department == "hr" or "управления персоналом" in department:
+        return "HR"
+    return None
 
 
 def settings(config):
@@ -221,6 +248,7 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     dept_titles = dept_titles or {}
     return {"generated": now, "portal": portal, "has_data": bool(rows), "director": director,
             "people": [{"uid": p["uid"], "name": p["name"], "position": p["title"],
+                        "group": employee_group(p),
                         "url": object_url(link_config,"user",p["uid"]),
                         "dept": dept_titles.get(p["department"], p["department"]) or "Без отдела"} for p in people],
             "tasks": tasks, "documents": documents, "onec": onec}

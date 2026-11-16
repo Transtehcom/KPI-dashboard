@@ -40,4 +40,34 @@ assert.deepEqual(Array.from(onec.ontime, r=>r.id), ['3']);
 assert.equal(onec.unknown.length, 1, 'posted document date never substitutes for completion time');
 assert.match(html, /colspan="6">Битрикс24/);
 assert.match(html, /colspan="6">1С/);
+const main = {innerHTML:''};
+Object.assign(context, {
+  state:{wl:{per:{mode:'month',month:'2026-11'},dept:'',uid:''}},
+  document:{getElementById:id=>id==='main'?main:{addEventListener(){}},querySelectorAll:()=>[]},
+  isoDay:date=>date.toISOString().slice(0,10),periodRange:()=>['2026-11-01','2026-11-30'],
+  periodLabel:()=> 'Ноябрь 2026',periodHtml:()=>'',bindPeriod:()=>{},esc:String,crmLink:label=>label,
+  ruMoment:value=>value||'—',ruDay:String,nf:String,
+});
+vm.runInNewContext(html.slice(html.indexOf('  function renderWorkload('),html.indexOf('  // ---------- «Деньги»')),context);
+const data = {generated:'2026-11-16T12:00:00',has_data:true,onec:{loaded:true},tasks:[],documents:[],people:[
+  {uid:1,name:'Финансовый менеджер',position:'Финансовый менеджер',dept:'Офис собственника',group:'ФО'},
+  {uid:2,name:'Юрист',position:'Юрист',dept:'Офис собственника',group:'ЮО'},
+  {uid:3,name:'Анастасия Шашмурина',dept:'ОС',group:'Помощники руководителя'},
+  {uid:4,name:'Анастасия Петрова',dept:'Офис собственника',group:'Помощники руководителя'},
+  {uid:99,name:'Руководитель вне схемы',group:null},
+]};
+context.renderWorkload(data);
+for (const uid of [1,2,3,4]) assert.ok(main.innerHTML.includes(`data-wl-list="${uid}|card"`),'each employee keeps an individual row');
+assert.ok(!main.innerHTML.includes('Руководитель вне схемы'));
+assert.ok(!main.innerHTML.includes('<b>ФО</b>'),'category never substitutes for employee rows');
+context.state.wl.dept='Помощники руководителя';
+context.renderWorkload(data);
+assert.ok(main.innerHTML.includes('data-wl-list="3|card"'));
+assert.ok(main.innerHTML.includes('data-wl-list="4|card"'));
+assert.ok(!main.innerHTML.includes('data-wl-list="1|card"'));
+assert.ok(!main.innerHTML.includes('data-wl-list="2|card"'));
+context.state.wl.dept='ФО';
+context.renderWorkload(data);
+assert.ok(main.innerHTML.includes('data-wl-list="1|card"'));
+assert.ok(!main.innerHTML.includes('data-wl-list="2|card"'),'finance matches the specific role, not the shared department');
 console.log('Workload six-column groups and independent on-time/overdue calculations: OK');

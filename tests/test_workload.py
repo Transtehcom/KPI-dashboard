@@ -153,6 +153,40 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(({t["uid"] for t in d["tasks"]}, [p["uid"] for p in d["people"]]), ({ANNA}, [ANNA]))
         self.assertEqual(workload.build(self.con, self.config, uids=set())["tasks"], [])
 
+    def test_workload_group_preserves_individual_people(self):
+        data = workload.build(self.con, self.config)
+        groups = {person["uid"]: person["group"] for person in data["people"]}
+        self.assertEqual(groups[ANNA], "ОП")
+        self.assertIsNone(groups[BOSS])
+        self.assertEqual(len(data["people"]), 2)
+
+
+class EmployeeGroupsTest(unittest.TestCase):
+    def test_departments_and_specific_roles_follow_the_supplied_mapping(self):
+        examples = [
+            ({"department":"ОП"}, "ОП"),
+            ({"department":"Отдел продаж (ОП)"}, "ОП"),
+            ({"department":"ОС"}, "ОС"),
+            ({"department":"Отдел снабжения (ОС)"}, "ОС"),
+            ({"department":"Отдел логистики"}, "ОЛ"),
+            ({"department":"Отдел маркетинга"}, "Маркетолог"),
+            ({"department":"Офис собственника", "title":"Финансовый менеджер"}, "ФО"),
+            ({"department":"Офис собственника", "title":"Юрист"}, "ЮО"),
+            ({"department":"Отдел управления персоналом", "title":"HR-директор"}, "HR"),
+            ({"department":"Администрация", "title":"IT-специалист"}, "IT"),
+            ({"login":"shashmurina", "department":"ОС"}, "Помощники руководителя"),
+            ({"login":"petrovaaa", "department":"Офис собственника"}, "Помощники руководителя"),
+        ]
+        for employee, expected in examples:
+            with self.subTest(employee=employee):
+                self.assertEqual(workload.employee_group(employee), expected)
+
+    def test_other_people_in_shared_departments_do_not_match_role_categories(self):
+        for department, title in [("Администрация", "Исполнительный директор"),
+                                  ("Транстехком", "Руководитель компании"),
+                                  ("Офис собственника", "Бухгалтер")]:
+            self.assertIsNone(workload.employee_group({"department":department,"title":title}))
+
 
 def onec_document(ref="a", emp="anna", entity="Document_Order", posted=0):
     return {"id": entity + ":" + ref + ":" + emp, "entity": entity, "ref": ref, "emp": emp,

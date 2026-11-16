@@ -3666,17 +3666,21 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const url = (t) => (d.portal ? `https://${d.portal}/company/personal/user/${t.uid}/tasks/task/view/${t.id}/` : null);
     const taskA = (t) => crmLink(`${t.id} · ${t.title || ""}`, t.url || url(t));
     const person = Object.fromEntries(d.people.map((p) => [p.uid, p]));
+    const roster = d.people.filter(p => p.group);
+    const rosterUids = new Set(roster.map(p => p.uid));
     const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort((x, y) => String(x).localeCompare(String(y), "ru"));
-    const depts = uniq(d.people.map((p) => p.dept)), projects = uniq(d.tasks.map((t) => t.project)), tags = uniq(d.tasks.flatMap((t) => t.tags));
+    const depts = uniq(roster.map(p => p.group)), projects = uniq(d.tasks.map((t) => t.project)), tags = uniq(d.tasks.flatMap((t) => t.tags));
+    if (st.dept && !depts.includes(st.dept)) st.dept = "";
+    if (st.uid && !roster.some(p => String(p.uid) === st.uid)) st.uid = "";
     const STATUSES = { open: "Открытые", done: "Завершённые", review: "На проверке", rework: "На доработке", blocked: "Заблокированные" };
     const confirmed = (t) => t.remarks.filter((r) => !r.review);
     // фильтры, кроме периода: отдел, сотрудник, проект, тип (тег), приоритет, статус, просрочки и замечания
-    const pass = (t) => (!st.dept || (person[t.uid] || {}).dept === st.dept) && (!st.uid || String(t.uid) === st.uid)
+    const pass = (t) => rosterUids.has(t.uid) && (!st.dept || person[t.uid].group === st.dept) && (!st.uid || String(t.uid) === st.uid)
       && (!st.project || t.project === st.project) && (!st.tag || t.tags.includes(st.tag)) && (!st.prio || (st.prio === "2" ? t.priority === "2" : t.priority !== "2"))
       && (!st.status || (st.status === "open" ? t.open : st.status === "done" ? !!t.closed : st.status === "review" ? t.on_review : st.status === "rework" ? t.on_rework : t.blocked))
       && (st.only !== "overdue" || t.overdue_days > 0) && (st.only !== "remarks" || t.remarks.length > 0);
     const tasks = d.tasks.filter(pass);
-    const documents = (d.documents || []).filter(row => (!st.dept || (person[row.uid] || {}).dept === st.dept) && (!st.uid || String(row.uid) === st.uid));
+    const documents = (d.documents || []).filter(row => rosterUids.has(row.uid) && (!st.dept || person[row.uid].group === st.dept) && (!st.uid || String(row.uid) === st.uid));
     const onecErrors = Object.entries(d.onec?.errors || {}).map(([entity,error]) => entity + " — " + error);
     // показатели: открытые — срез сейчас, остальное — за выбранный период
     const M = {
@@ -3702,7 +3706,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const cnt = (uid, k, html) => `<button type="button" class="link-btn" data-wl-list="${uid}|${k}">${html}</button>`;
     const COLS = ["received", "open", "done", "late", "ontime"];
     const labels = {received:"Поступило", open:"Открыто сейчас", done:"Выполнено задач за период", late:"Просрочено за период", ontime:"Сдано в срок"};
-    const people = d.people.filter((p) => (!st.dept || p.dept === st.dept) && (!st.uid || String(p.uid) === st.uid));
+    const people = roster.filter(p => (!st.dept || p.group === st.dept) && (!st.uid || String(p.uid) === st.uid));
     const summaryCell = (stats, uid, key, source) => {
       const count = stats[key].length, unknown = ["ontime","late"].includes(key) ? stats.unknown.length : 0;
       const attr = source === "onec" ? "data-wl-docs" : "data-wl-list";
@@ -3714,7 +3718,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       return COLS.map(key => summaryCell(stats, uid, key, source)).join("") + `<td class="nw">${ruMoment(stats.nearest)}</td>`;
     };
     const row = (p) => { const ts = tasks.filter((t) => t.uid === p.uid);
-      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}${p.uid === d.director ? ' <span class="muted small">ИД</span>' : ""}<div class="muted small">${esc([p.position, p.dept].filter(Boolean).join(" · "))}</div></td>${summaryCells(ts,p.uid,"bitrix")}${summaryCells(documents.filter(row => row.uid === p.uid),p.uid,"onec")}</tr>`; };
+      return `<tr${st.list && st.list.uid === String(p.uid) ? ' class="wl-sel"' : ""}><td><button type="button" class="link-btn" data-wl-list="${p.uid}|card"><b>${esc(p.name)}</b></button> ${crmLink("Б24 ↗",p.url)}<div class="muted small">${esc([p.position, p.group].filter(Boolean).join(" · "))}</div></td>${summaryCells(ts,p.uid,"bitrix")}${summaryCells(documents.filter(row => row.uid === p.uid),p.uid,"onec")}</tr>`; };
     const totals = `<tr class="wl-total"><td><b>Итого</b></td>${summaryCells(tasks,"all","bitrix")}${summaryCells(documents,"all","onec")}</tr>`;
     const head = `<tr><th rowspan="2">Сотрудник</th><th colspan="6">Битрикс24</th><th colspan="6">1С</th></tr><tr>${COLS.map(k => `<th class="n">${labels[k]}</th>`).join("")}<th>Ближайший срок</th>${COLS.map(k => `<th class="n">${k === "open" ? "В работе" : k === "done" ? "Закрыто" : labels[k]}</th>`).join("")}<th>Ближайший срок</th></tr>`;
     // блок ИД: делегированные поручения не суммируются с личными задачами ИД
@@ -3763,7 +3767,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       ${onecErrors.length ? `<div class="panel"><div class="panel-b" role="status">Часть данных 1С не обновлена. Показаны последние доступные сведения.<details><summary>Источники с ошибками · ${onecErrors.length}</summary>${onecErrors.map(error => `<div class="muted small">${esc(error)}</div>`).join("")}</details></div></div>` : ""}
       ${d.has_data ? "" : `<div class="panel"><div class="panel-b" style="padding-top:14px">Данных пока нет — нажмите «Обновить данные».</div></div>`}
       <section class="panel"><div class="panel-h"><div class="filters">${periodHtml(st.per, "w")}
-        ${sel("wDept", "Отдел", st.dept, depts.map((x) => [x, x]))}${d.people.length > 1 ? sel("wUid", "Сотрудник", st.uid, d.people.map((p) => [p.uid, p.name])) : ""}
+        ${sel("wDept", "Категория", st.dept, depts.map((x) => [x, x]))}${roster.length > 1 ? sel("wUid", "Сотрудник", st.uid, roster.map((p) => [p.uid, p.name])) : ""}
         ${sel("wProject", "Проект", st.project, projects.map((x) => [x, x]))}${tags.length ? sel("wTag", "Тип (тег)", st.tag, tags.map((x) => [x, x])) : ""}
         ${sel("wPrio", "Приоритет", st.prio, [["2", "Высокий"], ["1", "Обычный"]])}${sel("wStatus", "Статус", st.status, Object.entries(STATUSES))}
         ${sel("wOnly", "Отбор", st.only, [["overdue", "Только просрочки"], ["remarks", "Только с замечаниями"]])}
