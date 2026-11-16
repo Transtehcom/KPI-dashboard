@@ -478,6 +478,38 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(post('boss',{**cargo,'score':None}),200)
         self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='logistics-score-test' AND month='2026-11'").fetchone())
 
+    def test_logistics_weekly_score_access_save_clear_and_payout(self):
+        employee = {"login": "cargo-weekly-http", "name": "Логист", "position": "logistics", "role": "employee"}
+        self.app.config['employees'].append(employee)
+        self.addCleanup(lambda: self.app.config['employees'].remove(employee))
+
+        def post(login, **changes):
+            body = {"emp": employee['login'], "week": "2026-11-02", "criterion": "cargo_safety",
+                    "score": 50, "comment": "Проверено", **changes}
+            request = urllib.request.Request(self.base + '/api/score', data=json.dumps(body).encode(),
+                headers={'Cookie': self.tokens[login], 'Content-Type': 'application/json'}, method='POST')
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                with error:
+                    return error.code
+
+        def item():
+            return json.loads(self.get('boss', '/api/employee?login=cargo-weekly-http&month=2026-11')[2])['items'][3]
+
+        self.assertEqual(post('pm'), 403)
+        self.assertEqual(post('boss', score=101), 400)
+        self.assertEqual(post('boss'), 200)
+        self.assertEqual((item()['pct'], item()['payout']), (.5, 750))
+        self.assertEqual(item()['manual']['weeks']['cargo_safety'][0]['comment'], 'Проверено')
+        self.assertEqual(post('boss', week='2026-11-09', score=100), 200)
+        self.assertEqual((item()['pct'], item()['payout']), (.75, 1125))
+        self.assertEqual(post('boss', score=None), 200)
+        self.assertEqual((item()['pct'], item()['payout']), (1, 1500))
+        self.assertEqual(post('boss', week='2026-11-09', score=None), 200)
+        self.assertEqual((item()['pct'], item()['payout']), (None, 0))
+
     def test_logistics_cargo_criteria_save_with_grade_atomically_and_admin_only(self):
         from app.logistics_cargo import CRITERIA
 
@@ -501,8 +533,8 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(post('boss', body), 200)
         report = json.loads(self.get('boss', '/api/employee?login=cargo-http&month=2026-11')[2])
         item = report['items'][3]
-        self.assertEqual((item['pct'], item['payout']), (.5, 750))
-        self.assertEqual(item['manual']['cargo_checks']['rows'][0]['damage'], 1250.75)
+        self.assertEqual((item['pct'], item['payout']), (None, 0))
+        self.assertIn('cargo_safety', item['manual']['weeks'])
         self.assertEqual(self.get('pm', '/api/employee?login=cargo-http&month=2026-11')[0], 403)
         changed = [{**row, 'damage': 9000} for row in rows]
         self.assertEqual(post('boss', {**body, 'criteria': changed, 'score': 101}), 400)
@@ -513,8 +545,8 @@ class ListenTest(unittest.TestCase):
         self.assertIsNone(self.con.execute("SELECT score FROM monthly_scores WHERE emp='cargo-http'").fetchone())
         self.assertEqual(self.con.execute("SELECT count(*) FROM logistics_cargo_checks WHERE emp='cargo-http'").fetchone()[0], 10)
         auto = json.loads(self.get('boss', '/api/employee?login=cargo-http&month=2026-11')[2])['items'][3]
-        self.assertEqual((auto['pct'], auto['payout']), (1, 1500))
-        self.assertEqual(auto['manual']['scores']['cargo_safety']['comment'], 'Итог')
+        self.assertEqual((auto['pct'], auto['payout']), (None, 0))
+        self.assertNotIn('cargo_checks', auto['manual'])
         self.assertEqual(post('boss', {**body, 'cargo_value': -1, 'score': 0}), 400)
         self.assertEqual(self.con.execute("SELECT cargo_value FROM logistics_cargo_summary WHERE emp='cargo-http'").fetchone()[0], 1000000)
         # Existing callers can save grades without erasing the new monthly cargo value.

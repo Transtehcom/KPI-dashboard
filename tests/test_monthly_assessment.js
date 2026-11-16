@@ -117,3 +117,21 @@ vm.runInContext(html.slice(handlerStart,handlerEnd),context);
   assert.equal(requests[4].body.cargo_value,1000000);
   console.log('Monthly form saves the selected criterion and supports clearing the grade');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+context.dLabel=String;
+context.state.boot.me.role='manager';
+const weeklyCargo={manual:{criteria:['cargo_safety'],weeks:{cargo_safety:[
+  {week:'2026-11-02',score:50,comment:'Оценка недели'},
+  {week:'2026-11-09',score:null,comment:null}]}}};
+const weeklyHtml=context.manualBlock({weeks:['2026-11-02','2026-11-09']},weeklyCargo);
+assert.equal((weeklyHtml.match(/data-score/g)||[]).length,2);
+assert.ok(weeklyHtml.includes('data-crit="cargo_safety"'));
+assert.ok(weeklyHtml.includes('Оценка недели'));
+assert.ok(weeklyHtml.includes('Пустые недели исключаются'));
+assert.ok(!weeklyHtml.includes('data-cargo-row'));
+context.state.boot.me.role='employee';
+const readonlyWeekly=context.manualBlock({weeks:['2026-11-02','2026-11-09']},weeklyCargo);
+assert.ok(!readonlyWeekly.includes('<select'));
+assert.ok(!readonlyWeekly.includes('<input'));
+assert.ok(readonlyWeekly.includes('Оценка недели'));
+console.log('Weekly logistics assessment rendering and read-only access: OK');

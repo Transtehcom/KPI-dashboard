@@ -1792,7 +1792,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         return `<td>${isMgr ? `<select aria-label="${esc(titles[c])}, неделя с ${dLabel(w)}" data-score data-week="${w}" data-crit="${c}">${opts(s.score)}</select>` : `<span class="num">${s.score ?? "—"}</span>`}</td>`;
       }).join("")}<td>${(() => { const cm = crit.map((c) => it.manual.weeks[c][wi].comment).filter(Boolean).join("; ");
         return isMgr ? `<input type="text" aria-label="Комментарий, неделя с ${dLabel(w)}" data-comment data-week="${w}" value="${esc(cm)}" placeholder="замечания">` : `<span class="small">${esc(cm) || "—"}</span>`; })()}</td></tr>`).join("")}
-      </tbody></table></div>${isMgr ? `<div class="small muted">100 — без замечаний. Пункт выполнен, если средняя оценка за месяц 100.</div>` : ""}</div>`;
+      </tbody></table></div>${isMgr ? `<div class="small muted">${crit.includes("cargo_safety") ? "Итог — среднее по заполненным неделям. Пустые недели исключаются из среднего. Выплата пропорциональна целому итоговому проценту, максимум 1 500 ₽." : "100 — без замечаний. Пункт выполнен, если средняя оценка за месяц 100."}</div>` : ""}</div>`;
   }
 
   // ручной ввод к записям из 1С: срок и дата оплаты реализаций, брак, отсрочка, признаки конкурентной закупки

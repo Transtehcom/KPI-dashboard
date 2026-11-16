@@ -501,23 +501,11 @@ class Engine:
                                         "Поступила", "Отработана", "Время обработки", "Результат"], "rows": details}}
 
     def calc_logistics_cargo_safety(self, e, ctx, p):
-        from .logistics_cargo import report
-
-        scores = self.q("SELECT score,comment FROM monthly_scores WHERE emp=? AND month=? AND criterion='cargo_safety'",
-                        e["login"], ctx["month"])
-        checks = report(self.con, e["login"], ctx["month"], p.get("safety_target", .95))
-        score = dict(scores[0]) if scores else {"score": None, "comment": checks["comment"]}
-        effective_score = score["score"] if score["score"] is not None else checks["auto_score"]
-        value = effective_score / 100 if effective_score is not None else None
-        return {"components": [comp("Выполнение KPI", value, p["target"], "%",
-                                     source=SRC_MAN if score["score"] is not None else SRC_HAND)],
-                "manual": {"period": "month", "month": ctx["month"], "criteria": ["cargo_safety"],
-                           "scores": {"cargo_safety": score}, "cargo_checks": checks},
-                "extra": [{"label": "Критериев с данными", "value": f"{checks['entered']} из {len(checks['rows'])}"},
-                          {"label": "Внесено случаев", "value": checks["cases_total"]},
-                          {"label": "Внесено ущерба", "value": checks["damage_total"], "fmt": "rub"},
-                          {"label": "Сохранность стоимости грузов", "value": checks["safety_share"], "fmt": "pct"},
-                          {"label": "Режим расчёта", "value": "Ручная корректировка" if score["score"] is not None else "Автоматический расчёт"}]}
+        average, weeks = self._manual(e["login"], ctx["month"], "cargo_safety")
+        return {"components": [comp("Средняя оценка руководителя за месяц", average, 100, "балл", source=SRC_MAN)],
+                "manual": {"criteria": ["cargo_safety"], "weeks": {"cargo_safety": weeks}},
+                "extra": [{"label": "Оценено недель", "value": sum(w["score"] is not None for w in weeks)},
+                          {"label": "Недель в месяце", "value": len(weeks)}]}
 
     def calc_logistics_documents(self, e, ctx, p):
         from .supply_documents import report

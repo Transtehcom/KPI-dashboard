@@ -91,67 +91,32 @@ class LogisticsKPIDraftTest(unittest.TestCase):
         group = next(g for g in overview["groups"] if g["position"] == "logistics")
         self.assertFalse(group["employees"][0]["draft"])
 
-    def test_cargo_safety_monthly_manager_score_drives_proportional_payout(self):
+    def test_cargo_weekly_scores_average_only_entered_weeks(self):
         engine = self.engine_with_draft()
-        for score, payout in ((50, 750), (100, 1500), (0, 0)):
-            with self.subTest(score=score):
-                manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", score, "Проверено", "boss")
-                item = engine.compute("logist", "2026-11")["items"][3]
-                self.assertEqual((item["pct"], item["payout"]), (score / 100, payout))
-                self.assertEqual(item["manual"]["criteria"], ["cargo_safety"])
-                self.assertEqual(item["manual"]["scores"]["cargo_safety"]["comment"], "Проверено")
+        for week, score in (("2026-11-02", 100), ("2026-11-09", 50)):
+            self.con.execute("INSERT INTO manual_scores VALUES (?,?,?,?,?,?,datetime('now'))",
+                             ("logist", week, "cargo_safety", score, "Проверено", "boss"))
+        item = engine.compute("logist", "2026-11")["items"][3]
+        self.assertEqual((item["pct"], item["payout"]), (.75, 1125))
+        self.assertEqual(item["manual"]["criteria"], ["cargo_safety"])
+        weeks = item["manual"]["weeks"]["cargo_safety"]
+        self.assertEqual([r["score"] for r in weeks], [100, 50, None, None])
+        self.assertEqual(weeks[0]["comment"], "Проверено")
+        self.assertNotIn("cargo_checks", item["manual"])
         self.assertIsNone(engine.compute("logist", "2026-10")["items"][3]["pct"])
-        manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", None, "", "boss")
+
+    def test_cargo_weekly_empty_zero_full_and_monthly_data(self):
+        engine = self.engine_with_draft()
+        manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", 100, "Старая оценка", "boss")
         item = engine.compute("logist", "2026-11")["items"][3]
         self.assertEqual((item["status"], item["pct"], item["payout"]), ("awaiting", None, 0))
-        for invalid in (-1, 101, float("nan"), float("inf")):
-            with self.assertRaises(ValueError):
-                manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", invalid, "", "boss")
-
-    def test_cargo_safety_exposes_ten_manual_incident_criteria(self):
-        engine = self.engine_with_draft()
-        item = engine.compute("logist", "2026-11")["items"][3]
-        self.assertIn("cargo_checks", item["manual"])
-        rows = item["manual"]["cargo_checks"]["rows"]
-        self.assertEqual(len(rows), 10)
-        self.assertEqual(rows[0]["title"], "Повреждения груза")
-        self.assertEqual(rows[-1]["title"], "Претензии заказчика по транспортным причинам")
-        self.assertTrue(all(r["cases"] is None and r["damage"] is None and r["comment"] == "" for r in rows))
-
-    def test_cargo_auto_score_manual_override_zero_and_clear(self):
-        from app import logistics_cargo
-
-        engine = self.engine_with_draft()
-        rows = [{"criterion": key, "cases": 0, "damage": 0} for key, _ in logistics_cargo.CRITERIA]
-        rows[0].update(cases=1, damage=100000)
-        logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
-        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "Автоматический расчёт", "boss")
-        item = engine.compute("logist", "2026-11")["items"][3]
-        self.assertEqual(item["pct"], .95)
-        self.assertEqual(item["payout"], 1425)
-        self.assertIsNone(item["manual"]["scores"]["cargo_safety"]["score"])
-        self.assertEqual(item["manual"]["scores"]["cargo_safety"]["comment"], "Автоматический расчёт")
-        for override, payout in ((50, 750), (0, 0)):
-            manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", override, "Корректировка", "boss")
-            item = engine.compute("logist", "2026-11")["items"][3]
-            self.assertEqual((item["pct"], item["payout"]), (override / 100, payout))
-        manual.set_month_score(self.con, "logist", "2026-11", "cargo_safety", None, "", "boss")
-        self.assertEqual(engine.compute("logist", "2026-11")["items"][3]["payout"], 1425)
-
-    def test_cargo_auto_half_percent_rounding_matches_payout(self):
-        from app import logistics_cargo
-
-        engine = self.engine_with_draft()
-        rows = [{"criterion": key, "cases": 0, "damage": 0} for key, _ in logistics_cargo.CRITERIA]
-        logistics_cargo.save_summary(self.con, "logist", "2026-11", 1000000, "", "boss")
-        for damage, whole_pct in ((862250, 15), (729250, 29), (463250, 57), (453750, 58),
-                                  (862725, 15), (729725, 29)):
-            with self.subTest(damage=damage):
-                rows[0]["damage"] = damage
-                logistics_cargo.save(self.con, "logist", "2026-11", rows, "boss")
+        for score, payout in ((0, 0), (50, 750), (100, 1500)):
+            with self.subTest(score=score):
+                self.con.execute("INSERT OR REPLACE INTO manual_scores VALUES (?,?,?,?,?,?,datetime('now'))",
+                                 ("logist", "2026-11-02", "cargo_safety", score, "", "boss"))
                 item = engine.compute("logist", "2026-11")["items"][3]
-                self.assertEqual(item["payout"], whole_pct * 15)
-                self.assertEqual(item["manual"]["cargo_checks"]["auto_score"], whole_pct)
+                self.assertEqual((item["pct"], item["payout"]), (score / 100, payout))
+        self.assertEqual(self.con.execute("SELECT score FROM monthly_scores WHERE emp='logist'").fetchone()[0], 100)
 
     def test_discipline_previews_required_forwarder_fields_without_accruing_bonus(self):
         engine = self.engine_with_draft()
