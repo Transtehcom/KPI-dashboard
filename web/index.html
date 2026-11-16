@@ -3814,10 +3814,10 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           <tr><th>Выплаты</th>${d.calendar.map((c) => `<td class="n">${c.out ? m2(c.out) : "—"}</td>`).join("")}</tr></tbody></table></div>
         <div style="margin-top:12px"><b>Максимальная нехватка денег:</b> <span${T.shortfall ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(T.shortfall)}</span>
           <span class="muted"> · дата минимума: ${ruDay(T.low_date)}</span></div></div></section>
-      <section class="panel"><div class="panel-h"><h2>Кто должен и когда ожидаем поступления</h2><span class="muted small">долг за отгрузку и аванс — из 1С; «Ожидаем» — дата, которую обещал клиент (договорная дата не меняется) · строка раскрывается по нажатию</span></div>
+      <section class="panel"><div class="panel-h"><h2>Кто должен и когда ожидаем поступления</h2><span class="muted small">только неоплаченная задолженность за отгрузки и долг, добавленный вручную; «Ожидаем» — обещанная клиентом дата · строка раскрывается по нажатию</span></div>
         <div class="panel-b"><details class="sp-addwrap"><summary class="muted small" style="cursor:pointer">Добавить поступление вручную</summary><form id="mAddIn" class="sp-add" style="margin-top:8px"><input name="party" placeholder="Клиент" required style="width:200px"><input name="basis" placeholder="Основание (спецификация, заказ)" style="width:200px">
           <select name="type">${O.in_types.map((t) => `<option>${t}</option>`).join("")}</select><input name="amount" type="number" step="0.01" placeholder="К получению, ₽" required style="width:140px">
-          <input name="owed" type="number" step="0.01" placeholder="Долг за отгрузку, ₽" style="width:150px"><label class="small">По договору <input name="contract" type="date"></label>
+          <input name="owed" type="number" min="0.01" step="0.01" placeholder="Долг за отгрузку, ₽" required style="width:150px"><label class="small">По договору <input name="contract" type="date"></label>
           <label class="small">Ожидаем <input name="plan" type="date"></label><button class="btn primary">Добавить</button></form></details>
         ${d.owe.length ? `<div class="dt-wrap" style="max-height:480px"><table class="dt sp-edit"><thead><tr><th>Клиент</th><th>Основание</th><th>Вид</th><th class="n">К получению</th><th class="n">Долг за отгрузку</th><th>По договору</th><th>Ожидаем</th><th class="n">Просрочка, дней</th><th>Статус даты</th><th></th></tr></thead><tbody>
           ${d.owe.map((o) => o.src === "1c" ? `<tr data-rid="${esc(o.id)}" class="mrow"><td>${esc(o.party)}</td><td>${esc(o.basis || "—")}</td><td>${esc(o.type)}</td><td class="n">${m2(o.amount)}${cur(o.currency)}</td><td class="n">${o.owed ? m2(o.owed) : "—"}</td><td>${o.contract ? ruDay(o.contract) : "—"}</td>
@@ -3827,9 +3827,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
             <td class="in">${inp("amount", o.amount, "number", 130)}</td><td class="in">${inp("owed", o.owed, "number", 130)}</td><td class="in">${inp("contract", o.contract, "date")}</td><td class="in">${inp("plan", o.plan, "date")}</td>
             <td class="n${o.late_days ? " late" : ""}">${o.late_days ? nf(o.late_days) : "—"}</td><td>${esc(o.status)}</td><td><button class="btn danger" data-mdel="${o.id}" style="min-height:26px;padding:2px 8px" title="Удалить строку">×</button></td></tr>
             <tr class="mdetail" hidden><td colspan="10" class="muted small">Введено вручную</td></tr>`).join("")}
-        </tbody></table></div>` : `<div class="muted">Долгов и авансов нет</div>`}
+        </tbody></table></div>` : `<div class="muted">Неоплаченной задолженности нет</div>`}
         <div style="margin-top:12px"><b>Всего долг клиентов (за отгрузки):</b> ${m2(d.owe_total)} <span class="muted"> · </span><b>Просрочено:</b> <span${d.owe_late ? ' style="color:var(--bad);font-weight:600"' : ""}>${m2(d.owe_late)}</span>
-          <span class="muted"> · </span><b>Авансы отдельно:</b> ${m2(d.owe_advance)}</div></div></section>
+          </div></div></section>
       <section class="panel"><div class="panel-h"><h2>Плановые выплаты</h2><span class="muted small">заявки на расходование ДС в статусах «Согласована», «Не согласована» и «К оплате» · за пределами периода — ${m2(d.pay_beyond)}</span></div>
         <div class="panel-b"><details class="sp-addwrap"><summary class="muted small" style="cursor:pointer">Добавить выплату вручную</summary><form id="mAddOut" class="sp-add" style="margin-top:8px"><input name="party" placeholder="Получатель" required style="width:180px"><input name="basis" placeholder="Основание" style="width:160px">
           <select name="type"><option value=""></option>${O.out_types.map((t) => `<option>${t}</option>`).join("")}</select><input name="amount" type="number" step="0.01" placeholder="К оплате, ₽" required style="width:130px">

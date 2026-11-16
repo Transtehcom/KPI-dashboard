@@ -134,7 +134,7 @@ class MoneyTest(unittest.TestCase):
         self.item("in", amount=50, owed=0, contract="2026-10-23", plan="2026-10-23", type="Аванс")
         owe = {o["amount"]: o for o in money.build(self.con)["owe"]}
         self.assertEqual((owe[100]["late_days"], owe[100]["status"]), (7, "Обещание"))
-        self.assertEqual((owe[50]["late_days"], owe[50]["status"]), (0, "По договору"))
+        self.assertNotIn(50, owe)
 
     def test_1c_receivables_and_promised_date(self):
         self.con.execute("INSERT INTO receivables (id, emp, doc, client, due_date, paid_date, amount) VALUES "
@@ -149,11 +149,35 @@ class MoneyTest(unittest.TestCase):
         a = {o["id"]: o for o in money.build(self.con)["owe"]}["a"]
         self.assertEqual((a["status"], a["plan"]), ("Обещание", "2026-10-24"))
 
-    def test_customer_advances_are_shown_separately(self):
+    def test_customer_payment_plan_is_not_a_confirmed_debt(self):
         self.plan("cp:1", kind="in", source="customer_plan", amount=2000000, purpose="Аванс", contract="2026-10-27", plan="2026-10-27",
                   approval=None)
         d = money.build(self.con)
-        self.assertEqual((d["owe_advance"], d["owe_total"], d["calendar"][4]["in"]), (2000000, 0, 2000000))
+        self.assertEqual((d["owe"], d["owe_advance"], d["owe_total"]), ([], 0, 0))
+        self.assertEqual(d["calendar"][4]["in"], 2000000)
+
+    def test_debtors_only_include_unpaid_positive_balances_without_duplicate_plans(self):
+        self.con.executemany("INSERT INTO receivables (id,client,doc,amount,due_date,paid_date) VALUES (?,?,?,?,?,?)", [
+            ("partial", "Частичная оплата", "З-1", 300, "2026-10-20", None),
+            ("paid", "Полностью оплачен", "З-2", 900, "2026-10-20", "2026-10-21"),
+            ("zero", "Нулевой остаток", "З-3", 0, "2026-10-20", None),
+            ("credit", "Переплата", "З-4", -50, "2026-10-20", None),
+            ("future", "Срок впереди", "З-5", 200, "2026-12-01", None),
+            ("undated", "Без срока", "З-6", 50, None, ""),
+        ])
+        self.plan("cp:partial", kind="in", source="customer_plan", basis="З-1", amount=1000)
+        self.plan("cp:paid", kind="in", source="customer_plan", basis="З-2", amount=900)
+        self.item("in", owed=0, amount=400)
+        self.item("in", owed=-10, amount=100)
+        self.item("in", owed=25, amount=25)
+        data = money.build(self.con)
+        self.assertEqual({r["id"] for r in data["owe"] if r["src"] == "1c"}, {"partial", "future", "undated"})
+        self.assertEqual(len(data["owe"]), 4)
+        self.assertTrue(all(r["owed"] > 0 for r in data["owe"]))
+        self.assertEqual((data["owe_total"], data["owe_late"]), (575, 300))
+        money.save_expect(self.con, "partial", "2026-10-29")
+        row = next(r for r in money.build(self.con)["owe"] if r["id"] == "partial")
+        self.assertEqual((row["amount"], row["plan"], row["promised"]), (300, "2026-10-29", True))
 
     def test_validation(self):
         with self.assertRaises(ValueError):

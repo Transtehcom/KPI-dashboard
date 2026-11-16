@@ -1,5 +1,6 @@
 """Вкладка «Деньги» по «вкладка _Деньги_.xlsx» и «Краткому ТЗ»: платёжный календарь за выбранный период, кто должен и когда ждём
-деньги, плановые выплаты.
+деньги, плановые выплаты. В таблицу должников входят только положительные неоплаченные остатки за отгрузки
+и ручные строки с положительным долгом. Этапы плановых платежей используются для календаря.
 
 Все суммы приходят из 1С (app/onec_money.py при синхронизации и по кнопке): остатки по счетам и кассам, долги за
 отгрузки (таблица receivables), авансы клиентов, заявки на расходование и план оплаты поставщикам. Вручную вводятся
@@ -189,6 +190,7 @@ def build(con, today=None, date_from=None, date_to=None):
             if not rub(x["currency"]):
                 f = foreign.setdefault(x["currency"], {"currency": x["currency"], "cash": 0.0, "in": 0.0, "out": 0.0})
                 f[key] += x[field]
+    debtors = [o for o in owe if o["owed"] > 0]
     return {"asof": iso0, "asof_manual": st["asof"], "adjust": st["adjust"], "cash": cash, "cash_rub": cash_rub, "calendar": cal,
             "sync": {"at": st["synced_at"], "error": st["error"], "last_move": max((c["last"] for c in cash), default=None)},
             "tiles": {"start": start, "in": round(sum(r["amount"] for r in actual_in), 2),
@@ -198,9 +200,9 @@ def build(con, today=None, date_from=None, date_to=None):
                       "out_count": len(actual_out),
                       "low": low, "shortfall": max(0.0, -low), "low_date": next(c["date"] for c in cal if c["end"] == low)},
             "client_debt": st["client_debt"], "client_debt_orders": st["client_debt_orders"],
-            "owe": owe, "owe_total": round(sum(o["owed"] for o in owe), 2),
-            "owe_late": round(sum(o["owed"] for o in owe if o["late_days"] > 0), 2),
-            "owe_advance": round(sum(o["amount"] for o in owe if o["type"] == "Аванс"), 2),
+            "owe": debtors, "owe_total": round(sum(o["owed"] for o in debtors), 2),
+            "owe_late": round(sum(o["owed"] for o in debtors if o["late_days"] > 0), 2),
+            "owe_advance": round(sum(o["amount"] for o in debtors if o["type"] == "Аванс"), 2),
             "pay": pay_main, "pay_total": round(sum(p["amount"] for p in pay_main if rub(p["currency"])), 2),
             "pay_beyond": round(sum(p["amount"] for p in pay_main if rub(p["currency"]) and p["plan"] > last_day), 2),
             "pay_other": pay_other, "pay_other_total": round(sum(p["amount"] for p in pay_other if rub(p["currency"])), 2),
