@@ -159,6 +159,18 @@ assert.ok(main.innerHTML.includes('+0 д 0 ч 48 мин 10 с'), 'supply request
 assert.ok(main.innerHTML.includes('−0 д 0 ч 1 мин 0 с'), 'late supply completion shows a negative time balance');
 const exactSupplyRow=main.innerHTML.split('exact-supply')[1].split('</tr>')[0];
 assert.ok(exactSupplyRow.includes('<td class="nw">—</td>'), 'exactly on time has a dash');
+const transport2416={uid:1,number:'000002416',entity:'Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов',
+  owner_field:'ОтветственныйЛогист_Key',date:'2026-11-16T17:12:08',posted:true,is_closed:true,status:'Отработана',
+  deadline:'2026-11-26T16:00:00',closed_at:'2026-11-16T15:44:43',deadline_source:'СрокДействия документа-основания Т-000910'};
+context.state.wl.list={uid:'1',key:'received',source:'onec'};
+const previousMoment=context.ruMoment;
+context.ruMoment=value=>value ? value.slice(0,16) : '—';
+context.renderWorkload({...data,documents:[transport2416]});
+assert.ok(main.innerHTML.includes('Закрыто · Отработана'));
+assert.ok(main.innerHTML.includes('2026-11-26T16:00:00'));
+assert.ok(main.innerHTML.includes('2026-11-16T15:44:43'));
+assert.ok(main.innerHTML.includes('СрокДействия документа-основания Т-000910'));
+context.ruMoment=previousMoment;
 const lateTask={id:'late-task',uid:1,title:'Задача с опозданием',url:'#',open:false,created:'2026-11-01T09:00:00',
   closed:'2026-11-05T18:01:00',exec_at:'2026-11-05T18:01:00',deadline:'2026-11-05T18:00:00',
   tags:[],remarks:[],moves_ok:[],moves_late:[],self_moves:[],returns:[],mode:'direct',creator:50};

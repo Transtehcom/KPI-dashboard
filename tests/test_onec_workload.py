@@ -188,6 +188,47 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_transport_2416_uses_last_processed_time_and_primary_basis_deadline(self):
+        entity = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
+        tender = "Document_ТТК_Тендер"
+        fields = {**COMMON, "ОтветственныйЛогист_Key": "Edm.Guid", "Статус": "Edm.String",
+                  "ИсторияСтатусов": "Collection(History)", "ДокументОснование": "Edm.String",
+                  "ДокументОснование_Type": "Edm.String"}
+        source = Source({entity: fields, tender: {**COMMON, "СрокДействия": "Edm.DateTime"}}, {entity: [
+            document(1, Number="000002416", ОтветственныйЛогист_Key=guid(90), Posted=True, Статус="Отработана",
+                     ДокументОснование=guid(50), ДокументОснование_Type="StandardODATA." + tender,
+                     ИсторияСтатусов=[{"Статус": "Поступила", "ДатаУстановки": "2026-11-16T14:58:11"},
+                                     {"Статус": "Отработана", "ДатаУстановки": "2026-11-16T15:00:00"},
+                                     {"Статус": "Отработана", "ДатаУстановки": "2026-11-16T15:44:43"}]),
+            document(2, ОтветственныйЛогист_Key=guid(90), Posted=True, Статус="ВРаботе"),
+            document(3, ОтветственныйЛогист_Key=guid(90), Posted=True, Статус="Поступила"),
+            document(4, ОтветственныйЛогист_Key=guid(90), Posted=True, Статус="ЗапросИнформации")],
+            tender: [document(50, Number="Т-000910", СрокДействия="2026-11-26T16:00:00")]})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        rows = [row for row in result['rows'] if row['entity'] == entity]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[0]['deadline'], '2026-11-26T16:00:00')
+        self.assertIn('Т-000910', rows[0]['deadline_source'])
+        self.assertEqual(rows[0]['closed_at'], '2026-11-16T15:44:43')
+        self.assertEqual([onec_workload.document_closed(row) for row in rows], [True, False, False, False])
+        query = next(params for name, params in source.calls if name == entity)
+        self.assertIn('ИсторияСтатусов', query['$select'])
+        self.assertNotIn('Posted eq false', query['$filter'])
+
+    def test_transport_native_deadline_has_priority_and_missing_history_stays_unknown(self):
+        entity = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
+        fields = {**COMMON, "ОтветственныйЛогист_Key": "Edm.Guid", "Статус": "Edm.String",
+                  "ИсторияСтатусов": "Collection(History)", "ОтработатьДо": "Edm.DateTime"}
+        source = Source({entity: fields}, {entity: [document(1, ОтветственныйЛогист_Key=guid(90),
+            Posted=False, Статус="Отработана", ОтработатьДо="2026-11-26T16:00:00",
+            ИсторияСтатусов=[{"Статус": "Поступила", "ДатаУстановки": "2026-11-16T14:58:11"}])]})
+        row = onec_workload.fetch(source, CONFIG, SINCE)['rows'][0]
+        self.assertTrue(onec_workload.document_closed(row))
+        self.assertEqual(row['deadline'], '2026-11-26T16:00:00')
+        self.assertEqual(row['deadline_source'], 'ОтработатьДо')
+        self.assertIsNone(row['closed_at'])
+
     def test_forwarder_dfp_controls_closure_and_dpp_is_optional(self):
         entity = "Document_ПоручениеЭкспедитору"
         fields = {**COMMON, "ТТК_ОтветственныйЛогист_Key": "Edm.Guid", "ТТК_Статус": "Edm.String",

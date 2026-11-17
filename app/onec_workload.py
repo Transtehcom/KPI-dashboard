@@ -14,6 +14,7 @@ RESPONSIBLE_FIELDS = ("ОтветственныйСнабжение", "Отве�
 DEADLINE_FIELDS = {
     "Document_ЗаказКлиента": ("ТТК_КонечнаяДатаПоставки",),
     "Document_ПоручениеЭкспедитору": ("ТТК_ДПП",),
+    "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов": ("ОтработатьДо", "СрокОтработкиДо", "ТТК_ОтработатьДо"),
     "Document_ТТК_ЗаявкаВОтделСнабжения": ("СрокОтработкиДо",),
     "Document_КоммерческоеПредложениеКлиенту": ("ТТК_СрокПодачи", "СрокПодачи"),
     "Document_ТТК_Тендер": ("СрокДействия",),
@@ -206,7 +207,7 @@ def _moment(value, deadline=False):
 
 
 def _date_fields(entity, fields, specific, generic):
-    names = specific.get(entity, ()) if entity == FORWARDER_ENTITY else (*specific.get(entity, ()), *generic)
+    names = specific.get(entity, ()) if entity in (FORWARDER_ENTITY, TRANSPORT_ENTITY) else (*specific.get(entity, ()), *generic)
     return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
 
@@ -241,7 +242,9 @@ TENDER_ENTITY = "Document_ТТК_Тендер"
 TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
 SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
 FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
-STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус"}
+TRANSPORT_ENTITY = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
+STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус",
+                 TRANSPORT_ENTITY: "Статус"}
 
 
 def document_closed(row):
@@ -253,7 +256,42 @@ def document_closed(row):
         return bool(row.get("closed_at"))
     if row.get("entity") == FORWARDER_ENTITY:
         return bool(row.get("closed_at"))
+    if row.get("entity") == TRANSPORT_ENTITY:
+        return row.get("status") == "Отработана"
     return bool(row["posted"])
+
+
+def _transport_deadlines(onec, metadata, documents, due_fields, page_size):
+    """The request form displays its primary tender/KP basis expiration when no native deadline is published."""
+    references = {}
+    for raw in documents:
+        if _native_time(raw, due_fields, deadline=True)[0]:
+            continue
+        entity = str(raw.get("ДокументОснование_Type") or "").removeprefix("StandardODATA.")
+        ref = _ref(raw.get("ДокументОснование"))
+        if entity in (TENDER_ENTITY, "Document_КоммерческоеПредложениеКлиенту") and ref:
+            references.setdefault(entity, set()).add(ref)
+    deadlines = {}
+    for entity, refs in references.items():
+        if metadata.get(entity, {}).get("СрокДействия") not in ("Edm.DateTime", "Edm.DateTimeOffset"):
+            continue
+        selected = "Ref_Key,Number,СрокДействия"
+        conditions = ["Ref_Key eq guid'" + ref + "'" for ref in sorted(refs)]
+        for condition in _filters(conditions, selected):
+            for basis in _pages(onec, entity, {"$select": selected, "$filter": condition}, page_size):
+                deadline = _moment(basis.get("СрокДействия"), deadline=True)
+                if deadline:
+                    deadlines[(entity, _ref(basis.get("Ref_Key")))] = (
+                        deadline, "СрокДействия документа-основания " + str(basis.get("Number") or "").strip())
+    return deadlines
+
+
+def _transport_finished(raw):
+    history = raw.get("ИсторияСтатусов") or []
+    if not isinstance(history, list):
+        raise ValueError("Некорректная история статусов транспортной заявки")
+    moments = [_moment(event.get("ДатаУстановки")) for event in history if event.get("Статус") == "Отработана"]
+    return max((moment for moment in moments if moment), default=None)
 
 
 def fetch(onec, config, date_from):
@@ -287,6 +325,8 @@ def fetch(onec, config, date_from):
         status_field = STATUS_FIELDS.get(entity)
         if status_field in fields:
             selected.append(status_field)
+        if entity == TRANSPORT_ENTITY:
+            selected.extend(name for name in ("ИсторияСтатусов", "ДокументОснование", "ДокументОснование_Type") if name in fields)
         selected += [field + "_Type" for field in [*owner_fields, *([author] if author else [])] if field + "_Type" in fields]
         conditions = []
         for ref, logins in sorted(users.items()):
@@ -306,6 +346,8 @@ def fetch(onec, config, date_from):
                     if ref in documents and documents[ref] != raw:
                         raise ValueError("Документ изменился во время загрузки 1С")
                     documents[ref] = raw
+            transport_deadlines = (_transport_deadlines(onec, metadata, documents.values(), due_fields, page_size)
+                                   if entity == TRANSPORT_ENTITY else {})
             rows = []
             for ref, raw in documents.items():
                 posted = raw.get("Posted") is True
@@ -313,11 +355,14 @@ def fetch(onec, config, date_from):
                 if not source_date or raw.get("Posted") not in (True, False) or raw.get("DeletionMark") not in (True, False):
                     raise ValueError("Некорректные обязательные реквизиты документа 1С")
                 status = raw.get(status_field)
-                native_closed_at = _native_time(raw, closed_fields)[0]
+                native_closed_at = _transport_finished(raw) if entity == TRANSPORT_ENTITY else _native_time(raw, closed_fields)[0]
                 closed = document_closed({"entity": entity, "posted": posted, "status": status, "closed_at": native_closed_at})
                 if raw.get("DeletionMark") or closed and source_date[:10] < since.isoformat():
                     continue
                 deadline, deadline_source = _native_time(raw, due_fields, deadline=True)
+                if entity == TRANSPORT_ENTITY and not deadline:
+                    basis_entity = str(raw.get("ДокументОснование_Type") or "").removeprefix("StandardODATA.")
+                    deadline, deadline_source = transport_deadlines.get((basis_entity, _ref(raw.get("ДокументОснование"))), (None, None))
                 closed_at = native_closed_at if closed else None
                 for login, owner_field in _row_owners(raw, owner_fields, author, users, fields).items():
                     rows.append({"id": identity(onec, entity, ref) + ":" + login, "emp": login,

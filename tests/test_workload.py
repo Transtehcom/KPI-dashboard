@@ -322,6 +322,15 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_transport_only_processed_status_is_closed(self):
+        entity = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
+        states = ['Поступила', 'ВРаботе', 'ЗапросИнформации', 'Отработана']
+        self.store([{**onec_document(str(i), entity=entity, posted=1), 'status': status}
+                    for i, status in enumerate(states)], entities=(entity,))
+        rows = workload.build(self.con, self.config)['documents']
+        self.assertEqual({row['status'] for row in rows if row['is_closed']}, {'Отработана'})
+        self.assertEqual(sum(row['open'] for row in rows), 3)
+
     def test_forwarder_dfp_controls_closure_independently_of_status(self):
         entity = "Document_ПоручениеЭкспедитору"
         rows = [{**onec_document("issued", entity=entity, posted=1), "status": "Выдан", "closed_at": "2026-11-17T13:15:30"},
