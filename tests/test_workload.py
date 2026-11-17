@@ -322,18 +322,17 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
-    def test_forwarder_only_completed_status_is_closed(self):
+    def test_forwarder_dfp_controls_closure_independently_of_status(self):
         entity = "Document_ПоручениеЭкспедитору"
-        rows = [{**onec_document("issued", entity=entity, posted=1), "status": "Выдан"},
+        rows = [{**onec_document("issued", entity=entity, posted=1), "status": "Выдан", "closed_at": "2026-11-17T13:15:30"},
                 {**onec_document("in-transit", entity=entity, posted=1), "status": "ВПути"},
-                {**onec_document("completed", entity=entity, posted=0), "status": "Завершено"},
-                {**onec_document("no-status", entity=entity, posted=1), "status": None}]
+                {**onec_document("completed-no-dfp", entity=entity, posted=0), "status": "Завершено"},
+                {**onec_document("no-status", entity=entity, posted=1), "status": None, "closed_at": "2026-11-17T13:15:30"}]
         self.store(rows, entities=(entity,))
         documents = {row['ref']: row for row in workload.build(self.con, self.config)['documents']}
-        self.assertEqual({ref for ref, row in documents.items() if row['is_closed']}, {'completed'})
-        self.assertTrue(documents['issued']['open'])
+        self.assertEqual({ref for ref, row in documents.items() if row['is_closed']}, {'issued', 'no-status'})
         self.assertTrue(documents['in-transit']['open'])
-        self.assertTrue(documents['no-status']['open'])
+        self.assertTrue(documents['completed-no-dfp']['open'])
 
     def test_supply_status_and_legacy_closure_date_control_open_state(self):
         entity = "Document_ТТК_ЗаявкаВОтделСнабжения"

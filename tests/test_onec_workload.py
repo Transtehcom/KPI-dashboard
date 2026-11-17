@@ -188,7 +188,7 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
-    def test_forwarder_status_dpp_and_dfp_control_workload(self):
+    def test_forwarder_dfp_controls_closure_and_dpp_is_optional(self):
         entity = "Document_ПоручениеЭкспедитору"
         fields = {**COMMON, "ТТК_ОтветственныйЛогист_Key": "Edm.Guid", "ТТК_Статус": "Edm.String",
                   "ТТК_ДПП": "Edm.DateTime", "ТТК_ДФП": "Edm.DateTime",
@@ -206,8 +206,8 @@ class WorkloadOneCTests(unittest.TestCase):
             document(5, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=True, ТТК_Статус="Завершено", Date="2020-01-01T00:00:00")]})
         result = onec_workload.fetch(source, CONFIG, SINCE)
         self.assertFalse(result['errors'])
-        self.assertEqual(len(result['rows']), 4)
-        self.assertEqual([onec_workload.document_closed(row) for row in result['rows']], [False, True, False, True])
+        self.assertEqual(len(result['rows']), 5)
+        self.assertEqual([onec_workload.document_closed(row) for row in result['rows']], [False, True, True, False, False])
         self.assertEqual(result['rows'][0]['deadline'], '2026-11-20T11:00:00')
         self.assertEqual(result['rows'][0]['deadline_source'], 'ТТК_ДПП')
         self.assertEqual(result['rows'][1]['deadline'], '2026-11-17T23:59:59')
