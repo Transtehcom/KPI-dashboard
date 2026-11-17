@@ -13,6 +13,7 @@ RESPONSIBLE_FIELDS = ("ОтветственныйСнабжение", "Отве�
                       "ТТК_ОтветственныйЛогист", "ТТК_ОтветственныйСнабженец")
 DEADLINE_FIELDS = {
     "Document_ЗаказКлиента": ("ТТК_КонечнаяДатаПоставки",),
+    "Document_ПоручениеЭкспедитору": ("ТТК_ДПП",),
     "Document_ТТК_ЗаявкаВОтделСнабжения": ("СрокОтработкиДо",),
     "Document_КоммерческоеПредложениеКлиенту": ("ТТК_СрокПодачи", "СрокПодачи"),
     "Document_ТТК_Тендер": ("СрокДействия",),
@@ -23,6 +24,7 @@ GENERIC_DEADLINES = ("СрокВыполнения", "ДатаВыполнени
 COMPLETION_FIELDS = {
     "Document_ТТК_ЗаявкаВОтделСнабжения": ("ДатаЗакрытияЗаявки",),
     "Document_ЗаказКлиента": ("ТТК_ФактическаяДатаПоставки",),
+    "Document_ПоручениеЭкспедитору": ("ТТК_ДФП",),
 }
 GENERIC_COMPLETIONS = ("ДатаФактическогоВыполнения", "ФактическаяДатаВыполнения",
                        "ДатаФактическогоЗавершения", "ФактическаяДатаЗавершения")
@@ -204,7 +206,8 @@ def _moment(value, deadline=False):
 
 
 def _date_fields(entity, fields, specific, generic):
-    return [name for name in (*specific.get(entity, ()), *generic)
+    names = specific.get(entity, ()) if entity == FORWARDER_ENTITY else (*specific.get(entity, ()), *generic)
+    return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
 
 
@@ -237,7 +240,8 @@ def _navigation_url(onec, entity, ref):
 TENDER_ENTITY = "Document_ТТК_Тендер"
 TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
 SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
-STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки"}
+FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
+STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус"}
 
 
 def document_closed(row):
@@ -247,6 +251,8 @@ def document_closed(row):
         if row.get("status"):
             return row["status"] in REQUEST_STAGES
         return bool(row.get("closed_at"))
+    if row.get("entity") == FORWARDER_ENTITY:
+        return row.get("status") == "Завершено"
     return bool(row["posted"])
 
 
@@ -312,7 +318,7 @@ def fetch(onec, config, date_from):
                 if raw.get("DeletionMark") or closed and source_date[:10] < since.isoformat():
                     continue
                 deadline, deadline_source = _native_time(raw, due_fields, deadline=True)
-                closed_at = native_closed_at if closed else None
+                closed_at = native_closed_at if closed or entity == FORWARDER_ENTITY else None
                 for login, owner_field in _row_owners(raw, owner_fields, author, users, fields).items():
                     rows.append({"id": identity(onec, entity, ref) + ":" + login, "emp": login,
                                  "entity": entity, "ref": ref, "number": str(raw.get("Number") or ""),

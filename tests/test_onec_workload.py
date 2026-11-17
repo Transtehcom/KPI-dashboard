@@ -188,6 +188,37 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_forwarder_status_dpp_and_dfp_control_workload(self):
+        entity = "Document_ПоручениеЭкспедитору"
+        fields = {**COMMON, "ТТК_ОтветственныйЛогист_Key": "Edm.Guid", "ТТК_Статус": "Edm.String",
+                  "ТТК_ДПП": "Edm.DateTime", "ТТК_ДФП": "Edm.DateTime",
+                  "СрокВыполнения": "Edm.DateTime", "ДатаФактическогоВыполнения": "Edm.DateTime"}
+        source = Source({entity: fields}, {entity: [
+            document(1, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=True, ТТК_Статус="ВПути",
+                     Date="2020-01-01T00:00:00", ТТК_ДПП="2026-11-20T11:00:00"),
+            document(2, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=False, ТТК_Статус="Завершено",
+                     ТТК_ДПП="2026-11-17T00:00:00", ТТК_ДФП="2026-11-17T13:15:30"),
+            document(3, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=True, ТТК_Статус="Выдан",
+                     ТТК_ДПП="0001-01-01T00:00:00", СрокВыполнения="2026-11-20T15:00:00",
+                     ТТК_ДФП="2026-11-17T10:00:00"),
+            document(4, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=True, ТТК_Статус="Завершено",
+                     ТТК_ДФП="0001-01-01T00:00:00", ДатаФактическогоВыполнения="2026-11-17T10:00:00"),
+            document(5, ТТК_ОтветственныйЛогист_Key=guid(90), Posted=True, ТТК_Статус="Завершено", Date="2020-01-01T00:00:00")]})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        self.assertEqual(len(result['rows']), 4)
+        self.assertEqual([onec_workload.document_closed(row) for row in result['rows']], [False, True, False, True])
+        self.assertEqual(result['rows'][0]['deadline'], '2026-11-20T11:00:00')
+        self.assertEqual(result['rows'][0]['deadline_source'], 'ТТК_ДПП')
+        self.assertEqual(result['rows'][1]['deadline'], '2026-11-17T23:59:59')
+        self.assertEqual(result['rows'][1]['closed_at'], '2026-11-17T13:15:30')
+        self.assertIsNone(result['rows'][2]['deadline'])
+        self.assertEqual(result['rows'][2]['closed_at'], '2026-11-17T10:00:00')
+        self.assertIsNone(result['rows'][3]['closed_at'])
+        query = next(params for name, params in source.calls if name == entity)
+        self.assertIn('ТТК_Статус', query['$select'])
+        self.assertNotIn('Posted eq false', query['$filter'])
+
     def test_supply_status_overrides_posting_and_retains_old_open_requests(self):
         entity = "Document_ТТК_ЗаявкаВОтделСнабжения"
         fields = {**COMMON, "ОтветственныйСнабжение_Key": "Edm.Guid", "СтатусЗаявки": "Edm.String",
