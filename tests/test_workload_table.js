@@ -38,8 +38,36 @@ assert.equal(onec.open.length, 1);
 assert.deepEqual(Array.from(onec.late, r=>r.id), ['2']);
 assert.deepEqual(Array.from(onec.ontime, r=>r.id), ['3']);
 assert.equal(onec.unknown.length, 1, 'posted document date never substitutes for completion time');
+const clarifiedDocuments = [
+  {id:'old-open',date:'2026-10-01T09:00:00',posted:0,deadline:'2026-10-20T18:00:00'},
+  {id:'finished-early',date:'2026-11-02T09:00:00',posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T17:59:59'},
+  {id:'finished-late',date:'2026-11-03T09:00:00',posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-06T09:00:00'},
+  {id:'finished-exactly',date:'2026-11-03T09:00:00',posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T18:00:00'},
+  {id:'nearest',date:'2026-10-02T09:00:00',posted:0,deadline:'2026-11-16T12:01:00'},
+  {id:'later',date:'2026-11-01T09:00:00',posted:0,deadline:'2026-11-20T12:00:00'},
+  {id:'old-closed',date:'2026-10-01T09:00:00',posted:1,deadline:'2026-10-05T18:00:00',closed_at:'2026-10-04T09:00:00'},
+  {id:'unposted-stale-close',date:'2026-10-01T09:00:00',posted:0,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-04T09:00:00'},
+];
+const clarified = context.workloadStats(clarifiedDocuments,'2026-11-01','2026-11-30','2026-11-16T12:00:00','onec');
+assert.equal(clarified.received.length,clarified.open.length + clarified.done.length,'received is working plus closed');
+assert.ok(clarified.received.some(row=>row.id==='old-open'),'older open documents contribute to received');
+assert.ok(!clarified.received.some(row=>row.id==='old-closed'),'closed documents outside the selected period stay outside received');
+assert.deepEqual(Array.from(clarified.late,row=>row.id),['old-open','finished-late','unposted-stale-close']);
+assert.deepEqual(Array.from(clarified.ontime,row=>row.id),['finished-early','finished-exactly']);
+assert.equal(clarified.nearest,'2026-11-16T12:01:00','nearest is the earliest upcoming deadline among open documents');
+assert.equal(context.workloadStats(clarifiedDocuments,'2026-11-01','2026-11-30','2026-12-01T12:00:00','onec').nearest,null);
+assert.equal(context.workloadDelaySeconds({posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T18:00:00'},'2026-11-16T12:00:00','onec'),0);
+assert.equal(context.workloadDelaySeconds({posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T18:01:00'},'2026-11-16T12:00:00','onec'),60);
+assert.equal(context.workloadDelaySeconds({posted:0,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-04T10:00:00'},'2026-11-06T19:02:00','onec'),90120);
+assert.equal(context.workloadDelaySeconds({posted:1,deadline:'2026-11-05T18:00:00'},'2026-11-16T12:00:00','onec'),null);
+assert.equal(context.workloadDelaySeconds({posted:0},'2026-11-16T12:00:00','onec'),null);
+assert.equal(context.workloadDelaySeconds({open:false,deadline:'2026-11-05T18:00:00',exec_at:'2026-11-05T18:01:00'},'2026-11-16T12:00:00'),60);
+assert.equal(context.workloadDelaySeconds({open:true,deadline:'2026-11-05T18:00:00'},'2026-11-05T18:01:00'),60);
+assert.equal(context.workloadDelaySeconds({open:true,deadline:'2026-11-10T18:00:00',late_intervals:[{start:'2026-11-02T18:00:00',end:'2026-11-02T18:30:00'}]},'2026-11-06T12:00:00'),1800);
+assert.equal(context.workloadDelaySeconds({posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T13:01:00Z'},'2026-11-16T12:00:00','onec'),60);
 assert.match(html, /colspan="6">Битрикс24/);
 assert.match(html, /colspan="6">1С/);
+vm.runInNewContext(html.slice(html.indexOf('  function operationsDelay('),html.indexOf('  function operationsMoney(')),context);
 const main = {innerHTML:''};
 Object.assign(context, {
   state:{wl:{per:{mode:'month',month:'2026-11'},dept:'',uid:''}},
@@ -97,6 +125,22 @@ context.state.wl.dept='Помощники руководителя';
 context.renderWorkload(data);
 assert.ok(!main.innerHTML.includes('data-wl-docs="all|done"'),'unavailable assistant totals are not shown as zero');
 context.state.wl.dept='';
+const drilldownDocuments = clarifiedDocuments.map(row=>({...row,uid:1,number:row.id,entity:'Document_ЗаказКлиента',owner_field:'Менеджер_Key'}));
+context.state.wl.list={uid:'1',key:'received',source:'onec'};
+context.renderWorkload({...data,documents:drilldownDocuments});
+assert.ok(main.innerHTML.includes(`data-wl-docs="1|received">${clarified.received.length}</button>`));
+const receivedList=main.innerHTML.slice(main.innerHTML.indexOf('id="wlList"'));
+assert.ok(receivedList.includes('old-open'),'received drilldown includes the older working document');
+assert.ok(!receivedList.includes('old-closed'),'received drilldown matches the count');
+assert.ok(receivedList.includes('<th>Просрочка</th>'),'document drilldown displays overdue duration');
+assert.ok(receivedList.includes('0 д 15 ч 0 мин 0 с'),'completed document overdue duration stops at completion');
+const lateTask={id:'late-task',uid:1,title:'Задача с опозданием',url:'#',open:false,created:'2026-11-01T09:00:00',
+  closed:'2026-11-05T18:01:00',exec_at:'2026-11-05T18:01:00',deadline:'2026-11-05T18:00:00',
+  tags:[],remarks:[],moves_ok:[],moves_late:[],self_moves:[],returns:[],mode:'direct',creator:50};
+context.state.wl.list={uid:'1',key:'done'};
+context.renderWorkload({...data,tasks:[lateTask]});
+assert.ok(main.innerHTML.includes('0 д 0 ч 1 мин 0 с'),'completed Bitrix task shows minute-level overdue duration');
+context.state.wl.list=null;
 const configurable = {...data,people:data.people.map(person=>({...person,included:person.uid!==3})),configuration:{
   directions:['ОП','ОС','ФО','ЮО','Помощники руководителя'],members:[
     {login:'finance',name:'Финансовый менеджер',uid:1,included:true,direction:null,default_group:'ФО',group:'ФО'},

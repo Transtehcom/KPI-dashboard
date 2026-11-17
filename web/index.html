@@ -3630,8 +3630,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     const inPeriod = value => !!value && (!from || value.slice(0, 10) >= from) && (!to || value.slice(0, 10) <= to);
     const opened = row => source === "onec" ? !row.posted : row.open;
     const completed = row => source === "onec" ? row.posted && row.date : row.closed;
-    const executed = row => source === "onec" ? row.closed_at : row.exec_at;
+    const executed = row => source === "onec" ? row.posted ? row.closed_at : null : row.exec_at;
     const done = rows.filter(row => inPeriod(completed(row)));
+    const open = rows.filter(opened);
     const unknown = done.filter(row => !row.deadline || !executed(row));
     const late = rows.filter(row => {
       if (source !== "onec" && Array.isArray(row.late_intervals)) {
@@ -3643,10 +3644,27 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
     });
     const nearest = rows.filter(row => opened(row) && row.deadline >= now).map(row => row.deadline).sort()[0] || null;
     return {
-      received: rows.filter(row => source === "onec" ? inPeriod(row.date) : inPeriod(row.created) || inPeriod(row.transferred)),
-      open: rows.filter(opened), done, late, unknown, nearest,
+      received: source === "onec" ? [...open, ...done] : rows.filter(row => inPeriod(row.created) || inPeriod(row.transferred)),
+      open, done, late, unknown, nearest,
       ontime: done.filter(row => row.deadline && executed(row) && executed(row) <= row.deadline),
     };
+  }
+
+  function workloadDelaySeconds(row, now, source = "bitrix") {
+    const elapsed = (start, end) => {
+      if (!start || !end) return null;
+      const moments = [start, end].map(value => Date.parse(/([zZ]|[+-]\d{2}:\d{2})$/.test(value) ? value : value + "+05:00"));
+      const seconds = (moments[1] - moments[0]) / 1000;
+      return Number.isFinite(seconds) ? Math.max(0, seconds) : null;
+    };
+    if (source === "bitrix" && Array.isArray(row.late_intervals)) {
+      if (!row.deadline && !row.late_intervals.length) return null;
+      const durations = row.late_intervals.map(interval => elapsed(interval.start, interval.end));
+      if (durations.some(value => value == null)) return null;
+      return durations.reduce((total, value) => total + value, 0);
+    }
+    const end = source === "onec" ? (row.posted ? row.closed_at : now) : row.exec_at || (row.open ? now : row.closed);
+    return elapsed(row.deadline, end);
   }
 
   function workloadOnecAvailable(group, metric) {
@@ -3753,6 +3771,13 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         ${[["open", "Открыто"], ["overdue", "Просрочено"], ["review", "Ждут приёмки ИД"], ["done", "Выполнено за период"], ["remarks", "С замечаниями за период"], ["help", "Вопросы и блокировки"]].map(([k, t]) => `<div><b>${cnt("dir", k, pick(delegated, k).length)}</b><span>${t}</span></div>`).join("")}</div></div></section>` : "";
     // список задач по нажатию: сотрудник × показатель
     let listHtml = "";
+    const delayCell = (item, source = "bitrix") => {
+      const seconds = workloadDelaySeconds(item, d.generated, source);
+      const value = seconds == null ? "Нет данных" : seconds > 0 ? esc(operationsDelay(seconds)) : "—";
+      const review = source === "bitrix" && !seconds && item.review_delay_days
+        ? `<div class="muted small">проверка задержана ${item.review_delay_days} дн.</div>` : "";
+      return `<td class="nw${seconds > 0 ? " wl-bad" : ""}">${value}${review}</td>`;
+    };
     if (st.list && st.list.source !== "onec") {
       const { uid, key } = st.list;
       const base = uid === "dir" ? delegated : uid === "all" ? tasks.filter((t) => people.some((p) => p.uid === t.uid)) : tasks.filter((t) => String(t.uid) === uid);
@@ -3770,7 +3795,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
           <td>${crmLink(t.project || "—", t.project_url)}${t.tags.length ? `<div class="muted small">${esc(t.tags.join(", "))}</div>` : ""}</td><td>${t.priority === "2" ? "<b>высокий</b>" : "обычный"}</td><td>${esc(t.status_label)}</td>
           <td class="nw">${ruMoment(t.deadline_orig)}</td><td class="nw">${ruMoment(t.deadline)}${t.moves_ok.length + t.moves_late.length ? `<div class="muted small">переносов ${t.moves_ok.length + t.moves_late.length}${t.moves_late.length ? `, после срока ${t.moves_late.length}` : ""}</div>` : ""}${t.self_moves.length ? `<div class="muted small">исполнитель сдвигал: ${t.self_moves.length}</div>` : ""}</td>
           <td class="nw">${ruMoment(t.exec_at)}${t.on_time === false ? ' <b class="wl-flag">не в срок</b>' : ""}</td><td class="nw">${t.mode === "check" ? ruMoment(t.accepted) : '<span class="muted">без проверки</span>'}</td>
-          <td class="nw${t.overdue_days ? " wl-bad" : ""}">${t.overdue_days ? `просрочено ${t.overdue_days} дн.` : t.review_delay_days ? `<span class="muted">проверка задержана ${t.review_delay_days} дн.</span>` : "—"}</td>
+          ${delayCell(t)}
           <td>${q(t)}</td><td class="wrap small">${rem(t)}</td><td class="n${t.returns.length ? " wl-warn" : ""}">${t.returns.length || "—"}</td><td>${t.has_result ? "результат приложен" : '<span class="muted">нет подтверждения</span>'}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="muted small">Задач нет.</div>`}</div></section>`;
     }
@@ -3782,8 +3807,8 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const who = uid === "all" ? "Все сотрудники" : (person[uid] || {}).name || uid;
       const documentLabels = {...labels,open:"В работе",done:"Закрыто"};
       listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · 1С · ${["ontime","late"].includes(key) ? "Проверка сроков" : documentLabels[key]} · ${selected.length}</h2><button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
-        <div class="panel-b"><div class="scroll"><table class="dt"><thead><tr><th>Документ</th><th>Вид</th><th>Сотрудник</th><th>Поле сотрудника</th><th>Дата документа</th><th>Состояние</th><th>Срок</th><th>Завершён</th><th>Своевременность</th></tr></thead><tbody>
-        ${selected.map(row => `<tr><td>${crmLink(row.number || "Без номера",row.url)}</td><td>${esc(row.entity.replace(/^Document_/,"").replace(/([а-я])([А-Я])/g,"$1 $2"))}</td><td>${esc((person[row.uid] || {}).name || row.emp)}</td><td>${esc(row.owner_field.replace(/_Key$/,""))}</td><td class="nw">${ruMoment(row.date)}</td><td>${row.posted ? "Закрыт · проведён" : "В работе · не проведён"}</td><td class="nw" title="${esc(row.deadline_source || "")}">${ruMoment(row.deadline)}</td><td class="nw">${ruMoment(row.closed_at)}</td><td>${!row.deadline || row.posted && !row.closed_at ? "Нет данных" : row.closed_at ? row.closed_at <= row.deadline ? "В срок" : "С опозданием" : row.deadline < d.generated ? "Просрочен" : "Срок впереди"}</td></tr>`).join("")}
+        <div class="panel-b"><div class="scroll"><table class="dt"><thead><tr><th>Документ</th><th>Вид</th><th>Сотрудник</th><th>Поле сотрудника</th><th>Дата документа</th><th>Состояние</th><th>Срок</th><th>Завершён</th><th>Своевременность</th><th>Просрочка</th></tr></thead><tbody>
+        ${selected.map(row => `<tr><td>${crmLink(row.number || "Без номера",row.url)}</td><td>${esc(row.entity.replace(/^Document_/,"").replace(/([а-я])([А-Я])/g,"$1 $2"))}</td><td>${esc((person[row.uid] || {}).name || row.emp)}</td><td>${esc(row.owner_field.replace(/_Key$/,""))}</td><td class="nw">${ruMoment(row.date)}</td><td>${row.posted ? "Закрыт · проведён" : "В работе · не проведён"}</td><td class="nw" title="${esc(row.deadline_source || "")}">${ruMoment(row.deadline)}</td><td class="nw">${ruMoment(row.closed_at)}</td><td>${!row.deadline || row.posted && !row.closed_at ? "Нет данных" : row.posted ? row.closed_at <= row.deadline ? "В срок" : "С опозданием" : row.deadline < d.generated ? "Просрочен" : "Срок впереди"}</td>${delayCell(row,"onec")}</tr>`).join("")}
         </tbody></table></div>${selected.length ? "" : `<div class="muted">Документов нет</div>`}</div></section>`;
     }
     const sel = (id, label, cur, opts) => `<label for="${id}">${label}<select id="${id}"><option value="">Все</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
@@ -3800,7 +3825,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         ${sel("wOnly", "Отбор", st.only, [["overdue", "Только просрочки"], ["remarks", "Только с замечаниями"]])}
         <button class="btn" type="button" id="wReset">Сбросить</button></div></div>
         <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead>${head}</thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
-        <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Закрыто» означает «Проведён», поступления и закрытые отбираются по дате документа. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние непроведённые также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
+        <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Поступило» = «В работе» + «Закрыто». «Закрыто» означает «Проведён» и отбирается по дате документа за выбранный период. «Сдано в срок» — закрытые документы, завершённые не позднее установленного срока. «Ближайший срок» — самый ранний предстоящий срок открытого документа. В списке показана длительность просрочки в днях, часах, минутах и секундах. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние непроведённые также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
       ${dirBlock}${listHtml}`;
     if (d.configuration) {
       const form = document.getElementById("wlMembersForm");
