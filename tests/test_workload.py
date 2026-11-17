@@ -322,6 +322,20 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_supply_status_and_legacy_closure_date_control_open_state(self):
+        entity = "Document_ТТК_ЗаявкаВОтделСнабжения"
+        rows = [{**onec_document("912", entity=entity, posted=1), "status": "ВРаботе", "closed_at": None},
+                {**onec_document("finished", entity=entity, posted=0), "status": "Отработана", "closed_at": "2026-11-17T10:00:00"},
+                {**onec_document("legacy-open", entity=entity, posted=1), "closed_at": None},
+                {**onec_document("legacy-done", entity=entity, posted=1), "closed_at": "2026-11-17T10:00:00"}]
+        self.store(rows, entities=(entity,))
+        documents = {row['ref']: row for row in workload.build(self.con, self.config)['documents']}
+        self.assertTrue(documents['912']['open'])
+        self.assertFalse(documents['912']['is_closed'])
+        self.assertTrue(documents['finished']['is_closed'])
+        self.assertTrue(documents['legacy-open']['open'])
+        self.assertTrue(documents['legacy-done']['is_closed'])
+
     def test_tender_status_controls_workload_state_independently_of_posted(self):
         entity = "Document_ТТК_Тендер"
         self.store([{**onec_document("open", entity=entity, posted=1), "status": "Действует"},

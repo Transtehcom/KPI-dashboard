@@ -188,6 +188,31 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_supply_status_overrides_posting_and_retains_old_open_requests(self):
+        entity = "Document_ТТК_ЗаявкаВОтделСнабжения"
+        fields = {**COMMON, "ОтветственныйСнабжение_Key": "Edm.Guid", "СтатусЗаявки": "Edm.String",
+                  "ДатаЗакрытияЗаявки": "Edm.DateTime", "СрокОтработкиДо": "Edm.DateTime"}
+        source = Source({entity: fields}, {entity: [
+            document(1, ОтветственныйСнабжение_Key=guid(90), Number="Т-000912", Posted=True,
+                     СтатусЗаявки="ВРаботе", ДатаЗакрытияЗаявки="0001-01-01T00:00:00", СрокОтработкиДо="2026-11-20T11:00:00"),
+            document(2, ОтветственныйСнабжение_Key=guid(90), Posted=False,
+                     СтатусЗаявки="Отработана", ДатаЗакрытияЗаявки="2026-11-17T10:00:00"),
+            document(3, ОтветственныйСнабжение_Key=guid(90), Posted=True, СтатусЗаявки="Отменена"),
+            document(4, ОтветственныйСнабжение_Key=guid(90), Posted=True, СтатусЗаявки="ВРаботе", Date="2020-01-01T00:00:00"),
+            document(5, ОтветственныйСнабжение_Key=guid(90), Posted=True, СтатусЗаявки="Поступила"),
+            document(6, ОтветственныйСнабжение_Key=guid(90), Posted=True, СтатусЗаявки="ЗапросПроектнойДокументации")]})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        self.assertEqual(len(result['rows']), 6)
+        self.assertEqual([onec_workload.document_closed(row) for row in result['rows']], [False, True, True, False, False, False])
+        self.assertEqual(result['rows'][0]['status'], 'ВРаботе')
+        self.assertIsNone(result['rows'][0]['closed_at'])
+        self.assertEqual(result['rows'][0]['deadline'], '2026-11-20T11:00:00')
+        self.assertEqual(result['rows'][1]['closed_at'], '2026-11-17T10:00:00')
+        query = next(params for name, params in source.calls if name == entity)
+        self.assertIn('СтатусЗаявки', query['$select'])
+        self.assertNotIn('Posted eq false', query['$filter'])
+
     def test_tender_status_overrides_posting_and_keeps_old_open_tenders(self):
         entity = "Document_ТТК_Тендер"
         states = [("Черновик", True), ("Подготовлен", True), ("Действует", True),

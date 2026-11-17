@@ -5,6 +5,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 from .onec_operations import _error, _ref, identity
+from .onec_supply import REQUEST_STAGES
 
 
 AUTHOR_ONLY = {"shashmurina", "petrovaaa"}
@@ -235,16 +236,22 @@ def _navigation_url(onec, entity, ref):
 
 TENDER_ENTITY = "Document_ТТК_Тендер"
 TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
+SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
+STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки"}
 
 
 def document_closed(row):
     if row.get("entity") == TENDER_ENTITY and row.get("status"):
         return row["status"] not in TENDER_OPEN_STATUSES
+    if row.get("entity") == SUPPLY_ENTITY:
+        if row.get("status"):
+            return row["status"] in REQUEST_STAGES
+        return bool(row.get("closed_at"))
     return bool(row["posted"])
 
 
 def fetch(onec, config, date_from):
-    """Return rows, successful entity names, safe errors and the posted-date window.
+    """Return rows, successful entity names, safe errors and the closed-document date window.
 
     Open documents survive the date window. A schema-level owner choice prevents
     empty responsible attributes from falling through to a manager or author.
@@ -271,8 +278,9 @@ def fetch(onec, config, date_from):
         due_fields = _date_fields(entity, fields, DEADLINE_FIELDS, GENERIC_DEADLINES)
         closed_fields = _date_fields(entity, fields, COMPLETION_FIELDS, GENERIC_COMPLETIONS)
         selected = list(dict.fromkeys([*COMMON, *owner_fields, *([author] if author else []), *due_fields, *closed_fields]))
-        if entity == TENDER_ENTITY and "Статус" in fields:
-            selected.append("Статус")
+        status_field = STATUS_FIELDS.get(entity)
+        if status_field in fields:
+            selected.append(status_field)
         selected += [field + "_Type" for field in [*owner_fields, *([author] if author else [])] if field + "_Type" in fields]
         conditions = []
         for ref, logins in sorted(users.items()):
@@ -283,8 +291,8 @@ def fetch(onec, config, date_from):
         try:
             documents = {}
             prefix = "DeletionMark eq false and (Posted eq false or Date ge datetime'" + since.isoformat() + "T00:00:00') and "
-            if entity == TENDER_ENTITY:
-                # Posted tenders may still be open, including documents before the date window.
+            if entity in STATUS_FIELDS:
+                # Status-controlled documents can be posted while still open before the date window.
                 prefix = "DeletionMark eq false and "
             for condition in _filters(conditions, ",".join(selected), prefix):
                 for raw in _pages(onec, entity, {"$select": ",".join(selected), "$filter": condition}, page_size):
@@ -298,12 +306,13 @@ def fetch(onec, config, date_from):
                 source_date = _moment(raw.get("Date"))
                 if not source_date or raw.get("Posted") not in (True, False) or raw.get("DeletionMark") not in (True, False):
                     raise ValueError("Некорректные обязательные реквизиты документа 1С")
-                status = raw.get("Статус") if entity == TENDER_ENTITY else None
-                closed = document_closed({"entity": entity, "posted": posted, "status": status})
+                status = raw.get(status_field)
+                native_closed_at = _native_time(raw, closed_fields)[0]
+                closed = document_closed({"entity": entity, "posted": posted, "status": status, "closed_at": native_closed_at})
                 if raw.get("DeletionMark") or closed and source_date[:10] < since.isoformat():
                     continue
                 deadline, deadline_source = _native_time(raw, due_fields, deadline=True)
-                closed_at = _native_time(raw, closed_fields)[0] if closed else None
+                closed_at = native_closed_at if closed else None
                 for login, owner_field in _row_owners(raw, owner_fields, author, users, fields).items():
                     rows.append({"id": identity(onec, entity, ref) + ":" + login, "emp": login,
                                  "entity": entity, "ref": ref, "number": str(raw.get("Number") or ""),
