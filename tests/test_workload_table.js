@@ -180,6 +180,22 @@ assert.ok(main.innerHTML.includes('Закрыто · Отработана'));
 assert.ok(main.innerHTML.includes('2026-11-26T16:00:00'));
 assert.ok(main.innerHTML.includes('2026-11-16T15:44:43'));
 assert.ok(main.innerHTML.includes('СрокДействия документа-основания Т-000910'));
+const paymentRequests=[
+  {number:'unpaid-request',posted:true,is_closed:false,status:'КОплате',deadline:'2026-11-20T12:00:00'},
+  {number:'paid-request',posted:false,is_closed:true,status:'Согласована',deadline:'2026-11-16T16:00:00',closed_at:'2026-11-16T16:00:01'},
+  {number:'rejected-request',posted:false,is_closed:true,status:'Отклонена',deadline:'2026-11-16T16:00:00'},
+].map(row=>({...row,uid:1,entity:'Document_ЗаявкаНаРасходованиеДенежныхСредств',owner_field:'Автор_Key',date:'2026-11-01T09:00:00',timing_applicable:true}));
+const paymentStats=context.workloadStats(paymentRequests,'2026-11-01','2026-11-30','2026-11-17T12:00:00','onec');
+assert.equal(paymentStats.done.length,2);
+assert.equal(paymentStats.open.length,1);
+assert.equal(paymentStats.late.length,1);
+assert.equal(paymentStats.unknown.length,1);
+assert.equal(paymentStats.ontime.length,0);
+context.renderWorkload({...data,documents:paymentRequests});
+assert.ok(main.innerHTML.includes('В работе · К оплате'));
+assert.ok(main.innerHTML.includes('Закрыто · Отклонена'));
+assert.ok(main.innerHTML.includes('2026-11-16T16:00:01'),'linked payment completion preserves seconds');
+assert.ok(main.innerHTML.includes('0 д 0 ч 0 мин 1 с'),'payment request lateness uses the payment date');
 context.ruMoment=previousMoment;
 context.state.wl.list={uid:'1',key:'received',source:'onec'};
 context.renderWorkload({...data,documents:[{...financialDocument,uid:1,number:'receipt-operation',owner_field:'Автор_Key'}]});

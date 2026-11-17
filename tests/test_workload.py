@@ -346,6 +346,22 @@ class OneCWorkloadTest(unittest.TestCase):
                     self.assertIsNone(row['deadline'])
                     self.assertFalse(row['timing_applicable'])
 
+    def test_payment_request_uses_rejection_or_payment_date_instead_of_posted(self):
+        entity = 'Document_ЗаявкаНаРасходованиеДенежныхСредств'
+        rows = [
+            {**onec_document('open', entity=entity, posted=1), 'status': 'КОплате'},
+            {**onec_document('unapproved', entity=entity, posted=1), 'status': 'НеСогласована'},
+            {**onec_document('rejected', entity=entity), 'status': 'Отклонена'},
+            {**onec_document('paid', entity=entity), 'status': 'КОплате', 'closed_at': '2026-10-10T11:12:13'},
+        ]
+        self.store(rows, entities=(entity,))
+        documents = {row['ref']: row for row in workload.build(self.con, self.config)['documents']}
+        self.assertEqual({ref for ref, row in documents.items() if row['open']}, {'open', 'unapproved'})
+        self.assertEqual({ref for ref, row in documents.items() if row['is_closed']}, {'rejected', 'paid'})
+        self.assertIsNone(documents['rejected']['closed_at'])
+        self.assertEqual(documents['paid']['closed_at'], '2026-10-10T11:12:13')
+        self.assertTrue(all(row['timing_applicable'] for row in documents.values()))
+
     def test_goods_receipt_legacy_rows_are_completed_at_document_date_without_timing(self):
         entity = "Document_ПриобретениеТоваровУслуг"
         self.store([onec_document("receipt", entity=entity, posted=0)], entities=(entity,))

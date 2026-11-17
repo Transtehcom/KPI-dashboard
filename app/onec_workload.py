@@ -18,6 +18,7 @@ DEADLINE_FIELDS = {
     "Document_ТТК_ЗаявкаВОтделСнабжения": ("СрокОтработкиДо",),
     "Document_КоммерческоеПредложениеКлиенту": ("ТТК_СрокПодачи", "СрокПодачи"),
     "Document_ТТК_Тендер": ("СрокДействия",),
+    "Document_ЗаявкаНаРасходованиеДенежныхСредств": ("ДатаПлатежа",),
 }
 GENERIC_DEADLINES = ("СрокВыполнения", "ДатаВыполненияПлан", "ПлановаяДатаВыполнения",
                      "ДатаОкончанияПлан", "ПлановаяДатаОкончания", "ОтработатьДо",
@@ -208,7 +209,7 @@ def _moment(value, deadline=False):
 
 def _date_fields(entity, fields, specific, generic):
     names = specific.get(entity, ())
-    if entity not in (FORWARDER_ENTITY, TRANSPORT_ENTITY) and entity not in IMMEDIATE_COMPLETION_ENTITIES:
+    if entity not in (FORWARDER_ENTITY, TRANSPORT_ENTITY, PAYMENT_REQUEST_ENTITY) and entity not in IMMEDIATE_COMPLETION_ENTITIES:
         names = (*names, *generic)
     return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
@@ -246,17 +247,20 @@ SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
 FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
 TRANSPORT_ENTITY = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
 RECEIPT_ENTITY = "Document_ПриобретениеТоваровУслуг"
+PAYMENT_REQUEST_ENTITY = "Document_ЗаявкаНаРасходованиеДенежныхСредств"
+PAYMENT_ENTITY = "Document_СписаниеБезналичныхДенежныхСредств"
+PAYMENT_REQUEST_FIELD = "ЗаявкаНаРасходованиеДенежныхСредств"
 IMMEDIATE_COMPLETION_ENTITIES = frozenset({
     RECEIPT_ENTITY,
     "Document_ПоступлениеБезналичныхДенежныхСредств",
     "Document_РеализацияТоваровУслуг",
     "Document_ОжидаемоеПоступлениеДенежныхСредств",
-    "Document_СписаниеБезналичныхДенежныхСредств",
+    PAYMENT_ENTITY,
     "Document_СчетНаОплатуКлиенту",
     "Document_ДоверенностьВыданная",
 })
 STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус",
-                 TRANSPORT_ENTITY: "Статус"}
+                 TRANSPORT_ENTITY: "Статус", PAYMENT_REQUEST_ENTITY: "Статус"}
 
 
 def document_closed(row):
@@ -272,7 +276,39 @@ def document_closed(row):
         return bool(row.get("closed_at"))
     if row.get("entity") == TRANSPORT_ENTITY:
         return row.get("status") == "Отработана"
+    if row.get("entity") == PAYMENT_REQUEST_ENTITY:
+        return row.get("status") == "Отклонена" or bool(row.get("closed_at"))
     return bool(row["posted"])
+
+
+def _payment_request_completions(onec, metadata, documents, page_size):
+    """Use the latest linked non-deleted payment, including references in payment rows."""
+    refs = {_ref(raw.get("Ref_Key")) for raw in documents}
+    if not refs:
+        return {}
+    selected = [*COMMON, PAYMENT_REQUEST_FIELD, PAYMENT_REQUEST_FIELD + "_Type", "РасшифровкаПлатежа"]
+    if not set(selected).issubset(metadata.get(PAYMENT_ENTITY, {})):
+        raise ValueError("Не опубликованы реквизиты связи списаний с заявками на расходование ДС")
+    completed = {}
+    # Read every payment regardless of its owner or date to retain backdated and cross-owner links.
+    for payment in _pages(onec, PAYMENT_ENTITY, {"$select": ",".join(selected), "$filter": "DeletionMark eq false"}, page_size):
+        if payment.get("DeletionMark") is True:
+            continue
+        if payment.get("DeletionMark") is not False:
+            raise ValueError("Неизвестна пометка удаления списания безналичных ДС")
+        lines = payment.get("РасшифровкаПлатежа")
+        if not isinstance(lines, list):
+            raise ValueError("Некорректная расшифровка платежа списания безналичных ДС")
+        linked = {_ref(line.get(PAYMENT_REQUEST_FIELD)) for line in [payment, *lines]
+                  if line.get(PAYMENT_REQUEST_FIELD + "_Type") == "StandardODATA." + PAYMENT_REQUEST_ENTITY} & refs
+        if not linked:
+            continue
+        moment = _moment(payment.get("Date"))
+        if not moment:
+            raise ValueError("Некорректная дата связанного списания безналичных ДС")
+        for ref in linked:
+            completed[ref] = max(completed.get(ref, ""), moment)
+    return completed
 
 
 def _transport_deadlines(onec, metadata, documents, due_fields, page_size):
@@ -362,6 +398,8 @@ def fetch(onec, config, date_from):
                     documents[ref] = raw
             transport_deadlines = (_transport_deadlines(onec, metadata, documents.values(), due_fields, page_size)
                                    if entity == TRANSPORT_ENTITY else {})
+            payment_completions = (_payment_request_completions(onec, metadata, documents.values(), page_size)
+                                   if entity == PAYMENT_REQUEST_ENTITY else {})
             rows = []
             for ref, raw in documents.items():
                 posted = raw.get("Posted") is True
@@ -371,6 +409,8 @@ def fetch(onec, config, date_from):
                 status = raw.get(status_field)
                 if entity in IMMEDIATE_COMPLETION_ENTITIES:
                     native_closed_at = source_date
+                elif entity == PAYMENT_REQUEST_ENTITY:
+                    native_closed_at = payment_completions.get(ref)
                 else:
                     native_closed_at = _transport_finished(raw) if entity == TRANSPORT_ENTITY else _native_time(raw, closed_fields)[0]
                 closed = document_closed({"entity": entity, "posted": posted, "status": status, "closed_at": native_closed_at})

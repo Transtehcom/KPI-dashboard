@@ -65,6 +65,84 @@ def document(ref=1, **values):
 
 
 class WorkloadOneCTests(unittest.TestCase):
+    def test_payment_requests_close_on_rejection_or_last_linked_payment(self):
+        request = 'Document_ЗаявкаНаРасходованиеДенежныхСредств'
+        payment = 'Document_СписаниеБезналичныхДенежныхСредств'
+        link = 'ЗаявкаНаРасходованиеДенежныхСредств'
+        schemas = {
+            request: {**COMMON, 'Ответственный_Key': 'Edm.Guid', 'Статус': 'Edm.String',
+                      'ДатаПлатежа': 'Edm.DateTime', 'СрокВыполнения': 'Edm.DateTime',
+                      'ДатаФактическогоВыполнения': 'Edm.DateTime'},
+            payment: {**COMMON, link: 'Edm.String', link + '_Type': 'Edm.String',
+                      'РасшифровкаПлатежа': 'Collection(PaymentRow)'},
+        }
+        requests = [document(i, Ответственный_Key=guid(90), Posted=True, Статус='КОплате',
+                             ДатаПлатежа='2026-11-16T00:00:00', СрокВыполнения='2026-11-30T12:00:00',
+                             ДатаФактическогоВыполнения='2026-11-01T10:00:00') for i in range(1, 11)]
+        requests[1]['Posted'] = False
+        requests[2]['Статус'] = 'Отклонена'
+        requests[3].update(Статус='НеСогласована', Закрыта=True)
+        requests[7]['Date'] = '2020-01-01T12:00:00'
+        requests[8]['Date'] = '2020-01-01T12:00:00'
+        requests[9]['Статус'] = 'Отклонена'
+
+        def reference(ref, typ=request):
+            return {link: guid(ref), link + '_Type': 'StandardODATA.' + typ}
+
+        payments = [
+            document(101, **reference(2), Date='2026-11-17T09:15:12', Posted=False),
+            document(102, РасшифровкаПлатежа=[reference(5), reference(5)], Date='2026-11-18T11:12:13'),
+            document(103, РасшифровкаПлатежа=[reference(5)], Date='2026-11-16T15:14:13'),
+            document(104, **reference(6, 'Document_ЗаказПоставщику')),
+            document(105, **reference(7), DeletionMark=True),
+            document(106, **reference(9), Date='2020-01-02T12:00:00'),
+            document(107, РасшифровкаПлатежа=[reference(10)], Date='2026-11-16T16:01:02'),
+        ]
+        for payment_row in payments:
+            payment_row.setdefault('РасшифровкаПлатежа', [])
+        source = Source(schemas, {request: requests, payment: payments}, next_links=True)
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        rows = {row['ref']: row for row in result['rows'] if row['entity'] == request}
+        self.assertEqual(len(rows), 9)
+        for ref in (1, 4, 6, 7, 8):
+            with self.subTest(open_request=ref):
+                self.assertFalse(onec_workload.document_closed(rows[guid(ref)]))
+                self.assertIsNone(rows[guid(ref)]['closed_at'])
+                self.assertEqual(rows[guid(ref)]['deadline'], '2026-11-16T23:59:59')
+                self.assertEqual(rows[guid(ref)]['deadline_source'], 'ДатаПлатежа')
+        self.assertEqual(rows[guid(2)]['closed_at'], '2026-11-17T09:15:12')
+        self.assertEqual(rows[guid(5)]['closed_at'], '2026-11-18T11:12:13')
+        self.assertTrue(onec_workload.document_closed(rows[guid(3)]))
+        self.assertIsNone(rows[guid(3)]['closed_at'])
+        self.assertEqual(rows[guid(10)]['closed_at'], '2026-11-16T16:01:02')
+        self.assertNotIn(guid(9), rows)
+        query = next(params for entity, params in source.calls if entity == request)
+        self.assertNotIn('Posted eq', query['$filter'])
+        self.assertNotIn('СрокВыполнения', query['$select'])
+        self.assertNotIn('ДатаФактическогоВыполнения', query['$select'])
+
+    def test_payment_lookup_failure_preserves_previous_request_snapshot(self):
+        request = 'Document_ЗаявкаНаРасходованиеДенежныхСредств'
+        payment = 'Document_СписаниеБезналичныхДенежныхСредств'
+        fields = {**COMMON, 'ЗаявкаНаРасходованиеДенежныхСредств': 'Edm.String',
+                  'ЗаявкаНаРасходованиеДенежныхСредств_Type': 'Edm.String',
+                  'РасшифровкаПлатежа': 'Collection(PaymentRow)'}
+        source = Source({request: {**COMMON, 'Ответственный_Key': 'Edm.Guid', 'Статус': 'Edm.String',
+                                  'ДатаПлатежа': 'Edm.DateTime'}, payment: fields},
+                        {request: [document(1, Ответственный_Key=guid(90), Posted=True, Статус='КОплате')]})
+        for failure in ('unavailable', 'missing_schema'):
+            with self.subTest(failure=failure):
+                if failure == 'unavailable':
+                    source.failure = payment
+                else:
+                    source.failure = None
+                    del source.schemas[payment]
+                result = onec_workload.fetch(source, CONFIG, SINCE)
+                self.assertIn(request, result['errors'])
+                self.assertNotIn(request, result['entities'])
+                self.assertFalse(any(row['entity'] == request for row in result['rows']))
+
     def test_responsible_schema_precedence_and_author_only_exceptions(self):
         entity = "Document_ЗаказКлиента"
         source = Source({entity: {**COMMON, "Ответственный_Key": "Edm.Guid", "Менеджер_Key": "Edm.Guid",
