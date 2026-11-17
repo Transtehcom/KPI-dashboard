@@ -76,7 +76,7 @@ assert.equal(tenderStats.nearest,'2026-11-20T12:00:00');
 assert.equal(context.workloadDelaySeconds(tenderDocuments[1],'2026-11-17T12:00:00','onec'),60);
 assert.match(html, /colspan="6">Битрикс24/);
 assert.match(html, /colspan="6">1С/);
-vm.runInNewContext(html.slice(html.indexOf('  function operationsDelay('),html.indexOf('  function operationsMoney(')),context);
+vm.runInNewContext(html.slice(html.indexOf('  function operationsMoment('),html.indexOf('  function operationsMoney(')),context);
 const main = {innerHTML:''};
 Object.assign(context, {
   state:{wl:{per:{mode:'month',month:'2026-11'},dept:'',uid:''}},
@@ -147,6 +147,18 @@ context.state.wl.list={uid:'1',key:'received',source:'onec'};
 context.renderWorkload({...data,documents:tenderDocuments.map((row,index)=>({...row,uid:1,number:String(index),entity:'Document_ТТК_Тендер',owner_field:'ВедущийМенеджер_Key'}))});
 assert.ok(main.innerHTML.includes('В работе · Действует'));
 assert.ok(main.innerHTML.includes('Закрыто · Выиграно'));
+const supplyTimingRows=[
+  {number:'Т-000637',deadline:'2026-07-15T12:00:00',closed_at:'2026-07-15T11:11:50'},
+  {number:'exact-supply',deadline:'2026-07-15T12:00:00',closed_at:'2026-07-15T12:00:00'},
+  {number:'late-supply',deadline:'2026-07-15T12:00:00',closed_at:'2026-07-15T12:01:00'}
+].map(row=>({...row,uid:1,entity:'Document_ТТК_ЗаявкаВОтделСнабжения',owner_field:'ОтветственныйСнабжение_Key',date:'2026-11-01T09:00:00',posted:true,is_closed:true}));
+context.state.wl.list={uid:'1',key:'received',source:'onec'};
+context.renderWorkload({...data,documents:supplyTimingRows});
+assert.ok(main.innerHTML.includes('class="nw wl-ok"'), 'early supply completion is highlighted green');
+assert.ok(main.innerHTML.includes('+0 д 0 ч 48 мин 10 с'), 'supply request 637 shows its positive time balance');
+assert.ok(main.innerHTML.includes('−0 д 0 ч 1 мин 0 с'), 'late supply completion shows a negative time balance');
+const exactSupplyRow=main.innerHTML.split('exact-supply')[1].split('</tr>')[0];
+assert.ok(exactSupplyRow.includes('<td class="nw">—</td>'), 'exactly on time has a dash');
 const lateTask={id:'late-task',uid:1,title:'Задача с опозданием',url:'#',open:false,created:'2026-11-01T09:00:00',
   closed:'2026-11-05T18:01:00',exec_at:'2026-11-05T18:01:00',deadline:'2026-11-05T18:00:00',
   tags:[],remarks:[],moves_ok:[],moves_late:[],self_moves:[],returns:[],mode:'direct',creator:50};
