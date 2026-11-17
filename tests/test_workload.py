@@ -374,6 +374,19 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual({row['status'] for row in documents if row['open']}, {'Черновик', 'НеСогласовано'})
         self.assertTrue(all(row['closed_at'] is None for row in documents))
 
+    def test_supplier_order_percentages_control_closure_and_survive_reload(self):
+        entity='Document_ЗаказПоставщику'
+        rows=[{**onec_document('complete',entity=entity,posted=0), 'payment_pct':100, 'receipt_pct':100,
+               'closed_at':'2026-10-11T12:13:14','closed_at_source':'Приобретение 728'},
+              {**onec_document('unreceived',entity=entity,posted=1),'payment_pct':100,'receipt_pct':0},
+              {**onec_document('unpaid',entity=entity,posted=1),'payment_pct':99.999,'receipt_pct':100},
+              onec_document('legacy',entity=entity,posted=1)]
+        self.store(rows,entities=(entity,))
+        documents={r['ref']:r for r in workload.build(self.con,self.config)['documents']}
+        self.assertEqual({ref for ref,row in documents.items() if row['is_closed']},{'complete'})
+        self.assertEqual(documents['complete']['closed_at_source'],'Приобретение 728')
+        self.assertEqual(documents['unreceived']['receipt_pct'],0)
+
     def test_quote_completion_uses_last_verified_native_active_transition(self):
         entity = 'Document_КоммерческоеПредложениеКлиенту'
         ref = '00000000-0000-0000-0000-000000000001'

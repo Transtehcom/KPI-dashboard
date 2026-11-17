@@ -27,7 +27,7 @@ import math
 import re
 from .common import db_lock, merge_rows
 from . import operations
-from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, QUOTE_ENTITY, _moment, document_closed
+from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, QUOTE_ENTITY, SUPPLIER_ORDER_ENTITY, _moment, document_closed
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -183,6 +183,8 @@ def _onec_data(con, people):
         if document["entity"] == QUOTE_ENTITY:
             key = document["id"].removesuffix(":" + document["emp"])
             document["closed_at"] = quote_completions.get(key) if closed else None
+        if document["entity"] == SUPPLIER_ORDER_ENTITY and not closed:
+            document.update(closed_at=None, closed_at_source=None)
         document.update(uid=by_login[row["emp"]], posted=bool(row["posted"]), is_closed=closed, open=not closed, timing_applicable=timing_applicable)
         documents.append(document)
     states = [dict(r) for r in con.execute("SELECT * FROM workload_onec_state ORDER BY entity")]

@@ -209,6 +209,17 @@ assert.ok(main.innerHTML.includes('В работе · Не согласован�
 assert.ok(main.innerHTML.includes('2026-11-16T16:00:01'),'quote transition preserves seconds');
 const cancelledQuote=main.innerHTML.split('cancelled-quote')[1].split('</tr>')[0];
 assert.ok(cancelledQuote.includes('Нет данных'),'missing quote history remains unknown');
+const supplierOrders=[
+  {number:'00ЦБ-000710',posted:true,is_closed:true,payment_pct:100,receipt_pct:100,deadline:'2026-10-21T23:59:59',closed_at:'2026-10-22T15:56:41',closed_at_source:'Приобретение 00ЦБ-000728'},
+  {number:'00ЦБ-000707',posted:true,is_closed:false,payment_pct:100,receipt_pct:0,deadline:'2026-11-02T23:59:59'},
+  {number:'almost-paid',posted:true,is_closed:false,payment_pct:99.9999,receipt_pct:100,deadline:'2026-11-02T23:59:59'},
+].map(row=>({...row,uid:1,entity:'Document_ЗаказПоставщику',owner_field:'Автор_Key',date:'2026-11-01T09:00:00',timing_applicable:true}));
+context.renderWorkload({...data,documents:supplierOrders});
+assert.ok(main.innerHTML.includes('Оплата 100%'));
+assert.ok(main.innerHTML.includes('Поступление 0%'));
+assert.ok(main.innerHTML.includes('2026-10-22T15:56:41'));
+assert.ok(main.innerHTML.includes('title="Приобретение 00ЦБ-000728"'));
+assert.ok(main.innerHTML.includes('Оплата <100%'),'rounding never displays partial payment as fully paid');
 context.ruMoment=previousMoment;
 context.state.wl.list={uid:'1',key:'received',source:'onec'};
 context.renderWorkload({...data,documents:[{...financialDocument,uid:1,number:'receipt-operation',owner_field:'Автор_Key'}]});

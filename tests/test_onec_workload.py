@@ -39,6 +39,8 @@ class Source:
     def _get(self, url):
         parsed = urllib.parse.urlsplit(url)
         entity = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+        if entity == 'Balance()':
+            entity = urllib.parse.unquote(parsed.path.rsplit('/', 2)[-2]) + '/Balance()'
         params = {key: values[0] for key, values in urllib.parse.parse_qs(parsed.query).items()}
         self.calls.append((entity, params))
         if entity == self.failure:
@@ -48,7 +50,7 @@ class Source:
         result = {"value": batch}
         if self.next_links and start + len(batch) < len(self.rows.get(entity, [])):
             params["$skip"] = start + len(batch)
-            result["@odata.nextLink"] = entity + "?" + urllib.parse.urlencode(params)
+            result["@odata.nextLink"] = parsed.path + "?" + urllib.parse.urlencode(params)
         return result
 
 
@@ -65,6 +67,111 @@ def document(ref=1, **values):
 
 
 class WorkloadOneCTests(unittest.TestCase):
+    def test_supplier_orders_require_full_payment_and_receipt_and_prioritize_completion_sources(self):
+        order = 'Document_ЗаказПоставщику'
+        receipt = 'Document_ПриобретениеТоваровУслуг'
+        forwarder = 'Document_ПоручениеЭкспедитору'
+        payment = 'Document_СписаниеБезналичныхДенежныхСредств'
+        register = 'AccumulationRegister_РасчетыСПоставщиками'
+        plan = 'AccumulationRegister_РасчетыСПоставщикамиПланОплат'
+        quantity = 'AccumulationRegister_ЗаказыПоставщикам'
+        schemas = {
+            order: {**COMMON, 'Менеджер_Key': 'Edm.Guid', 'Статус': 'Edm.String', 'ОбъектРасчетов_Key': 'Edm.Guid',
+                    'СуммаДокумента': 'Edm.Double', 'Валюта_Key': 'Edm.Guid', 'ПорядокРасчетов': 'Edm.String',
+                    'ТТК_ДатаГотовностиСкорректированная': 'Edm.DateTime', 'ТТК_ДатаГотовностиПлановая': 'Edm.DateTime',
+                    'СрокВыполнения': 'Edm.DateTime'},
+            receipt: {**COMMON, 'ЗаказПоставщику_Key': 'Edm.Guid', 'Товары': 'Collection(ReceiptRow)'},
+            forwarder: {**COMMON, 'ТТК_ЗаказПоставщику_Key': 'Edm.Guid', 'ТТК_ДФП': 'Edm.DateTime', 'Основания': 'Collection(BasisRow)'},
+            payment: {**COMMON, 'ЗаявкаНаРасходованиеДенежныхСредств': 'Edm.String',
+                      'ЗаявкаНаРасходованиеДенежныхСредств_Type': 'Edm.String', 'РасшифровкаПлатежа': 'Collection(PaymentRow)'},
+            register + '_RecordType': {'ОбъектРасчетов_Key': 'Edm.Guid', 'Валюта_Key': 'Edm.Guid',
+                                      'АналитикаУчетаПоПартнерам_Key': 'Edm.Guid', 'КОплате': 'Edm.Double', 'КПоступлению': 'Edm.Double'},
+            plan + '_RecordType': {'ДокументПлан':'Edm.String','КОплате':'Edm.Double'},
+            quantity + '_RecordType': {'ЗаказПоставщику_Key':'Edm.Guid','Заказано':'Edm.Double',
+                                      'КОформлению':'Edm.Double','КПоступлению':'Edm.Double'},
+        }
+        orders = [document(i, Менеджер_Key=guid(90), Posted=True, Статус='Подтвержден', СуммаДокумента=1000,
+                           ОбъектРасчетов_Key=guid(200+i), Валюта_Key=guid(800), ПорядокРасчетов='ПоЗаказам',
+                           ТТК_ДатаГотовностиСкорректированная='0001-01-01T00:00:00',
+                           ТТК_ДатаГотовностиПлановая='2026-11-20T00:00:00', СрокВыполнения='2026-12-31T12:00:00')
+                  for i in range(1, 13)]
+        orders[0]['Number'] = '00ЦБ-000710'
+        orders[1]['Number'] = '00ЦБ-000707'
+        orders[2]['ТТК_ДатаГотовностиСкорректированная'] = '2026-11-19T13:14:15'
+        orders[6]['Date'] = '2020-01-01T12:00:00'
+        orders[7]['ТТК_ДатаГотовностиПлановая'] = '0001-01-01T00:00:00'
+        orders[7]['СуммаДокумента'] = 1e20
+        orders[8].update(Posted=False)
+        for raw in orders[9:]:
+            raw.update(ПорядокРасчетов='ПоДоговорамКонтрагентов',ОбъектРасчетов_Key=guid(202),Товары=[{
+                'КодСтроки':'1','Номенклатура_Key':guid(700),'Характеристика_Key':guid(0),
+                'Количество':10,'СуммаСНДС':1000,'Отменено':False}])
+        balances = [dict(ОбъектРасчетов_Key=guid(200+ref), Валюта_Key=guid(800),
+                         АналитикаУчетаПоПартнерам_Key=guid(900+ref), КОплатеBalance=pay, КПоступлениюBalance=received)
+                    for ref, pay, received in [(2, 0, 1000), (6, -500, 0), (7, -1000, 1000), (8, -0.01, 0)]]
+        balances[1]['КОплатеBalance']=-250
+        balances.append({**balances[1], 'АналитикаУчетаПоПартнерам_Key':guid(999)})
+        balances.append({**balances[0], 'Валюта_Key':guid(801), 'ОбъектРасчетов_Key':guid(201)})
+        receipts = [document(101, Number='receipt-first', Date='2026-11-17T11:12:13', ЗаказПоставщику_Key=guid(1), Товары=[]),
+                    document(102, Number='receipt-last', Date='2026-11-18T14:15:16', Товары=[{'ЗаказПоставщику_Key': guid(1)}]),
+                    document(103, Date='2026-11-30T12:00:00', ЗаказПоставщику_Key=guid(1), DeletionMark=True, Товары=[])]
+        receipts.append(document(104,Number='contract-receipt',Date='2026-11-19T12:00:00',ЗаказПоставщику_Key=guid(10),Товары=[]))
+        forwarders = [document(110, Number='forwarder-with-receipt', ТТК_ЗаказПоставщику_Key=guid(1), ТТК_ДФП='2026-11-25T15:00:00', Основания=[]),
+                      document(111, Number='forwarder-first', Date='2026-11-10T12:00:00', ТТК_ЗаказПоставщику_Key=guid(3), ТТК_ДФП='2026-11-21T11:00:00', Основания=[]),
+                      document(112, Number='forwarder-last', Date='2026-11-11T12:00:00', ТТК_ДФП='2026-11-20T16:17:18',
+                               Основания=[{'Основание': guid(3), 'Основание_Type': 'StandardODATA.'+order}]),
+                      document(113, ТТК_ЗаказПоставщику_Key=guid(5), ТТК_ДФП='0001-01-01T00:00:00', Основания=[])]
+        payments = [document(120+i, Number='payment-'+str(i), Date=at,
+                             РасшифровкаПлатежа=[{'ОбъектРасчетов_Key': guid(200+i)}])
+                    for i, at in [(1, '2026-11-30T12:00:00'), (3, '2026-11-30T12:00:00'),
+                                  (4, '2026-11-15T17:18:19'), (5, '2026-11-16T18:19:20')]]
+        payments.extend([document(140,Number='contract-payment',Date='2026-11-25T11:12:13',РасшифровкаПлатежа=[{'ОбъектРасчетов_Key':guid(202)}]),
+                         document(141,Number='other-contract-payment',Date='2026-11-30T11:12:13',РасшифровкаПлатежа=[{'ОбъектРасчетов_Key':guid(202)}])])
+        plan_balance=[dict(ОбъектРасчетов_Key=guid(202),АналитикаУчетаПоПартнерам_Key=guid(900),Валюта_Key=guid(800),
+                           ДокументПлан=guid(11),ДокументПлан_Type='StandardODATA.'+order,
+                           ДатаПлановогоПогашения='2026-11-10T00:00:00',ДатаВозникновения='2026-11-10T00:00:00',
+                           ВариантОплаты='КредитПослеПоступления',НераспределенныйАванс=False,КОплатеBalance=500)]
+        quantity_balance=[dict(ЗаказПоставщику_Key=guid(11),Номенклатура_Key=guid(700),Характеристика_Key=guid(0),
+                               КодСтроки='1',Склад_Key=guid(801),ЗаказаноBalance=5,КОформлениюBalance=0,КПоступлениюBalance=0)]
+        plan_moves=[dict(Recorder=guid(140),Recorder_Type='StandardODATA.'+payment,Period='2026-11-25T11:12:13',LineNumber='1',
+                         ДокументПлан=guid(12),ДокументПлан_Type='StandardODATA.'+order,ДокументОплаты=guid(140),
+                         ДокументОплаты_Type='StandardODATA.'+payment,Active=True)]
+        source = Source(schemas, {order: orders, receipt: receipts, forwarder: forwarders, payment: payments,
+                                  register+'/Balance()': balances,plan+'/Balance()':plan_balance,
+                                  quantity+'/Balance()':quantity_balance,plan+'_RecordType':plan_moves}, next_links=True)
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        rows = {row['ref']: row for row in result['rows'] if row['entity']==order}
+        self.assertEqual(len(rows), 12)
+        self.assertEqual({ref for ref,row in rows.items() if onec_workload.document_closed(row)}, {guid(i) for i in (1,3,4,5,10,12)})
+        self.assertEqual((rows[guid(1)]['payment_pct'], rows[guid(1)]['receipt_pct']), (100,100))
+        self.assertEqual((rows[guid(2)]['payment_pct'], rows[guid(2)]['receipt_pct']), (100,0))
+        self.assertEqual(rows[guid(6)]['payment_pct'], 50)
+        self.assertLess(rows[guid(8)]['payment_pct'],100)
+        self.assertIsNone(rows[guid(9)]['payment_pct'])
+        self.assertEqual(rows[guid(10)]['receipt_pct'],100)
+        self.assertEqual(rows[guid(11)]['receipt_pct'],50)
+        self.assertEqual(rows[guid(11)]['payment_pct'],50)
+        self.assertEqual(rows[guid(12)]['closed_at'],'2026-11-25T11:12:13')
+        self.assertEqual(rows[guid(1)]['closed_at'], '2026-11-18T14:15:16')
+        self.assertIn('receipt-last', rows[guid(1)]['closed_at_source'])
+        self.assertEqual(rows[guid(3)]['closed_at'], '2026-11-20T16:17:18')
+        self.assertIn('forwarder-last', rows[guid(3)]['closed_at_source'])
+        self.assertEqual(rows[guid(4)]['closed_at'], '2026-11-15T17:18:19')
+        self.assertEqual(rows[guid(5)]['closed_at'], '2026-11-16T18:19:20')
+        self.assertTrue(all(rows[guid(i)]['closed_at'] is None for i in (2,6,7,8,9,11)))
+        self.assertEqual(rows[guid(1)]['deadline'],'2026-11-20T23:59:59')
+        self.assertEqual(rows[guid(3)]['deadline'],'2026-11-19T13:14:15')
+        self.assertIsNone(rows[guid(8)]['deadline'])
+        query=next(params for name,params in source.calls if name==order)
+        self.assertNotIn('Posted eq',query['$filter'])
+        for entity in (register+'/Balance()',plan+'/Balance()',receipt,forwarder,payment):
+            with self.subTest(failed_source=entity):
+                source.failure=entity
+                failed=onec_workload.fetch(source,CONFIG,SINCE)
+                self.assertIn(order,failed['errors'])
+                self.assertNotIn(order,failed['entities'])
+
     def test_quotes_use_submission_deadline_and_status_without_invented_completion(self):
         entity = 'Document_КоммерческоеПредложениеКлиенту'
         fields = {**COMMON, 'Менеджер_Key': 'Edm.Guid', 'Статус': 'Edm.String',

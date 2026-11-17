@@ -425,7 +425,8 @@ for _crm_table in ("activities", "call_records", "tenders", "deals", "crm_deals"
     ADDED_COLUMNS.setdefault(_crm_table, []).append(("client_ref", "TEXT"))
 for _funnel_table in ("crm_deals", "fact_records"):
     ADDED_COLUMNS[_funnel_table].append(("tags", "TEXT"))
-ADDED_COLUMNS["workload_onec_documents"] = [("status", "TEXT")]
+ADDED_COLUMNS["workload_onec_documents"] = [("status", "TEXT"), ("payment_pct", "REAL"),
+                                           ("receipt_pct", "REAL"), ("closed_at_source", "TEXT")]
 ADDED_COLUMNS["task_ledger"] = [("project_id", "TEXT")]
 ADDED_COLUMNS["clients"] = [("strategy_count", "INTEGER"), ("strategy_date_count", "INTEGER")]
 ADDED_COLUMNS["activities"].append(("crm_activity_id", "TEXT"))
