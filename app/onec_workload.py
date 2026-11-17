@@ -233,6 +233,16 @@ def _navigation_url(onec, entity, ref):
     return onec.base.rstrip("/") + "/#e1cib/data/Документ." + entity[len("Document_"):] + "?ref=" + ref.replace("-", "")
 
 
+TENDER_ENTITY = "Document_ТТК_Тендер"
+TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
+
+
+def document_closed(row):
+    if row.get("entity") == TENDER_ENTITY and row.get("status"):
+        return row["status"] not in TENDER_OPEN_STATUSES
+    return bool(row["posted"])
+
+
 def fetch(onec, config, date_from):
     """Return rows, successful entity names, safe errors and the posted-date window.
 
@@ -261,6 +271,8 @@ def fetch(onec, config, date_from):
         due_fields = _date_fields(entity, fields, DEADLINE_FIELDS, GENERIC_DEADLINES)
         closed_fields = _date_fields(entity, fields, COMPLETION_FIELDS, GENERIC_COMPLETIONS)
         selected = list(dict.fromkeys([*COMMON, *owner_fields, *([author] if author else []), *due_fields, *closed_fields]))
+        if entity == TENDER_ENTITY and "Статус" in fields:
+            selected.append("Статус")
         selected += [field + "_Type" for field in [*owner_fields, *([author] if author else [])] if field + "_Type" in fields]
         conditions = []
         for ref, logins in sorted(users.items()):
@@ -271,6 +283,9 @@ def fetch(onec, config, date_from):
         try:
             documents = {}
             prefix = "DeletionMark eq false and (Posted eq false or Date ge datetime'" + since.isoformat() + "T00:00:00') and "
+            if entity == TENDER_ENTITY:
+                # Posted tenders may still be open, including documents before the date window.
+                prefix = "DeletionMark eq false and "
             for condition in _filters(conditions, ",".join(selected), prefix):
                 for raw in _pages(onec, entity, {"$select": ",".join(selected), "$filter": condition}, page_size):
                     ref = _ref(raw.get("Ref_Key"))
@@ -283,14 +298,16 @@ def fetch(onec, config, date_from):
                 source_date = _moment(raw.get("Date"))
                 if not source_date or raw.get("Posted") not in (True, False) or raw.get("DeletionMark") not in (True, False):
                     raise ValueError("Некорректные обязательные реквизиты документа 1С")
-                if raw.get("DeletionMark") or posted and source_date[:10] < since.isoformat():
+                status = raw.get("Статус") if entity == TENDER_ENTITY else None
+                closed = document_closed({"entity": entity, "posted": posted, "status": status})
+                if raw.get("DeletionMark") or closed and source_date[:10] < since.isoformat():
                     continue
                 deadline, deadline_source = _native_time(raw, due_fields, deadline=True)
-                closed_at = _native_time(raw, closed_fields)[0] if posted else None
+                closed_at = _native_time(raw, closed_fields)[0] if closed else None
                 for login, owner_field in _row_owners(raw, owner_fields, author, users, fields).items():
                     rows.append({"id": identity(onec, entity, ref) + ":" + login, "emp": login,
                                  "entity": entity, "ref": ref, "number": str(raw.get("Number") or ""),
-                                 "date": source_date, "posted": posted, "deadline": deadline,
+                                 "date": source_date, "posted": posted, "status": status, "deadline": deadline,
                                  "deadline_source": deadline_source, "closed_at": closed_at,
                                  "owner_field": owner_field, "url": _navigation_url(onec, entity, ref)})
             result["rows"].extend(rows)

@@ -65,6 +65,15 @@ assert.equal(context.workloadDelaySeconds({open:false,deadline:'2026-11-05T18:00
 assert.equal(context.workloadDelaySeconds({open:true,deadline:'2026-11-05T18:00:00'},'2026-11-05T18:01:00'),60);
 assert.equal(context.workloadDelaySeconds({open:true,deadline:'2026-11-10T18:00:00',late_intervals:[{start:'2026-11-02T18:00:00',end:'2026-11-02T18:30:00'}]},'2026-11-06T12:00:00'),1800);
 assert.equal(context.workloadDelaySeconds({posted:1,deadline:'2026-11-05T18:00:00',closed_at:'2026-11-05T13:01:00Z'},'2026-11-16T12:00:00','onec'),60);
+const tenderDocuments=[
+  {posted:true,is_closed:false,status:'Действует',date:'2026-11-01T09:00:00',deadline:'2026-11-20T12:00:00'},
+  {posted:false,is_closed:true,status:'Выиграно',date:'2026-11-01T09:00:00',deadline:'2026-11-10T12:00:00',closed_at:'2026-11-10T12:01:00'}];
+const tenderStats=context.workloadStats(tenderDocuments,'2026-11-01','2026-11-30','2026-11-17T12:00:00','onec');
+assert.equal(tenderStats.open.length,1);
+assert.equal(tenderStats.done.length,1);
+assert.equal(tenderStats.late.length,1);
+assert.equal(tenderStats.nearest,'2026-11-20T12:00:00');
+assert.equal(context.workloadDelaySeconds(tenderDocuments[1],'2026-11-17T12:00:00','onec'),60);
 assert.match(html, /colspan="6">Битрикс24/);
 assert.match(html, /colspan="6">1С/);
 vm.runInNewContext(html.slice(html.indexOf('  function operationsDelay('),html.indexOf('  function operationsMoney(')),context);
@@ -134,6 +143,10 @@ assert.ok(receivedList.includes('old-open'),'received drilldown includes the old
 assert.ok(!receivedList.includes('old-closed'),'received drilldown matches the count');
 assert.ok(receivedList.includes('<th>Просрочка</th>'),'document drilldown displays overdue duration');
 assert.ok(receivedList.includes('0 д 15 ч 0 мин 0 с'),'completed document overdue duration stops at completion');
+context.state.wl.list={uid:'1',key:'received',source:'onec'};
+context.renderWorkload({...data,documents:tenderDocuments.map((row,index)=>({...row,uid:1,number:String(index),entity:'Document_ТТК_Тендер',owner_field:'ВедущийМенеджер_Key'}))});
+assert.ok(main.innerHTML.includes('В работе · Действует'));
+assert.ok(main.innerHTML.includes('Закрыто · Выиграно'));
 const lateTask={id:'late-task',uid:1,title:'Задача с опозданием',url:'#',open:false,created:'2026-11-01T09:00:00',
   closed:'2026-11-05T18:01:00',exec_at:'2026-11-05T18:01:00',deadline:'2026-11-05T18:00:00',
   tags:[],remarks:[],moves_ok:[],moves_late:[],self_moves:[],returns:[],mode:'direct',creator:50};

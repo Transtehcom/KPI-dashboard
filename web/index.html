@@ -3628,9 +3628,9 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
   // ---------- «Загрузка»: загрузка сотрудников по задачам Битрикс24 (расчёт — app/workload.py)
   function workloadStats(rows, from, to, now, source = "bitrix") {
     const inPeriod = value => !!value && (!from || value.slice(0, 10) >= from) && (!to || value.slice(0, 10) <= to);
-    const opened = row => source === "onec" ? !row.posted : row.open;
-    const completed = row => source === "onec" ? row.posted && row.date : row.closed;
-    const executed = row => source === "onec" ? row.posted ? row.closed_at : null : row.exec_at;
+    const opened = row => source === "onec" ? !(row.is_closed ?? row.posted) : row.open;
+    const completed = row => source === "onec" ? (row.is_closed ?? row.posted) && row.date : row.closed;
+    const executed = row => source === "onec" ? (row.is_closed ?? row.posted) ? row.closed_at : null : row.exec_at;
     const done = rows.filter(row => inPeriod(completed(row)));
     const open = rows.filter(opened);
     const unknown = done.filter(row => !row.deadline || !executed(row));
@@ -3663,7 +3663,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       if (durations.some(value => value == null)) return null;
       return durations.reduce((total, value) => total + value, 0);
     }
-    const end = source === "onec" ? (row.posted ? row.closed_at : now) : row.exec_at || (row.open ? now : row.closed);
+    const end = source === "onec" ? ((row.is_closed ?? row.posted) ? row.closed_at : now) : row.exec_at || (row.open ? now : row.closed);
     return elapsed(row.deadline, end);
   }
 
@@ -3808,7 +3808,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
       const documentLabels = {...labels,open:"В работе",done:"Закрыто"};
       listHtml = `<section class="panel" id="wlList"><div class="panel-h"><h2>${esc(who)} · 1С · ${["ontime","late"].includes(key) ? "Проверка сроков" : documentLabels[key]} · ${selected.length}</h2><button type="button" class="btn ghost" id="wlClose">× Закрыть</button></div>
         <div class="panel-b"><div class="scroll"><table class="dt"><thead><tr><th>Документ</th><th>Вид</th><th>Сотрудник</th><th>Поле сотрудника</th><th>Дата документа</th><th>Состояние</th><th>Срок</th><th>Завершён</th><th>Своевременность</th><th>Просрочка</th></tr></thead><tbody>
-        ${selected.map(row => `<tr><td>${crmLink(row.number || "Без номера",row.url)}</td><td>${esc(row.entity.replace(/^Document_/,"").replace(/([а-я])([А-Я])/g,"$1 $2"))}</td><td>${esc((person[row.uid] || {}).name || row.emp)}</td><td>${esc(row.owner_field.replace(/_Key$/,""))}</td><td class="nw">${ruMoment(row.date)}</td><td>${row.posted ? "Закрыт · проведён" : "В работе · не проведён"}</td><td class="nw" title="${esc(row.deadline_source || "")}">${ruMoment(row.deadline)}</td><td class="nw">${ruMoment(row.closed_at)}</td><td>${!row.deadline || row.posted && !row.closed_at ? "Нет данных" : row.posted ? row.closed_at <= row.deadline ? "В срок" : "С опозданием" : row.deadline < d.generated ? "Просрочен" : "Срок впереди"}</td>${delayCell(row,"onec")}</tr>`).join("")}
+        ${selected.map(row => `<tr><td>${crmLink(row.number || "Без номера",row.url)}</td><td>${esc(row.entity.replace(/^Document_/,"").replace(/([а-я])([А-Я])/g,"$1 $2"))}</td><td>${esc((person[row.uid] || {}).name || row.emp)}</td><td>${esc(row.owner_field.replace(/_Key$/,""))}</td><td class="nw">${ruMoment(row.date)}</td><td>${(row.is_closed ?? row.posted) ? "Закрыто" : "В работе"} · ${row.status ? esc(row.status) : row.posted ? "проведён" : "не проведён"}</td><td class="nw" title="${esc(row.deadline_source || "")}">${ruMoment(row.deadline)}</td><td class="nw">${ruMoment(row.closed_at)}</td><td>${!row.deadline || (row.is_closed ?? row.posted) && !row.closed_at ? "Нет данных" : (row.is_closed ?? row.posted) ? row.closed_at <= row.deadline ? "В срок" : "С опозданием" : row.deadline < d.generated ? "Просрочен" : "Срок впереди"}</td>${delayCell(row,"onec")}</tr>`).join("")}
         </tbody></table></div>${selected.length ? "" : `<div class="muted">Документов нет</div>`}</div></section>`;
     }
     const sel = (id, label, cur, opts) => `<label for="${id}">${label}<select id="${id}"><option value="">Все</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
@@ -3825,7 +3825,7 @@ details[data-motion-native][open] > :not(summary) { animation: motion-menu 140ms
         ${sel("wOnly", "Отбор", st.only, [["overdue", "Только просрочки"], ["remarks", "Только с замечаниями"]])}
         <button class="btn" type="button" id="wReset">Сбросить</button></div></div>
         <div class="panel-b"><div class="scroll"><table class="dt wl-table"><thead>${head}</thead><tbody>${people.map(row).join("")}${people.length > 1 ? totals : ""}</tbody></table></div>
-        <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Поступило» = «В работе» + «Закрыто». «Закрыто» означает «Проведён» и отбирается по дате документа за выбранный период. «Сдано в срок» — закрытые документы, завершённые не позднее установленного срока. «Ближайший срок» — самый ранний предстоящий срок открытого документа. В списке показана длительность просрочки в днях, часах, минутах и секундах. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние непроведённые также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
+        <div class="muted small" style="margin-top:8px">Нажмите на число для просмотра задач или документов. Просрочки включают открытые и завершённые с опозданием в периоде. «Сдано в срок» считается отдельно по завершённым с известным сроком и датой выполнения. В 1С «Поступило» = «В работе» + «Закрыто». «Закрыто» отбирается по дате документа за выбранный период. У тендеров «Черновик», «Подготовлен» и «Действует» означают «В работе», остальные статусы — «Закрыто». У остальных документов закрытие определяется проведением. «Сдано в срок» — закрытые документы, завершённые не позднее установленного срока. «Ближайший срок» — самый ранний предстоящий срок открытого документа. В списке показана длительность просрочки в днях, часах, минутах и секундах. Фильтры проекта, тегов, приоритета, статуса и отбора применяются к Битрикс24.${d.onec?.since ? ` Документы 1С загружены с ${ruDay(d.onec.since)}, более ранние открытые документы также учитываются.` : ""}${d.onec?.updated ? ` Обновление 1С ${ruMoment(d.onec.updated)}.` : ""}</div></div></section>
       ${dirBlock}${listHtml}`;
     if (d.configuration) {
       const form = document.getElementById("wlMembersForm");

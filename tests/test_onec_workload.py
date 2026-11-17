@@ -188,6 +188,25 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_tender_status_overrides_posting_and_keeps_old_open_tenders(self):
+        entity = "Document_ТТК_Тендер"
+        states = [("Черновик", True), ("Подготовлен", True), ("Действует", True),
+                  ("Выиграно", False), ("Проиграно", False), ("Отменено", False), ("Отклонён", False)]
+        source = Source({entity: {**COMMON, "Статус": "Edm.String", "ВедущийМенеджер_Key": "Edm.Guid"}},
+                        {entity: [document(i, ВедущийМенеджер_Key=guid(90), Posted=posted, Статус=status)
+                                  for i, (status, posted) in enumerate(states, 1)] + [
+                            document(8, ВедущийМенеджер_Key=guid(90), Posted=True, Статус="Действует", Date="2020-01-01T00:00:00"),
+                            document(9, ВедущийМенеджер_Key=guid(90), Posted=False, Статус="Выиграно", Date="2020-01-01T00:00:00")]})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        self.assertEqual(len(result['rows']), 8)
+        self.assertEqual([row['status'] for row in result['rows'][:7]], [state for state, _ in states])
+        self.assertEqual([onec_workload.document_closed(row) for row in result['rows'][:7]], [False]*3 + [True]*4)
+        self.assertEqual([row['posted'] for row in result['rows'][:7]], [posted for _, posted in states])
+        query = next(params for name, params in source.calls if name == entity)
+        self.assertIn('Статус', query['$select'])
+        self.assertNotIn('Posted eq false', query['$filter'])
+
     def test_tender_leading_manager_is_used_when_responsible_and_manager_are_absent(self):
         entity = "Document_ТТК_Тендер"
         source = Source({entity: {**COMMON, "ВедущийМенеджер_Key": "Edm.Guid"}},

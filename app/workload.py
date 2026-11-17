@@ -26,7 +26,7 @@ import json
 import math
 import re
 from .common import db_lock, merge_rows
-from .onec_workload import AUTHOR_ONLY
+from .onec_workload import AUTHOR_ONLY, document_closed
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -160,7 +160,8 @@ def _onec_data(con, people):
         if row["emp"] not in by_login:
             continue
         document = dict(row)
-        document.update(uid=by_login[row["emp"]], posted=bool(row["posted"]), open=not bool(row["posted"]))
+        closed = document_closed(document)
+        document.update(uid=by_login[row["emp"]], posted=bool(row["posted"]), is_closed=closed, open=not closed)
         documents.append(document)
     states = [dict(r) for r in con.execute("SELECT * FROM workload_onec_state ORDER BY entity")]
     updated = [s["updated"] for s in states if s["updated"]]

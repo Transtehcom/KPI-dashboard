@@ -322,6 +322,18 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_tender_status_controls_workload_state_independently_of_posted(self):
+        entity = "Document_ТТК_Тендер"
+        self.store([{**onec_document("open", entity=entity, posted=1), "status": "Действует"},
+                    {**onec_document("closed", entity=entity, posted=0), "status": "Выиграно"}], entities=(entity,))
+        rows = {row['ref']: row for row in workload.build(self.con, self.config)['documents']}
+        self.assertTrue(rows['open']['posted'])
+        self.assertFalse(rows['open']['is_closed'])
+        self.assertTrue(rows['open']['open'])
+        self.assertFalse(rows['closed']['posted'])
+        self.assertTrue(rows['closed']['is_closed'])
+        self.assertFalse(rows['closed']['open'])
+
     def test_partial_failure_keeps_failed_entity_snapshot_and_records_error(self):
         self.store([onec_document(), onec_document("b", entity="Document_Supply")],
                    entities=("Document_Order", "Document_Supply"))
