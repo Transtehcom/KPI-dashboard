@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest import mock
 
 from app.onec_operations import fetch, identity
 
@@ -29,6 +30,32 @@ class Source:
 
 
 class OperationsSourceTests(unittest.TestCase):
+    def test_published_state_journal_uses_native_period_field_and_complete_sort_key(self):
+        table = 'InformationRegister_ТТК_СостоянияДокументов'
+        quote = 'Document_КоммерческоеПредложениеКлиенту'
+        for period in ('Period', 'Период'):
+            with self.subTest(period=period):
+                metadata = {table: {period, 'Документ', 'Документ_Type', 'Состояние', 'Автор_Key'},
+                            quote: {'Ref_Key', 'Статус'}}
+                states = [{period: '2026-11-17T12:13:14', 'Документ': guid(1),
+                           'Документ_Type': 'StandardODATA.' + quote, 'Состояние': 'Действует'}]
+                source = Source({table: states, quote: [{'Ref_Key': guid(1), 'Статус': 'Действует'}]})
+                original = source._odata
+
+                def read(entity, params):
+                    if entity == table:
+                        self.assertEqual(params['$orderby'], period + ',Документ,Документ_Type')
+                    return original(entity, params)
+
+                source._odata = read
+                with mock.patch('app.onec_operations._metadata', return_value=metadata):
+                    result = fetch(source, {})
+                self.assertEqual(len(result['events']), 1)
+                self.assertEqual(result['events'][0]['at'], '2026-11-17T12:13:14')
+                self.assertEqual(result['events'][0]['kind'], 'submitted')
+                self.assertTrue(result['events'][0]['time_verified'])
+                self.assertFalse(any('Журнал' in message for message in result['warnings']))
+
     def test_live_tender_title_uses_published_name_field(self):
         source = Source({"Document_ТТК_Тендер": [{"Ref_Key": guid(1), "Наименование": "Текущий лот"}]})
         source.metadata = lambda: '<Schema><EntityType Name="Document_ТТК_Тендер"><Property Name="Ref_Key"/><Property Name="Наименование"/></EntityType></Schema>'

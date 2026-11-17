@@ -87,7 +87,7 @@ def _pages(onec, entity, params, page_size=200, register=False):
     rows, seen = [], set()
     while True:
         query = dict(params, **{"$format": "json", "$top": page_size, "$skip": len(rows)})
-        query["$orderby"] = "Период,Документ" if register else "Ref_Key"
+        query["$orderby"] = params.get("$orderby") or ("Период,Документ" if register else "Ref_Key")
         batch = onec._odata(entity, query)
         if not batch:
             return rows
@@ -257,7 +257,11 @@ def fetch(onec, config, since=None):
     states = []
     if state_table:
         try:
-            states = _pages(onec, state_table, {}, page_size, register=True)
+            state_fields = metadata.get(state_table, set()) if metadata is not None else set()
+            sort_fields = ["Period" if "Period" in state_fields else "Период", "Документ"]
+            if "Документ_Type" in state_fields:
+                sort_fields.append("Документ_Type")
+            states = _pages(onec, state_table, {"$orderby": ",".join(sort_fields)}, page_size, register=True)
         except Exception as exc:
             warnings.append("Журнал состояний документов 1С недоступен. " + _error(exc))
     else:
