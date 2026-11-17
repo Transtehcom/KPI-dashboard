@@ -65,6 +65,40 @@ def document(ref=1, **values):
 
 
 class WorkloadOneCTests(unittest.TestCase):
+    def test_quotes_use_submission_deadline_and_status_without_invented_completion(self):
+        entity = 'Document_КоммерческоеПредложениеКлиенту'
+        fields = {**COMMON, 'Менеджер_Key': 'Edm.Guid', 'Статус': 'Edm.String',
+                  'ТТК_СрокПодачи': 'Edm.DateTime', 'СрокПодачи': 'Edm.DateTime',
+                  'СрокДействия': 'Edm.DateTime', 'СрокВыполнения': 'Edm.DateTime',
+                  'ДатаФактическогоВыполнения': 'Edm.DateTime'}
+        statuses = ['Действует', 'Отменено', 'Черновик', 'НеСогласовано', 'Черновик', 'Действует']
+        documents = [document(i, Менеджер_Key=guid(90), Статус=status, Posted=status in ('Черновик', 'НеСогласовано'),
+                              ТТК_СрокПодачи='2026-11-17T13:14:15', СрокДействия='2026-12-31T00:00:00',
+                              СрокВыполнения='2026-11-30T12:00:00', ДатаФактическогоВыполнения='2026-11-16T09:00:00')
+                     for i, status in enumerate(statuses, 1)]
+        documents[1].update(ТТК_СрокПодачи='0001-01-01T00:00:00', СрокПодачи='2026-11-18T15:00:00')
+        documents[2]['ТТК_СрокПодачи'] = '2026-11-17T00:00:00'
+        documents[4]['Date'] = documents[5]['Date'] = '2020-01-01T12:00:00'
+        source = Source({entity: fields}, {entity: documents})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        rows = {row['ref']: row for row in result['rows']}
+        self.assertEqual(len(rows), 5)
+        self.assertEqual({row['status'] for row in rows.values() if onec_workload.document_closed(row)}, {'Действует', 'Отменено'})
+        self.assertEqual(rows[guid(1)]['deadline'], '2026-11-17T13:14:15')
+        self.assertEqual(rows[guid(1)]['deadline_source'], 'ТТК_СрокПодачи')
+        self.assertIsNone(rows[guid(2)]['deadline'])
+        self.assertIsNone(rows[guid(2)]['deadline_source'])
+        self.assertEqual(rows[guid(3)]['deadline'], '2026-11-17T23:59:59')
+        self.assertTrue(all(row['closed_at'] is None for row in rows.values()))
+        self.assertIn(guid(5), rows)
+        self.assertNotIn(guid(6), rows)
+        query = next(params for name, params in source.calls if name == entity)
+        self.assertNotIn('Posted eq', query['$filter'])
+        self.assertIn('Статус', query['$select'])
+        self.assertNotIn('ДатаФактическогоВыполнения', query['$select'])
+        self.assertNotIn('СрокВыполнения', query['$select'])
+
     def test_payment_requests_close_on_rejection_or_last_linked_payment(self):
         request = 'Document_ЗаявкаНаРасходованиеДенежныхСредств'
         payment = 'Document_СписаниеБезналичныхДенежныхСредств'

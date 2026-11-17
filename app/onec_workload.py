@@ -16,7 +16,7 @@ DEADLINE_FIELDS = {
     "Document_ПоручениеЭкспедитору": ("ТТК_ДПП",),
     "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов": ("ОтработатьДо", "СрокОтработкиДо", "ТТК_ОтработатьДо"),
     "Document_ТТК_ЗаявкаВОтделСнабжения": ("СрокОтработкиДо",),
-    "Document_КоммерческоеПредложениеКлиенту": ("ТТК_СрокПодачи", "СрокПодачи"),
+    "Document_КоммерческоеПредложениеКлиенту": ("ТТК_СрокПодачи",),
     "Document_ТТК_Тендер": ("СрокДействия",),
     "Document_ЗаявкаНаРасходованиеДенежныхСредств": ("ДатаПлатежа",),
 }
@@ -209,7 +209,8 @@ def _moment(value, deadline=False):
 
 def _date_fields(entity, fields, specific, generic):
     names = specific.get(entity, ())
-    if entity not in (FORWARDER_ENTITY, TRANSPORT_ENTITY, PAYMENT_REQUEST_ENTITY) and entity not in IMMEDIATE_COMPLETION_ENTITIES:
+    if (entity not in (FORWARDER_ENTITY, TRANSPORT_ENTITY, PAYMENT_REQUEST_ENTITY, QUOTE_ENTITY)
+            and entity not in IMMEDIATE_COMPLETION_ENTITIES):
         names = (*names, *generic)
     return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
@@ -243,6 +244,8 @@ def _navigation_url(onec, entity, ref):
 
 TENDER_ENTITY = "Document_ТТК_Тендер"
 TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
+QUOTE_ENTITY = "Document_КоммерческоеПредложениеКлиенту"
+QUOTE_CLOSED_STATUSES = {"Действует", "Отменено"}
 SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
 FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
 TRANSPORT_ENTITY = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
@@ -260,7 +263,7 @@ IMMEDIATE_COMPLETION_ENTITIES = frozenset({
     "Document_ДоверенностьВыданная",
 })
 STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус",
-                 TRANSPORT_ENTITY: "Статус", PAYMENT_REQUEST_ENTITY: "Статус"}
+                 TRANSPORT_ENTITY: "Статус", PAYMENT_REQUEST_ENTITY: "Статус", QUOTE_ENTITY: "Статус"}
 
 
 def document_closed(row):
@@ -268,6 +271,8 @@ def document_closed(row):
         return True
     if row.get("entity") == TENDER_ENTITY and row.get("status"):
         return row["status"] not in TENDER_OPEN_STATUSES
+    if row.get("entity") == QUOTE_ENTITY:
+        return row.get("status") in QUOTE_CLOSED_STATUSES
     if row.get("entity") == SUPPLY_ENTITY:
         if row.get("status"):
             return row["status"] in REQUEST_STAGES

@@ -9,7 +9,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import workload  # noqa: E402
+from app import operations, workload  # noqa: E402
+from app.onec_operations import identity  # noqa: E402
 from app import sync  # noqa: E402
 from app.common import connect, replace_rows  # noqa: E402
 
@@ -361,6 +362,43 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertIsNone(documents['rejected']['closed_at'])
         self.assertEqual(documents['paid']['closed_at'], '2026-10-10T11:12:13')
         self.assertTrue(all(row['timing_applicable'] for row in documents.values()))
+
+    def test_quote_status_controls_workload_closure(self):
+        entity = 'Document_КоммерческоеПредложениеКлиенту'
+        rows = [{**onec_document(str(index), entity=entity, posted=status in ('Черновик', 'НеСогласовано')),
+                 'status': status}
+                for index, status in enumerate(('Действует', 'Отменено', 'Черновик', 'НеСогласовано'))]
+        self.store(rows, entities=(entity,))
+        documents = workload.build(self.con, self.config)['documents']
+        self.assertEqual({row['status'] for row in documents if row['is_closed']}, {'Действует', 'Отменено'})
+        self.assertEqual({row['status'] for row in documents if row['open']}, {'Черновик', 'НеСогласовано'})
+        self.assertTrue(all(row['closed_at'] is None for row in documents))
+
+    def test_quote_completion_uses_last_verified_native_active_transition(self):
+        entity = 'Document_КоммерческоеПредложениеКлиенту'
+        ref = '00000000-0000-0000-0000-000000000001'
+        source = SimpleNamespace(base='https://example.test/base/')
+        event_entity = identity(source, 'kp', ref)
+        row = {**onec_document(ref, entity=entity), 'id': identity(source, entity, ref) + ':anna',
+               'status': 'Действует', 'closed_at': '2026-10-14T10:00:00'}
+        self.store([row], entities=(entity,))
+        self.assertIsNone(workload.build(self.con, self.config)['documents'][0]['closed_at'])
+        events = [
+            {'id': 'first', 'entity_id': event_entity, 'at': '2026-10-10T09:10:11', 'status': 'Действует', 'time_verified': True},
+            {'id': 'last', 'entity_id': event_entity, 'at': '2026-10-11T07:12:13Z', 'status': 'Действует', 'time_verified': True},
+            {'id': 'observed', 'entity_id': event_entity, 'at': '2026-10-12T10:00:00', 'status': 'Действует', 'time_verified': False},
+            {'id': 'wrong-type', 'entity_id': identity(source, 'tender', ref), 'at': '2026-10-13T10:00:00', 'status': 'Действует', 'time_verified': True},
+            {'id': 'wrong-base', 'entity_id': identity(SimpleNamespace(base='https://other.test/base/'), 'kp', ref),
+             'at': '2026-10-14T10:00:00', 'status': 'Действует', 'time_verified': True},
+        ]
+        operations.capture(self.con, 'onec', [], events, observed_at=NOW)
+        document = workload.build(self.con, self.config)['documents'][0]
+        self.assertEqual(document['closed_at'], '2026-10-11T12:12:13')
+        self.assertTrue(document['is_closed'])
+        self.con.execute('UPDATE workload_onec_documents SET status=? WHERE id=?', ('Черновик', row['id']))
+        document = workload.build(self.con, self.config)['documents'][0]
+        self.assertTrue(document['open'])
+        self.assertIsNone(document['closed_at'])
 
     def test_goods_receipt_legacy_rows_are_completed_at_document_date_without_timing(self):
         entity = "Document_ПриобретениеТоваровУслуг"

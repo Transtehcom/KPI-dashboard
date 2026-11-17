@@ -26,7 +26,8 @@ import json
 import math
 import re
 from .common import db_lock, merge_rows
-from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, document_closed
+from . import operations
+from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, QUOTE_ENTITY, _moment, document_closed
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -153,8 +154,23 @@ def store_onec(con, data, updated=None):
                     "ON CONFLICT(entity) DO UPDATE SET error=excluded.error", (entity, error))
 
 
+def _quote_completions(con):
+    completions = {}
+    for event in operations.events(con, "onec"):
+        entity_id = str(event.get("entity_id") or "")
+        if event.get("time_verified") is not True or event.get("status") != "Действует" or ":kp:" not in entity_id:
+            continue
+        moment = _moment(event.get("at"))
+        if moment:
+            # Operational and workload identities share the database hash and document reference.
+            key = entity_id.replace(":kp:", ":" + QUOTE_ENTITY + ":", 1)
+            completions[key] = max(completions.get(key, ""), moment)
+    return completions
+
+
 def _onec_data(con, people):
     by_login = {p["login"]: p["uid"] for p in people}
+    quote_completions = _quote_completions(con)
     documents = []
     for row in con.execute("SELECT * FROM workload_onec_documents ORDER BY date DESC, id"):
         if row["emp"] not in by_login:
@@ -164,6 +180,9 @@ def _onec_data(con, people):
         if not timing_applicable:
             document.update(closed_at=document["date"], deadline=None, deadline_source=None)
         closed = document_closed(document)
+        if document["entity"] == QUOTE_ENTITY:
+            key = document["id"].removesuffix(":" + document["emp"])
+            document["closed_at"] = quote_completions.get(key) if closed else None
         document.update(uid=by_login[row["emp"]], posted=bool(row["posted"]), is_closed=closed, open=not closed, timing_applicable=timing_applicable)
         documents.append(document)
     states = [dict(r) for r in con.execute("SELECT * FROM workload_onec_state ORDER BY entity")]

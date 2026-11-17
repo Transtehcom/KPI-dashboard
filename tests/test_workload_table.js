@@ -196,6 +196,19 @@ assert.ok(main.innerHTML.includes('В работе · К оплате'));
 assert.ok(main.innerHTML.includes('Закрыто · Отклонена'));
 assert.ok(main.innerHTML.includes('2026-11-16T16:00:01'),'linked payment completion preserves seconds');
 assert.ok(main.innerHTML.includes('0 д 0 ч 0 мин 1 с'),'payment request lateness uses the payment date');
+const quoteDocuments=[
+  {number:'active-quote',posted:false,is_closed:true,status:'Действует',deadline:'2026-11-16T16:00:00',closed_at:'2026-11-16T16:00:01'},
+  {number:'cancelled-quote',posted:false,is_closed:true,status:'Отменено',deadline:null,closed_at:null},
+  {number:'draft-quote',posted:true,is_closed:false,status:'Черновик',deadline:'2026-11-20T12:00:00'},
+  {number:'unapproved-quote',posted:true,is_closed:false,status:'НеСогласовано',deadline:null},
+].map(row=>({...row,uid:1,entity:'Document_КоммерческоеПредложениеКлиенту',owner_field:'Менеджер_Key',date:'2026-11-01T09:00:00',timing_applicable:true}));
+context.renderWorkload({...data,documents:quoteDocuments});
+assert.ok(main.innerHTML.includes('Закрыто · Действует'));
+assert.ok(main.innerHTML.includes('Закрыто · Отменено'));
+assert.ok(main.innerHTML.includes('В работе · Не согласовано'));
+assert.ok(main.innerHTML.includes('2026-11-16T16:00:01'),'quote transition preserves seconds');
+const cancelledQuote=main.innerHTML.split('cancelled-quote')[1].split('</tr>')[0];
+assert.ok(cancelledQuote.includes('Нет данных'),'missing quote history remains unknown');
 context.ruMoment=previousMoment;
 context.state.wl.list={uid:'1',key:'received',source:'onec'};
 context.renderWorkload({...data,documents:[{...financialDocument,uid:1,number:'receipt-operation',owner_field:'Автор_Key'}]});
