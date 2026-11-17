@@ -74,6 +74,16 @@ assert.equal(tenderStats.done.length,1);
 assert.equal(tenderStats.late.length,1);
 assert.equal(tenderStats.nearest,'2026-11-20T12:00:00');
 assert.equal(context.workloadDelaySeconds(tenderDocuments[1],'2026-11-17T12:00:00','onec'),60);
+const financialDocument={entity:'Document_ПриобретениеТоваровУслуг',posted:false,is_closed:true,timing_applicable:false,
+  date:'2026-11-16T14:58:11',closed_at:'2026-11-16T14:58:11',deadline:'2026-11-01T12:00:00'};
+const financialStats=context.workloadStats([financialDocument],'2026-11-01','2026-11-30','2026-11-17T12:00:00','onec');
+assert.equal(financialStats.received.length,1);
+assert.equal(financialStats.done.length,1);
+assert.equal(financialStats.open.length,0);
+assert.equal(financialStats.late.length,0);
+assert.equal(financialStats.ontime.length,0);
+assert.equal(financialStats.unknown.length,0);
+assert.equal(financialStats.nearest,null);
 assert.match(html, /colspan="6">Битрикс24/);
 assert.match(html, /colspan="6">1С/);
 vm.runInNewContext(html.slice(html.indexOf('  function operationsMoment('),html.indexOf('  function operationsMoney(')),context);
@@ -171,6 +181,14 @@ assert.ok(main.innerHTML.includes('2026-11-26T16:00:00'));
 assert.ok(main.innerHTML.includes('2026-11-16T15:44:43'));
 assert.ok(main.innerHTML.includes('СрокДействия документа-основания Т-000910'));
 context.ruMoment=previousMoment;
+context.state.wl.list={uid:'1',key:'received',source:'onec'};
+context.renderWorkload({...data,documents:[{...financialDocument,uid:1,number:'receipt-operation',owner_field:'Автор_Key'}]});
+const receiptDetails=main.innerHTML.slice(main.innerHTML.indexOf('id="wlList"'));
+assert.ok(receiptDetails.includes('Не применяется'));
+assert.ok(!receiptDetails.includes('wl-bad'));
+assert.ok(!receiptDetails.includes('wl-ok'));
+assert.ok(!main.innerHTML.includes('без даты или срока:'), 'financial operations do not create missing timing warnings');
+assert.equal(context.workloadDelaySeconds(financialDocument,'2026-11-17T12:00:00','onec'),null);
 const lateTask={id:'late-task',uid:1,title:'Задача с опозданием',url:'#',open:false,created:'2026-11-01T09:00:00',
   closed:'2026-11-05T18:01:00',exec_at:'2026-11-05T18:01:00',deadline:'2026-11-05T18:00:00',
   tags:[],remarks:[],moves_ok:[],moves_late:[],self_moves:[],returns:[],mode:'direct',creator:50};

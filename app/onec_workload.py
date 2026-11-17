@@ -207,7 +207,7 @@ def _moment(value, deadline=False):
 
 
 def _date_fields(entity, fields, specific, generic):
-    names = specific.get(entity, ()) if entity in (FORWARDER_ENTITY, TRANSPORT_ENTITY) else (*specific.get(entity, ()), *generic)
+    names = specific.get(entity, ()) if entity in (FORWARDER_ENTITY, TRANSPORT_ENTITY, RECEIPT_ENTITY) else (*specific.get(entity, ()), *generic)
     return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
 
@@ -243,11 +243,14 @@ TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Дейс�
 SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
 FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
 TRANSPORT_ENTITY = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
+RECEIPT_ENTITY = "Document_ПриобретениеТоваровУслуг"
 STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус",
                  TRANSPORT_ENTITY: "Статус"}
 
 
 def document_closed(row):
+    if row.get("entity") == RECEIPT_ENTITY:
+        return True
     if row.get("entity") == TENDER_ENTITY and row.get("status"):
         return row["status"] not in TENDER_OPEN_STATUSES
     if row.get("entity") == SUPPLY_ENTITY:
@@ -355,7 +358,10 @@ def fetch(onec, config, date_from):
                 if not source_date or raw.get("Posted") not in (True, False) or raw.get("DeletionMark") not in (True, False):
                     raise ValueError("Некорректные обязательные реквизиты документа 1С")
                 status = raw.get(status_field)
-                native_closed_at = _transport_finished(raw) if entity == TRANSPORT_ENTITY else _native_time(raw, closed_fields)[0]
+                if entity == RECEIPT_ENTITY:
+                    native_closed_at = source_date
+                else:
+                    native_closed_at = _transport_finished(raw) if entity == TRANSPORT_ENTITY else _native_time(raw, closed_fields)[0]
                 closed = document_closed({"entity": entity, "posted": posted, "status": status, "closed_at": native_closed_at})
                 if raw.get("DeletionMark") or closed and source_date[:10] < since.isoformat():
                     continue

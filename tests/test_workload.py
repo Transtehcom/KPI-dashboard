@@ -322,6 +322,16 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_goods_receipt_legacy_rows_are_completed_at_document_date_without_timing(self):
+        entity = "Document_ПриобретениеТоваровУслуг"
+        self.store([onec_document("receipt", entity=entity, posted=0)], entities=(entity,))
+        row = workload.build(self.con, self.config)['documents'][0]
+        self.assertTrue(row['is_closed'])
+        self.assertFalse(row['open'])
+        self.assertEqual(row['closed_at'], row['date'])
+        self.assertIsNone(row['deadline'])
+        self.assertFalse(row['timing_applicable'])
+
     def test_transport_only_processed_status_is_closed(self):
         entity = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
         states = ['Поступила', 'ВРаботе', 'ЗапросИнформации', 'Отработана']

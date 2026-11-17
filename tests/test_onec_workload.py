@@ -188,6 +188,21 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_goods_receipt_is_immediately_completed_without_timing(self):
+        entity = "Document_ПриобретениеТоваровУслуг"
+        fields = {**COMMON, "Ответственный_Key": "Edm.Guid", "СрокВыполнения": "Edm.DateTime",
+                  "ДатаФактическогоВыполнения": "Edm.DateTime"}
+        source = Source({entity: fields}, {entity: [
+            document(1, Ответственный_Key=guid(90), Posted=False, Date="2026-11-16T14:58:11",
+                     СрокВыполнения="2026-11-01T12:00:00", ДатаФактическогоВыполнения="2026-11-20T12:00:00"),
+            document(2, Ответственный_Key=guid(90), Posted=False, Date="2020-01-01T00:00:00")]})
+        rows = onec_workload.fetch(source, CONFIG, SINCE)['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(onec_workload.document_closed(rows[0]))
+        self.assertEqual(rows[0]['closed_at'], rows[0]['date'])
+        self.assertEqual(rows[0]['closed_at'], '2026-11-16T14:58:11')
+        self.assertIsNone(rows[0]['deadline'])
+
     def test_transport_2416_uses_last_processed_time_and_primary_basis_deadline(self):
         entity = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
         tender = "Document_ТТК_Тендер"
