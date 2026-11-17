@@ -322,6 +322,30 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_other_instant_document_types_have_no_timing_assessment(self):
+        entities = [
+            'Document_ПоступлениеБезналичныхДенежныхСредств',
+            'Document_РеализацияТоваровУслуг',
+            'Document_ОжидаемоеПоступлениеДенежныхСредств',
+            'Document_СписаниеБезналичныхДенежныхСредств',
+            'Document_СчетНаОплатуКлиенту',
+            'Document_ДоверенностьВыданная',
+        ]
+        rows = [onec_document(str(i), entity=entity, posted=0) for i, entity in enumerate(entities)]
+        control = onec_document('control', entity='Document_ЗаявкаНаРасходованиеДенежныхСредств', posted=0)
+        self.store([*rows, control], entities=(*entities, control['entity']))
+        documents = workload.build(self.con, self.config)['documents']
+        for row in documents:
+            with self.subTest(entity=row['entity']):
+                if row['entity'] == control['entity']:
+                    self.assertTrue(row['open'])
+                    self.assertTrue(row['timing_applicable'])
+                else:
+                    self.assertTrue(row['is_closed'])
+                    self.assertEqual(row['closed_at'], row['date'])
+                    self.assertIsNone(row['deadline'])
+                    self.assertFalse(row['timing_applicable'])
+
     def test_goods_receipt_legacy_rows_are_completed_at_document_date_without_timing(self):
         entity = "Document_ПриобретениеТоваровУслуг"
         self.store([onec_document("receipt", entity=entity, posted=0)], entities=(entity,))

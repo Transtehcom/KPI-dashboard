@@ -26,7 +26,7 @@ import json
 import math
 import re
 from .common import db_lock, merge_rows
-from .onec_workload import AUTHOR_ONLY, RECEIPT_ENTITY, document_closed
+from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, document_closed
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -160,7 +160,7 @@ def _onec_data(con, people):
         if row["emp"] not in by_login:
             continue
         document = dict(row)
-        timing_applicable = document["entity"] != RECEIPT_ENTITY
+        timing_applicable = document["entity"] not in IMMEDIATE_COMPLETION_ENTITIES
         if not timing_applicable:
             document.update(closed_at=document["date"], deadline=None, deadline_source=None)
         closed = document_closed(document)

@@ -207,7 +207,9 @@ def _moment(value, deadline=False):
 
 
 def _date_fields(entity, fields, specific, generic):
-    names = specific.get(entity, ()) if entity in (FORWARDER_ENTITY, TRANSPORT_ENTITY, RECEIPT_ENTITY) else (*specific.get(entity, ()), *generic)
+    names = specific.get(entity, ())
+    if entity not in (FORWARDER_ENTITY, TRANSPORT_ENTITY) and entity not in IMMEDIATE_COMPLETION_ENTITIES:
+        names = (*names, *generic)
     return [name for name in names
             if fields.get(name) in ("Edm.DateTime", "Edm.DateTimeOffset")]
 
@@ -244,12 +246,21 @@ SUPPLY_ENTITY = "Document_ТТК_ЗаявкаВОтделСнабжения"
 FORWARDER_ENTITY = "Document_ПоручениеЭкспедитору"
 TRANSPORT_ENTITY = "Document_ТТК_ЗаявкаНаРасчетТранспортныхРасходов"
 RECEIPT_ENTITY = "Document_ПриобретениеТоваровУслуг"
+IMMEDIATE_COMPLETION_ENTITIES = frozenset({
+    RECEIPT_ENTITY,
+    "Document_ПоступлениеБезналичныхДенежныхСредств",
+    "Document_РеализацияТоваровУслуг",
+    "Document_ОжидаемоеПоступлениеДенежныхСредств",
+    "Document_СписаниеБезналичныхДенежныхСредств",
+    "Document_СчетНаОплатуКлиенту",
+    "Document_ДоверенностьВыданная",
+})
 STATUS_FIELDS = {TENDER_ENTITY: "Статус", SUPPLY_ENTITY: "СтатусЗаявки", FORWARDER_ENTITY: "ТТК_Статус",
                  TRANSPORT_ENTITY: "Статус"}
 
 
 def document_closed(row):
-    if row.get("entity") == RECEIPT_ENTITY:
+    if row.get("entity") in IMMEDIATE_COMPLETION_ENTITIES:
         return True
     if row.get("entity") == TENDER_ENTITY and row.get("status"):
         return row["status"] not in TENDER_OPEN_STATUSES
@@ -358,7 +369,7 @@ def fetch(onec, config, date_from):
                 if not source_date or raw.get("Posted") not in (True, False) or raw.get("DeletionMark") not in (True, False):
                     raise ValueError("Некорректные обязательные реквизиты документа 1С")
                 status = raw.get(status_field)
-                if entity == RECEIPT_ENTITY:
+                if entity in IMMEDIATE_COMPLETION_ENTITIES:
                     native_closed_at = source_date
                 else:
                     native_closed_at = _transport_finished(raw) if entity == TRANSPORT_ENTITY else _native_time(raw, closed_fields)[0]

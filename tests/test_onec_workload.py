@@ -188,6 +188,28 @@ class WorkloadOneCTests(unittest.TestCase):
         self.assertTrue(all(len(urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) < 1800
                             for _, params in source.calls))
 
+    def test_other_instant_document_types_complete_at_document_date(self):
+        entities = [
+            'Document_ПоступлениеБезналичныхДенежныхСредств',
+            'Document_РеализацияТоваровУслуг',
+            'Document_ОжидаемоеПоступлениеДенежныхСредств',
+            'Document_СписаниеБезналичныхДенежныхСредств',
+            'Document_СчетНаОплатуКлиенту',
+            'Document_ДоверенностьВыданная',
+        ]
+        fields = {**COMMON, "Ответственный_Key": "Edm.Guid", "СрокВыполнения": "Edm.DateTime"}
+        source = Source({entity: fields for entity in entities}, {entity: [
+            document(i, Ответственный_Key=guid(90), Posted=False, Date="2026-11-16T14:58:11",
+                     СрокВыполнения="2026-11-01T12:00:00")] for i, entity in enumerate(entities, 1)})
+        result = onec_workload.fetch(source, CONFIG, SINCE)
+        self.assertFalse(result['errors'])
+        self.assertEqual(len(result['rows']), len(entities))
+        for row in result['rows']:
+            with self.subTest(entity=row['entity']):
+                self.assertTrue(onec_workload.document_closed(row))
+                self.assertEqual(row['closed_at'], row['date'])
+                self.assertIsNone(row['deadline'])
+
     def test_goods_receipt_is_immediately_completed_without_timing(self):
         entity = "Document_ПриобретениеТоваровУслуг"
         fields = {**COMMON, "Ответственный_Key": "Edm.Guid", "СрокВыполнения": "Edm.DateTime",
