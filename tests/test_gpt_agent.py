@@ -244,3 +244,18 @@ class AgentTest(unittest.TestCase):
         with patch("app.gpt_images.local_ocr", return_value="Серия\n4512\nНомер\n345678"):
             _chat, reply = self.request("boss", "Проверь рабочий документ", behavior, chat)
         self.assertEqual(reply["status"], "completed")
+
+    def test_protected_icon_without_ocr_can_still_be_converted(self):
+        from PIL import Image
+        stream = io.BytesIO()
+        Image.new("RGBA", (64, 64), "blue").save(stream, "ICO")
+        chat = self.service.create_chat("boss")["id"]
+        source = self.service.documents.save(chat, "favicon.ico", stream.getvalue(), protected=True)
+        def behavior(args, payload):
+            self.assertFalse(any(item["type"] == "image" for item in args["input"]))
+            result = args["tool_handler"]("ttk_document_convert", {"query": json.dumps({"id":source["id"],"format":"jpeg","width":450,"height":450})})
+            self.assertIn("document", json.loads(result[0]["text"]))
+            return {"kind":"answer","answer":"Готово","sources":[]}
+        with patch("app.gpt_images.local_ocr", side_effect=ValueError("no text")):
+            _chat, reply = self.request("boss", "Конвертируй иконку в JPEG 450x450", behavior, chat)
+        self.assertEqual(reply["status"], "completed")

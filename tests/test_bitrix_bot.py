@@ -418,6 +418,54 @@ class BitrixBotTest(unittest.TestCase):
         self.assertEqual(self.submit.call_count, 1)
         self.assertEqual(self.con.execute('SELECT count(*) FROM gpt_documents').fetchone()[0], 1)
 
+    def test_restart_recovers_normalized_office_blob_before_normalizing_again(self):
+        from docx import Document
+        self.activate()
+        source = b'<p>Attached text</p>'
+        values = {66: ('notes.html', source)}
+        self.files(values)
+        outputs = []
+        for metadata in ('first normalization', 'second normalization'):
+            document = Document()
+            document.add_paragraph('Attached text')
+            document.core_properties.keywords = metadata
+            output = io.BytesIO()
+            document.save(output)
+            outputs.append(('notes.docx', output.getvalue()))
+        original_upload = self.gpt.document_upload
+
+        def crash_after_upload(*args, **kwargs):
+            original_upload(*args, **kwargs)
+            raise SystemExit('simulated process loss')
+
+        with mock.patch('app.gpt_office.normalize', side_effect=outputs) as normalize:
+            with mock.patch.object(self.gpt, 'document_upload', side_effect=crash_after_upload):
+                with self.assertRaises(SystemExit):
+                    self.feed(self.attach(event(text='Прочитай файл'), 66))
+            self.bot = self.Bot(self.con, self.config, self.api, lambda: self.gpt)
+            self.files(values)
+            with mock.patch.object(self.gpt, 'document_upload', wraps=original_upload) as upload:
+                self.bot.tick()
+                upload.assert_not_called()
+            self.assertEqual(normalize.call_count, 1)
+        self.assertEqual(self.submit.call_count, 1)
+        documents = self.con.execute('SELECT content FROM gpt_documents').fetchall()
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]['content'], outputs[0][1])
+
+    def test_import_source_hash_migration_preserves_existing_journal(self):
+        self.con.execute('DROP TABLE bitrix_bot_imports')
+        self.con.execute('''CREATE TABLE bitrix_bot_imports (
+            job_id INTEGER NOT NULL, file_id INTEGER NOT NULL, chat_id TEXT NOT NULL,
+            document_id TEXT, name TEXT NOT NULL, content_hash TEXT NOT NULL,
+            baseline TEXT NOT NULL, PRIMARY KEY(job_id,file_id))''')
+        self.con.execute("INSERT INTO bitrix_bot_imports VALUES (1,66,'chat',NULL,'notes.txt','digest','[]')")
+        self.Bot(self.con, self.config, self.api, lambda: self.gpt)
+        saved = self.con.execute('SELECT * FROM bitrix_bot_imports').fetchone()
+        self.assertEqual(saved['name'], 'notes.txt')
+        self.assertEqual(saved['content_hash'], 'digest')
+        self.assertEqual(saved['source_hash'], '')
+
     def test_attachment_network_download_does_not_hold_database_lock_and_rechecks_owner(self):
         from app.common import db_lock
         self.activate()

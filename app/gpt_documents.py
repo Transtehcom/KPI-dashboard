@@ -15,7 +15,7 @@ from .gpt_privacy import DOCUMENT_TITLE
 
 TOOLS = ["document_list", "document_read", "document_edit", "document_convert"]
 MAX_BYTES = 3 * 1024 * 1024
-FORMATS = {".docx", ".xlsx", ".txt", ".md", ".csv", ".pdf"}
+FORMATS = {".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".rtf", ".odt", ".ods", ".odp", ".txt", ".md", ".csv", ".tsv", ".html", ".htm", ".pdf"}
 
 
 def extension(name):
@@ -64,7 +64,7 @@ def paragraphs(document):
     return out
 
 
-def load(name, raw):
+def load(name, raw, allow_scan=False):
     """Return editable object and stable text units. PDF is read-only."""
     suffix = extension(name)
     try:
@@ -94,6 +94,20 @@ def load(name, raw):
                             semantic = "secret" if own_kind == "secret" else ""
                         units.append({"id": sheet.title + "!" + cell.coordinate, "text": str(cell.value),
                                       "semantic": semantic, "numeric": isinstance(cell.value, (int, float))})
+        elif suffix == ".pptx":
+            from defusedxml import ElementTree
+            office_archive(raw)
+            units = []
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                names = sorted((n for n in archive.namelist() if re.fullmatch(r"ppt/slides/slide[0-9]+\.xml", n)),
+                               key=lambda n: int(re.search(r"slide([0-9]+)", n)[1]))
+                if not names or len(names) > 200:
+                    raise ValueError("Поддерживаются презентации до 200 слайдов")
+                for index, name in enumerate(names, 1):
+                    tree = ElementTree.fromstring(archive.read(name))
+                    text = "\n".join(node.text or "" for node in tree.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}t"))
+                    units.append({"id": f"slide:{index}", "text": text})
+            obj = None
         elif suffix == ".pdf":
             from pypdf import PdfReader
             obj = PdfReader(io.BytesIO(raw))
@@ -104,7 +118,7 @@ def load(name, raw):
                 text = page.extract_text() or ""
                 for start in range(0, len(text), 4000):
                     units.append({"id": f"page:{i}:{start // 4000 + 1}", "text": text[start:start + 4000]})
-            if not units:
+            if not units and not allow_scan:
                 raise ValueError("В PDF нет текстового слоя. Для скана потребуется распознавание текста")
         else:
             try:
@@ -116,7 +130,7 @@ def load(name, raw):
                 raise ValueError("Файл не является текстовым")
             obj = (text.splitlines(keepends=True) or [""], encoding)
             units = [{"id": f"line:{i}", "text": line.rstrip("\r\n")} for i, line in enumerate(obj[0], 1)]
-            if suffix == ".csv":
+            if suffix in (".csv", ".tsv"):
                 try:
                     dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
                 except csv.Error:
@@ -167,8 +181,8 @@ def replace_text(current, old, new):
 
 def edit(name, raw, changes):
     suffix = extension(name)
-    if suffix == ".pdf":
-        raise ValueError("PDF доступен только для чтения. Для правок загрузите DOCX или текст")
+    if suffix in (".pdf", ".pptx"):
+        raise ValueError("PDF и PPTX доступны только для чтения и преобразования. Для правок загрузите DOCX или текст")
     obj, units = load(name, raw)
     known = {u["id"]: u["text"] for u in units}
     original_paragraphs = paragraphs(obj) if suffix == ".docx" else []
@@ -212,7 +226,7 @@ def edit(name, raw, changes):
         if unit not in known:
             raise ValueError("Неизвестный блок документа. Сначала прочитайте document_read")
         current = known[unit]
-        if suffix == ".csv" and isinstance(old, str) and old and current.count(old) != 1:
+        if suffix in (".csv", ".tsv") and isinstance(old, str) and old and current.count(old) != 1:
             dialect = units[int(unit.split(":")[1]) - 1]["dialect"]
             try:
                 expected = list(csv.reader(io.StringIO(old), dialect, strict=True))
@@ -264,7 +278,7 @@ class Documents:
             rows = self.con.execute("SELECT d.id,d.name,d.created,d.parent_id,d.unit_count,length(d.content) AS size,i.mime,i.width,i.height,max(coalesce(p.protected,0),coalesce(i.protected,0)) AS protected FROM gpt_documents d LEFT JOIN gpt_image_metadata i ON i.document_id=d.id LEFT JOIN gpt_document_protection p ON p.document_id=d.id WHERE d.chat_id=? ORDER BY d.created,d.rowid", (chat,)).fetchall()
         return [{**dict(r), "is_image": bool(r["mime"]), "protected": bool(r["protected"] or DOCUMENT_TITLE.search(r["name"])),
                  "protection_forced": bool(DOCUMENT_TITLE.search(r["name"])),
-                 "editable": not r["mime"] and extension(r["name"]) != ".pdf"} for r in rows]
+                 "editable": not r["mime"] and extension(r["name"]) not in (".pdf", ".pptx")} for r in rows]
 
     def history(self, chat):
         with db_lock():
@@ -290,7 +304,7 @@ class Documents:
         else:
             if not raw or len(raw) > MAX_BYTES:
                 raise ValueError("Размер документа должен быть от 1 байта до 3 МБ")
-            _obj, units = load(name, raw)
+            _obj, units = load(name, raw, allow_scan=bool(parent))
         identity, created = uuid.uuid4().hex, dt.datetime.now().isoformat(timespec="microseconds")
         with db_lock():
             if guard:
@@ -308,7 +322,7 @@ class Documents:
             self.con.commit()
         return {"id": identity, "name": name, "created": created, "parent_id": parent, "unit_count": len(units), "size": len(raw),
                 "is_image": bool(image), "protected": bool(protected), "protection_forced": bool(DOCUMENT_TITLE.search(name)),
-                "editable": not image and extension(name) != ".pdf", **(image or {})}
+                "editable": not image and extension(name) not in (".pdf", ".pptx"), **(image or {})}
 
     def upload(self, chat, name, encoded, protected=False):
         if type(protected) is not bool:
@@ -317,7 +331,7 @@ class Documents:
             raise ValueError("Укажите имя файла без пути, до 180 символов")
         name = name.strip()
         if extension(name) not in FORMATS | gpt_images.FORMATS:
-            raise ValueError("Поддерживаются DOCX, XLSX, TXT, MD, CSV, PDF, PNG, JPEG и WebP")
+            raise ValueError("Поддерживаются обычные офисные документы, PDF, текстовые файлы и изображения")
         limit = gpt_images.MAX_BYTES if extension(name) in gpt_images.FORMATS else MAX_BYTES
         if not isinstance(encoded, str) or len(encoded) > 4 * limit // 3 + 4:
             raise ValueError("Файл превышает 10 МБ для изображения или 3 МБ для документа")
@@ -325,6 +339,9 @@ class Documents:
             raw = base64.b64decode(encoded, validate=True)
         except ValueError:
             raise ValueError("Некорректные данные файла") from None
+        if extension(name) in {".doc", ".xls", ".ppt", ".rtf", ".odt", ".ods", ".odp", ".html", ".htm"}:
+            from .gpt_office import normalize
+            name, raw = normalize(name, raw)
         return self.save(chat, name, raw, protected=protected)
 
     def set_protection(self, chat, identity, protected):
@@ -360,7 +377,7 @@ class Documents:
                         masked.append(privacy.mask(line))
                     pending = own_kind if len(line) < 90 and not re.search(r"\d", line) else ""
                 return [{"type": "inputText", "text": "Локально распознанный документ\n" + "\n".join(masked)}]
-            raw, metadata = gpt_images.normalize(row["content"])
+            raw, metadata = gpt_images.rasterize(row["content"])
             return [{"type": "inputImage", "imageUrl": "data:" + metadata["mime"] + ";base64," + base64.b64encode(raw).decode("ascii")}]
 
     def delete(self, chat, identity):
@@ -377,14 +394,24 @@ class Documents:
         row = self.get(chat, identity)
         return row["name"], row["content"]
 
-    def convert(self, chat, row, target_format, guard=None):
-        image = extension(row["name"]) in gpt_images.FORMATS and target_format in ("jpg", "jpeg")
-        if not image and (extension(row["name"]) != ".pdf" or target_format != "docx"):
-            raise ValueError("Поддерживаются PDF в DOCX (format=docx) и изображения в JPEG (format=jpeg)")
+    def convert(self, chat, row, target_format, guard=None, width=None, height=None):
+        from . import gpt_office
+        if not isinstance(target_format, str):
+            raise ValueError("Укажите целевой формат файла")
+        target_format = target_format.lower().lstrip(".")
+        image = extension(row["name"]) in gpt_images.FORMATS
+        if image and target_format not in gpt_images.OUTPUTS:
+            raise ValueError("Для изображений доступны JPEG, PNG, WebP, BMP, TIFF, GIF, ICO и PDF")
+        resize = gpt_images.resize_suffix(width, height)
+        if not image and resize:
+            raise ValueError("Ширина и высота доступны для изображений")
+        if target_format not in {*gpt_images.OUTPUTS, "docx", "xlsx", "pptx", "txt"}:
+            raise ValueError("Этот целевой формат пока не поддерживается")
         limit = gpt_images.MAX_BYTES if image else MAX_BYTES
         if not row["content"] or len(row["content"]) > limit:
             raise ValueError("Размер файла должен быть от 1 байта до " + ("10 МБ" if image else "3 МБ"))
-        name = PurePath(row["name"]).stem[:175] + (".jpg" if image else ".docx")
+        suffix = ".jpg" if target_format == "jpeg" else "." + target_format
+        name = PurePath(row["name"]).stem[:180-len(resize)-len(suffix)] + resize + suffix
         with db_lock():
             if guard:
                 guard()
@@ -397,10 +424,26 @@ class Documents:
                 return existing
         # Revalidate legacy rows before the layout-aware converter sees their content.
         if image:
-            raw = gpt_images.to_jpeg(row["content"])
-        else:
+            raw = gpt_images.convert(row["content"], target_format, width, height)
+        elif extension(row["name"]) == ".pdf" and target_format == "docx":
             load(row["name"], row["content"])
             raw = pdf_word.convert(row["content"], MAX_BYTES)
+        elif target_format == "txt":
+            _obj, units = load(row["name"], row["content"])
+            raw = "\n".join(unit["text"] for unit in units).encode("utf-8")
+        elif target_format in ("docx", "pdf") and extension(row["name"]) in (".txt", ".md", ".csv", ".tsv"):
+            from docx import Document
+            _obj, units = load(row["name"], row["content"])
+            document = Document()
+            for unit in units:
+                document.add_paragraph(unit["text"])
+            output = io.BytesIO()
+            document.save(output)
+            raw = output.getvalue()
+            if target_format == "pdf":
+                raw = gpt_office.convert("source.docx", raw, "pdf", MAX_BYTES)
+        else:
+            raw = gpt_office.convert(row["name"], row["content"], target_format, MAX_BYTES)
         with db_lock():
             if guard:
                 guard()
@@ -431,7 +474,8 @@ class Documents:
             raise ValueError("Правка изображений недоступна")
         with privacy.document(row["name"], force=row["protected"]):
             if tool == "document_convert":
-                result = self.convert(chat, row, query.get("format"), guard=guard)
+                result = self.convert(chat, row, query.get("format"), guard=guard,
+                                      width=query.get("width"), height=query.get("height"))
                 return {"document": {**result, "name": privacy.register("ДОКУМЕНТ", result["name"])},
                         "format": extension(result["name"]).lstrip("."), "note": "Создан преобразованный файл. Исходный файл сохранён"}
             if tool == "document_read":
@@ -483,7 +527,7 @@ class Documents:
                 sid = privacy.source("document:" + row["id"], row["name"], None, "Документ чата")
                 return {"id": row["id"], "name": privacy.register("ДОКУМЕНТ", row["name"]), "units": selected,
                         "total_units": len(units), "next_offset": next_offset if next_offset < len(units) else None,
-                        "editable": extension(row["name"]) != ".pdf", "source": sid}
+                        "editable": extension(row["name"]) not in (".pdf", ".pptx"), "source": sid}
             if tool != "document_edit":
                 raise ValueError("Неизвестная операция с документом")
             changes = privacy.restore(query.get("changes"))

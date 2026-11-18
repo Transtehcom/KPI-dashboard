@@ -130,6 +130,14 @@ def _file_extension(prefix, content_type):
         return ".jpg"
     if prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
         return ".webp"
+    if prefix.startswith(b"\x00\x00\x01\x00"):
+        return ".ico"
+    if prefix.startswith(b"BM"):
+        return ".bmp"
+    if prefix.startswith((b"II*\x00", b"MM\x00*")):
+        return ".tif"
+    if prefix.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
     return {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}.get(content_type, "")
 
 

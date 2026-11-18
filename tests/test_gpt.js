@@ -20,6 +20,10 @@ assert.match(files,/data-gpt-delete="doc1"/);
 assert.match(ctx.gptDocumentsHtml([{id:'doc1',name:'file.txt',size:1}],true),/data-gpt-delete="doc1"[^>]*disabled/);
 assert.ok(html.includes('/api/gpt-document-delete'));
 assert.ok(html.includes('id="gptFiles"'));
+const imageExtensions = ['png','jpg','jpeg','webp','ico','bmp','tif','tiff','gif','avif','heic','heif','svg'];
+const documentExtensions = ['pdf','docx','doc','rtf','odt','xlsx','xls','ods','pptx','ppt','odp','txt','md','csv','tsv','html','htm'];
+const acceptedExtensions = html.match(/id="gptFiles" multiple accept="([^"]+)"/)[1].split(',');
+assert.deepEqual(acceptedExtensions.slice().sort(), [...imageExtensions,...documentExtensions].map(ext=>'.'+ext).sort());
 assert.ok(html.includes('/api/gpt-upload'));
 assert.ok(html.includes('link.download = file.name'));
 const grouped = ctx.gptChatListHtml([{id:'1',title:'<draft>',group_name:'Продажи'},{id:'2',title:'Работа',group_name:''}], '1');
@@ -85,10 +89,29 @@ async function attachmentEvents() {
   await new Promise(setImmediate);
   assert.equal(prevented,true);
   assert.equal(uploads.length,3);
+  for (const extension of imageExtensions) {
+    const image = {...file,name:'image.'+extension.toUpperCase(),size:10 * 1024 * 1024};
+    const before = uploads.length;
+    await nodes.gptFiles.handlers.change({target:{files:[image]}});
+    assert.equal(uploads.length,before+1,extension+' accepts the image size limit');
+    await nodes.gptFiles.handlers.change({target:{files:[{...image,size:image.size+1}]}});
+    assert.equal(uploads.length,before+1,extension+' rejects oversized images');
+    assert.match(nodes.gptError.textContent,/10 МБ/);
+  }
+  for (const extension of documentExtensions) {
+    const document = {...file,name:'document.'+extension,size:3 * 1024 * 1024};
+    const before = uploads.length;
+    await nodes.gptFiles.handlers.change({target:{files:[document]}});
+    assert.equal(uploads.length,before+1,extension+' accepts the document size limit');
+    await nodes.gptFiles.handlers.change({target:{files:[{...document,size:document.size+1}]}});
+    assert.equal(uploads.length,before+1,extension+' rejects oversized documents');
+    assert.match(nodes.gptError.textContent,/3 МБ/);
+  }
+  const uploadedBeforeLock = uploads.length;
   nodes.gptFiles.disabled = true;
   nodes.gptForm.handlers.drop({dataTransfer:{files:[file]},preventDefault(){}});
   await new Promise(setImmediate);
-  assert.equal(uploads.length,3,'busy chats cannot ingest dropped files');
+  assert.equal(uploads.length,uploadedBeforeLock,'busy chats cannot ingest dropped files');
   context.state.gptPreviewUrls = {image:'blob:image'};
   context.gptReleasePreviews();
   assert.deepEqual(revoked,['blob:image']);

@@ -97,12 +97,16 @@ class BitrixBot:
                 CREATE TABLE IF NOT EXISTS bitrix_bot_imports (
                     job_id INTEGER NOT NULL, file_id INTEGER NOT NULL, chat_id TEXT NOT NULL,
                     document_id TEXT, name TEXT NOT NULL, content_hash TEXT NOT NULL,
-                    baseline TEXT NOT NULL, PRIMARY KEY(job_id,file_id));
+                    baseline TEXT NOT NULL, source_hash TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(job_id,file_id));
             ''')
             columns = {row[1] for row in con.execute('PRAGMA table_info(bitrix_bot_jobs)')}
             for name, declaration in (('attachments', "TEXT NOT NULL DEFAULT '[]'"), ('document_baseline', 'TEXT')):
                 if name not in columns:
                     con.execute('ALTER TABLE bitrix_bot_jobs ADD COLUMN ' + name + ' ' + declaration)
+            import_columns = {row[1] for row in con.execute('PRAGMA table_info(bitrix_bot_imports)')}
+            if 'source_hash' not in import_columns:
+                con.execute("ALTER TABLE bitrix_bot_imports ADD COLUMN source_hash TEXT NOT NULL DEFAULT ''")
             con.execute("UPDATE bitrix_bot_jobs SET state='uncertain',error=? WHERE state='sending'", (DELIVERY_UNKNOWN,))
             pending = [dict(row) for row in con.execute("SELECT * FROM bitrix_bot_jobs WHERE state='submitting'")]
             for job in pending:
@@ -428,6 +432,27 @@ class BitrixBot:
             try:
                 # The OAuth download can wait on the network. It runs outside db_lock().
                 name, raw = self.files.download(job['bot_id'], job['dialog_id'], reference)
+                source_hash = hashlib.sha256(raw).hexdigest()
+                if saved and saved['chat_id'] == job['chat_id'] and saved['source_hash'] == source_hash:
+                    with db_lock():
+                        if self._owner(job['user_id']) != job['owner']:
+                            self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                            return False
+                        service.check_chat(job['owner'], job['chat_id'])
+                        previous = set(json.loads(saved['baseline']))
+                        candidates = self.con.execute('''SELECT id,content FROM gpt_documents
+                            WHERE chat_id=? AND name=? AND parent_id IS NULL ORDER BY rowid''',
+                            (job['chat_id'], saved['name'])).fetchall()
+                        recovered = next((row['id'] for row in candidates if row['id'] not in previous
+                                          and hashlib.sha256(row['content']).hexdigest() == saved['content_hash']), None)
+                        if recovered:
+                            self.con.execute('UPDATE bitrix_bot_imports SET document_id=? WHERE job_id=? AND file_id=?',
+                                             (recovered, job['id'], reference['id']))
+                            self.con.commit()
+                            continue
+                if name.lower().endswith(('.doc', '.xls', '.ppt', '.rtf', '.odt', '.ods', '.odp', '.html', '.htm')):
+                    from .gpt_office import normalize
+                    name, raw = normalize(name, raw)
                 from .gpt_images import FORMATS, normalize
                 expected = normalize(raw)[0] if name.lower().endswith(tuple(FORMATS)) else raw
                 digest = hashlib.sha256(expected).hexdigest()
@@ -448,8 +473,10 @@ class BitrixBot:
                                              (recovered, job['id'], reference['id']))
                             self.con.commit()
                             continue
-                    self.con.execute('INSERT OR REPLACE INTO bitrix_bot_imports VALUES (?,?,?,NULL,?,?,?)',
-                                     (job['id'], reference['id'], job['chat_id'], name, digest, json.dumps(baseline)))
+                    self.con.execute('''INSERT OR REPLACE INTO bitrix_bot_imports
+                        (job_id,file_id,chat_id,document_id,name,content_hash,baseline,source_hash)
+                        VALUES (?,?,?,NULL,?,?,?,?)''',
+                        (job['id'], reference['id'], job['chat_id'], name, digest, json.dumps(baseline), source_hash))
                     self.con.commit()
                 document = service.document_upload(job['owner'], job['chat_id'], name,
                                                    base64.b64encode(raw).decode('ascii'), protected=True)
@@ -461,9 +488,10 @@ class BitrixBot:
                     self.con.execute('UPDATE bitrix_bot_imports SET document_id=? WHERE job_id=? AND file_id=?',
                                      (document['id'], job['id'], reference['id']))
                     self.con.commit()
-            except Exception:
+            except Exception as error:
                 label = _plain(reference.get('name') or 'вложение')[:120]
-                self._ready(job, 'Не удалось загрузить файл «' + label + '». Прикрепите его повторно. Запрос ещё не обработан.')
+                detail = _plain(str(error))[:250] + '. ' if isinstance(error, ValueError) else ''
+                self._ready(job, 'Не удалось загрузить файл «' + label + '». ' + detail + 'Прикрепите его повторно. Запрос ещё не обработан.')
                 return False
         return True
 

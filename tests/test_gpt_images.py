@@ -53,6 +53,31 @@ class ImageAttachmentTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.docs.tool("document_convert", "other", query, self.privacy)
 
+    def test_common_image_formats_and_requested_sizes(self):
+        for fmt, suffix in (("ICO", "ico"), ("BMP", "bmp"), ("TIFF", "tif"), ("GIF", "gif"), ("AVIF", "avif"), ("HEIF", "heic")):
+            with self.subTest(fmt=fmt):
+                original = self.upload("icon." + suffix, raw=self.image(fmt, (64, 64)))
+                query = {"id": original["id"], "format": "jpeg", "width": 450, "height": 450}
+                result = self.docs.tool("document_convert", "chat", query, self.privacy)
+                with Image.open(io.BytesIO(self.docs.get("chat", result["document"]["id"])["content"])) as image:
+                    self.assertEqual(image.format, "JPEG")
+                    self.assertEqual(image.size, (450, 450))
+                resized = self.docs.tool("document_convert", "chat", {**query, "width": 200}, self.privacy)
+                self.assertNotEqual(result["document"]["id"], resized["document"]["id"])
+        for width in (True, 0, -1, 100000, "450"):
+            with self.assertRaises(ValueError):
+                self.docs.tool("document_convert", "chat", {**query, "width": width}, self.privacy)
+
+    def test_svg_is_rasterized_locally_and_external_resources_are_rejected(self):
+        raw = b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>'
+        original = self.upload("icon.svg", raw=raw)
+        result = self.docs.tool("document_convert", "chat", {"id": original["id"], "format": "jpeg"}, self.privacy)
+        with Image.open(io.BytesIO(self.docs.get("chat", result["document"]["id"])["content"])) as image:
+            self.assertEqual(image.size, (64, 64))
+        for href in ('file:///C:/secret.png', 'https://example.com/private.png'):
+            with self.assertRaises(ValueError):
+                self.upload('bad.svg', raw=f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><image href="{href}"/></svg>'.encode())
+
     def test_convert_transparent_image_to_jpeg_uses_white_background_and_checks_guard(self):
         stream = io.BytesIO()
         image = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
@@ -76,7 +101,7 @@ class ImageAttachmentTest(unittest.TestCase):
         raw = base64.b64decode(items[0]["imageUrl"].split(",", 1)[1])
         self.assertNotIn(b"secret metadata", raw)
         self.assertEqual(Image.open(io.BytesIO(raw)).format, "PNG")
-        for raw in (b"not image", self.image("GIF"), self.image(size=(5000, 4001))):
+        for raw in (b"not image", b"%!PS-Adobe-3.0", self.image(size=(5000, 4001))):
             with self.assertRaises(ValueError):
                 self.upload(raw=raw)
         with self.assertRaises(ValueError):

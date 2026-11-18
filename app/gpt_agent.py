@@ -247,7 +247,10 @@ def run(service, jid, mid):
                     continue
                 check_access()
                 progress("Подготавливаю изображение…")
-                content = service.documents.image_read(jid, document["id"], privacy)
+                try:
+                    content = service.documents.image_read(jid, document["id"], privacy)
+                except ValueError:
+                    content = [{"type": "inputText", "text": "Локальное чтение изображения недоступно. Преобразование файла доступно через document_convert. Не делай выводов о содержимом без успешного чтения."}]
                 check_access()
                 attachments.append({"type": "text", "text": "Вложение " + document["name"]})
                 for item in content:

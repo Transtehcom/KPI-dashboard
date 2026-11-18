@@ -307,12 +307,30 @@ class DocumentTest(unittest.TestCase):
         pdf = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
         text = self.upload("attachment.txt", b"text")
         for chat, query in (("other", {"id": pdf["id"], "format": "docx"}),
-                            ("chat", {"id": text["id"], "format": "docx"}),
+                            ("chat", {"id": text["id"], "format": "xlsx"}),
                             ("chat", {"id": pdf["id"], "format": "exe"}),
                             ("chat", {"id": pdf["id"]})):
             with self.subTest(chat=chat, query=query), self.assertRaises(ValueError):
                 self.docs.tool("document_convert", chat, query, self.privacy)
         self.assertEqual(len(self.docs.listing("chat")), 2)
+
+    def test_presentation_text_and_html_use_chat_scoped_document_entrypoints(self):
+        import zipfile
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr('ppt/slides/slide1.xml', '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>Slide text</a:t></p:sld>')
+        presentation = self.upload('slides.pptx', stream.getvalue())
+        result = self.docs.tool('document_read', 'chat', {'id':presentation['id']}, self.privacy)
+        self.assertEqual(result['units'][0]['text'], 'Slide text')
+        self.assertFalse(result['editable'])
+        converted = self.docs.tool('document_convert', 'chat', {'id':presentation['id'],'format':'txt'}, self.privacy)
+        self.assertEqual(self.docs.download('chat',converted['document']['id'])[1], b'Slide text')
+        html = self.upload('example.html', b'<p>Visible</p><script>hidden</script>')
+        self.assertTrue(html['name'].endswith('.docx'))
+        result = self.docs.tool('document_read', 'chat', {'id':html['id']}, self.privacy)
+        text = json.dumps(result)
+        self.assertIn('Visible', text)
+        self.assertNotIn('hidden', text)
 
     def test_pdf_conversion_revalidates_stored_scan_encryption_size_and_pages(self):
         from pypdf import PdfReader, PdfWriter
