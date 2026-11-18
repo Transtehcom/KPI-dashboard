@@ -58,6 +58,26 @@ class AccessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             tools.execute("calendar", '{"user_id":"99"}', "", "2026-11", self.p)
 
+    def test_call_transcripts_are_anonymized_in_document_only_chat_mode(self):
+        for employee in self.config['employees']:
+            if employee['login'] == 'pm':
+                employee.update(name='Мария Мельникова', onec_manager='Мария Мельникова')
+        self.con.execute("INSERT INTO clients(id,emp,name) VALUES ('co1','pm','Нытвинский маслозавод, ООО')")
+        self.con.execute("INSERT INTO call_records(id,emp,dt,client) VALUES ('own','pm','2026-11-18','Нытвинский маслозавод, ООО')")
+        text = 'Мария Мельникова, Нытвинский маслозавод. Напишите на client@example.ru, цена 280 тысяч.'
+        self.con.execute("INSERT INTO call_transcripts(id,segments) VALUES (?,?)", ('own', json.dumps([[0, 20, text]])))
+        tools = self.tools('pm')
+        tools.seed(self.p)
+        result = tools.execute('call_detail', 'own', '', '2026-11', self.p)
+        outbound = json.dumps(result, ensure_ascii=False)
+        for secret in ['Мария', 'Мельникова', 'Нытвинский', 'client@example.ru']:
+            self.assertNotIn(secret, outbound)
+        restored = self.p.restore(result)
+        transcript = ' '.join(line[1] for line in restored['calls'][0]['sentences'])
+        self.assertIn('Мария Мельникова', transcript)
+        self.assertIn('Нытвинский', transcript)
+        self.assertIn('280 тысяч', transcript)
+
     def test_b24_filter_is_forced_and_foreign_card_is_blocked(self):
         tools = self.tools("pm")
         tools.live.b24 = Mock()

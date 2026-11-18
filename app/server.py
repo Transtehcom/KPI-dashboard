@@ -39,7 +39,7 @@ ASSET_TYPES = {".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-ico
                ".js": "text/javascript; charset=utf-8"}
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 PLAN_METRICS = {"gross_profit", "revenue"}
-BITRIX_APP_PATHS = {"/bitrix24/ttkgpt/", "/bitrix24/ttkgpt/install"}
+BITRIX_APP_PATHS = {"/bitrix24/ttkgpt/", "/bitrix24/ttkgpt/install", "/bitrix24/ttkgpt/activate"}
 # защита от подбора пароля: не больше LOGIN_MAX_FAILS неудачных попыток за LOGIN_WINDOW секунд
 LOGIN_MAX_FAILS = 10
 LOGIN_WINDOW = 15 * 60
@@ -107,8 +107,15 @@ class App:
         from .bitrix_app import BitrixApp
         with self.lock:
             if not hasattr(self, "_bitrix_app"):
-                self._bitrix_app = BitrixApp(self.con, self.config)
+                self._bitrix_app = BitrixApp(self.con, self.config, bot_factory=self.bitrix_bot_service)
             return self._bitrix_app
+
+    def bitrix_bot_service(self):
+        from .bitrix_bot import BitrixBot
+        with self.lock:
+            if not hasattr(self, "_bitrix_bot"):
+                self._bitrix_bot = BitrixBot(self.con, self.config, self.bitrix_app_service(), self.gpt_service)
+            return self._bitrix_bot
 
     def login_blocked(self, key):
         now = time.monotonic()
@@ -583,7 +590,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
                          "script-src 'unsafe-inline' https://api.bitrix24.tech; base-uri 'none'; "
-                         "form-action 'none'; frame-ancestors " + ancestors)
+                         "form-action 'self'; frame-ancestors " + ancestors)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1377,10 +1384,16 @@ def serve():
         return
     app.gpt_service()  # восстановить прерванные чаты только после успешной привязки порта
     app.processing_jobs().start()
+    bot = app.bitrix_bot_service()
+    bot.start()
     sync.start_scheduler(app.con, cfg)  # только процесс, успешно занявший порт, запускает автообновления
     url = f"http://localhost:{port}"
     print(f"Дашборд KPI работает: {url}  (Ctrl+C или закрытие окна — остановить)")
     if cfg.get("server", {}).get("open_browser", True):
         import webbrowser
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        bot.stop()
+        httpd.server_close()

@@ -268,6 +268,10 @@ class DataTools:
                 result = {key: latest.get(key) for key in ("started", "finished", "status")} if latest else {"status": "Нет синхронизаций"}
                 result["source"] = privacy.source("sync", "Статус обновления данных", None)
         # All identifiers and known employee logins are replaced before general text masking.
+        if tool in ("calls", "call_detail"):
+            with privacy.document("Расшифровки звонков", force=True):
+                self.seed(privacy)
+                return self.protect(result, privacy)
         return self.protect(result, privacy)
 
     def protect(self, value, privacy):

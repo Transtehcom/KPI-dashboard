@@ -89,3 +89,13 @@ class BitrixAppHTTPTest(unittest.TestCase):
     def test_normal_dashboard_api_still_requires_its_session(self):
         status, _, _ = self.request('/api/gpt-chats')
         self.assertEqual(status, 401)
+
+    def test_activation_route_rejects_forged_ticket_without_dashboard_cookie(self):
+        self.app.config['bitrix_app'] = {'client_id': 'local.test'}
+        try:
+            status, _, result = self.request('/bitrix24/ttkgpt/activate', b'ticket=forged',
+                                             {'Content-Type': 'application/x-www-form-urlencoded'})
+            self.assertEqual(status, 403)
+            self.assertNotIn('Set-Cookie', result)
+        finally:
+            self.app.config.pop('bitrix_app', None)
