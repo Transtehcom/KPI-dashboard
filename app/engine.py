@@ -637,7 +637,7 @@ class Engine:
         result_calls, call_funnel, plain_calls = self._result_calls(emp, ctx, p.get("require_lpr", True),
                                                                     p.get("one_call_per_contact_day", False))
         followup_summary = self.call_followup_summary(emp, ctx, result_calls, p.get("one_call_per_contact_day", False))
-        meetings, _ = self._meetings(emp, ctx)
+        meetings, _ = self._meetings(emp, ctx, need_protocol=True)
         comps, extra = [], []
         if "touches" in p:
             t = p["touches"].get(ctx["month"], p["touches"]["default"])

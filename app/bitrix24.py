@@ -429,7 +429,7 @@ class Bitrix24:
                          "call_started_at": activity_datetime(c.get("CALL_START_DATE")).isoformat(),
                          "crm_activity_id": str(c.get("CRM_ACTIVITY_ID") or "") or None})
         out["call_records"] = records
-        meeting_files = self._meeting_calendar_files(df)
+        meeting_calendar = self._meeting_calendar_files(df, include_description=True)
         for a in acts:
             if not is_meeting(a, self.cfg):
                 continue
@@ -440,13 +440,19 @@ class Bitrix24:
             is_lpr, _, client = entity_info(etype, a["OWNER_ID"])
             if etype not in ("CONTACT", "LEAD"):
                 is_lpr = 1  # встреча по сделке или компании
-            files = a.get("STORAGE_ELEMENT_IDS") or a.get("FILES") or \
-                meeting_files(a.get("RESPONSIBLE_ID"), a.get("SUBJECT"), str(a.get("START_TIME") or "")[:10])
+            files = a.get("STORAGE_ELEMENT_IDS") or a.get("FILES")
+            description = str(a.get("DESCRIPTION") or "").strip()
+            calendar = {}
+            if not files or len(description) < 20:
+                calendar = meeting_calendar(a.get("RESPONSIBLE_ID"), a.get("SUBJECT"), str(a.get("START_TIME") or "")[:10]) or {}
+            files = files or calendar.get("UF_WEBDAV_CAL_EVENT")
+            if len(description) < 20:
+                description = str(calendar.get("DESCRIPTION") or description).strip()
             done = a.get("COMPLETED") == "Y"
             rows.append({"id": "act" + str(a["ID"]), "emp": login, "dt": self.iso(a.get("START_TIME")), "kind": "meeting",
                          "direction": "out", "duration": 0, "is_lpr": is_lpr, "secretary": 0, "next_step": 1,
                          "status": "done" if done else "planned", "has_protocol": int(bool(files)),
-                         "has_summary": int(len((a.get("DESCRIPTION") or "").strip()) >= 20),
+                         "has_summary": int(len(description) >= 20),
                          # точной даты закрытия дела в REST нет — берём дату последнего изменения
                          "closed_dt": self.iso(a.get("LAST_UPDATED")) if done else None,
                          "subject": a.get("SUBJECT"), "client": client,
@@ -734,7 +740,7 @@ class Bitrix24:
                 "price": float(d.get("OPPORTUNITY") or 0), "planned_cost": None, "actual_cost": None})
         return rows
 
-    def _meeting_calendar_files(self, date_from):
+    def _meeting_calendar_files(self, date_from, include_description=False):
         """Файлы встречи, прикреплённые к её событию в календаре (у дела с участниками Б24 создаёт событие,
         и протокол часто прикладывают туда; REST дела эти файлы не отдаёт).
         Событие ищется в календаре ответственного по теме и дате, файлы берутся у исходного события (PARENT_ID)."""
@@ -767,8 +773,9 @@ class Bitrix24:
                     ev = self.call("calendar.event.getbyid", {"id": parent}).get("result") or {}
                 except B24Error:
                     ev = {}
-                parents[parent] = ev.get("UF_WEBDAV_CAL_EVENT") or None
-            return parents[parent]
+                parents[parent] = ev
+            event = parents[parent]
+            return event if include_description else event.get("UF_WEBDAV_CAL_EVENT") or None
         return files
 
     def resolve_field(self, method, code, label):

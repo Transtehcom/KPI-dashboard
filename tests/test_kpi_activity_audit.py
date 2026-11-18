@@ -116,12 +116,18 @@ class KPIActivityAuditTest(unittest.TestCase):
         self.assertEqual(self.states(self.row(r, "m5"))["same_day_close"], "fail")
         self.assertEqual(sum(x["counted"] is True for x in r["records"]), r["fact"])
 
-    def test_tender_meetings_do_not_invent_protocol_requirements(self):
-        self.put("activities", [{"id": "m", "emp": "tender", "kind": "meeting", "dt": "2026-10-05",
-                                 "status": "done", "has_protocol": 0, "has_summary": 0, "is_lpr": 0}])
+    def test_tender_meetings_require_protocol_and_summary(self):
+        base = {"emp": "tender", "kind": "meeting", "dt": "2026-10-05", "status": "done",
+                "has_protocol": 1, "has_summary": 1, "is_lpr": 0}
+        self.put("activities", [{**base, "id": "complete"}, {**base, "id": "no_protocol", "has_protocol": 0},
+                                {**base, "id": "no_summary", "has_summary": 0}])
         r = self.audit("meetings")
-        self.assertTrue(r["records"][0]["counted"])
-        self.assertEqual(self.states(r["records"][0])["protocol"], "na")
+        self.assertEqual(r['fact'], 1)
+        self.assertTrue(self.row(r,'complete')['counted'])
+        self.assertFalse(self.row(r,'no_protocol')['counted'])
+        self.assertFalse(self.row(r,'no_summary')['counted'])
+        self.assertEqual(self.states(self.row(r,'no_protocol'))['protocol'],'fail')
+        self.assertEqual(self.states(self.row(r,'no_summary'))['summary'],'fail')
 
     def test_current_kp_union_shows_all_sources_and_the_matched_duplicate(self):
         self.put("kp", [{"id": "k1", "emp": "tender", "dt": "2026-10-05", "client": "ООО Альфа", "doc": "КП-1"},

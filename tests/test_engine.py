@@ -80,6 +80,35 @@ class EngineTest(unittest.TestCase):
         return next(i for i in self.engine.compute(login, month)["items"] if i["code"] == code)
 
     # ---------------------------------------------------------------- даты
+    def test_meeting_calendar_summary_flows_into_tender_and_sales_kpi(self):
+        from app.bitrix24 import Bitrix24
+        long_summary='Протокол ВКС по итогам обсуждения коммерческих предложений и договорных условий'
+        for login, code in (('tender','base_development'),('pm','operational_activity')):
+            for crm_summary, summary, expected in (('',long_summary,1),('Коротко',long_summary,1),
+                                                  (long_summary,'Коротко',1),('','Коротко',0)):
+                with self.subTest(login=login,crm_summary=crm_summary,calendar_summary=summary):
+                    client=Bitrix24({'webhook':'https://example.test/rest/1/test/'},log=lambda *args:None)
+                    meeting={'ID':'20424','TYPE_ID':'6','PROVIDER_ID':'CRM_TODO','SUBJECT':'ВКС Каширская ГРЭС',
+                             'RESPONSIBLE_ID':'56','OWNER_TYPE_ID':'4','OWNER_ID':'423','COMPLETED':'Y',
+                             'START_TIME':'2026-11-17T12:00:00+05:00','LAST_UPDATED':'2026-11-18T08:51:05+05:00',
+                             'DESCRIPTION':crm_summary,'STORAGE_ELEMENT_IDS':[886] if crm_summary=='Коротко' else []}
+                    client.list_all=lambda method,params,key=None:[meeting] if method=='crm.activity.list' else []
+                    client.batch=mock.Mock(return_value=({},{}))
+                    client.resolve_field=mock.Mock(return_value=None)
+                    client._legacy_tenders=mock.Mock(return_value=[])
+                    client._enum_yes=mock.Mock(return_value={})
+                    client.lead_statuses=mock.Mock(return_value={})
+                    client._meeting_calendar_files=mock.Mock(return_value=lambda *args:{'DESCRIPTION':summary,'UF_WEBDAV_CAL_EVENT':[885]})
+                    rows=client.fetch({56:login},dt.date(2026,11,1))['activities']
+                    row=next(row for row in rows if row['id']=='act20424')
+                    self.assertEqual(row['has_summary'],expected)
+                    self.assertEqual(row['has_protocol'],1)
+                    self.con.execute('DELETE FROM activities')
+                    insert(self.con,'activities',rows)
+                    result=self.calc(login,code,'2026-11')
+                    component=next(c for c in result['components'] if c.get('audit')=='meetings')
+                    self.assertEqual(component['fact'],expected)
+
     def test_each_week_belongs_to_one_month(self):
         months = [month_add("2026-01", k) for k in range(12)]
         weeks = [w for m in months for w in weeks_of_month(m)]
@@ -839,7 +868,8 @@ class MeetingDetectionTest(unittest.TestCase):
             "calendar.event.get": {"result": [
                 {"ID": "1869", "PARENT_ID": "1868", "NAME": "Рабочая встреча  с ВСМПО", "DATE_FROM": "15.10.2026 09:00:00"},
                 {"ID": "1845", "PARENT_ID": "1844", "NAME": "Встреча с Ромашкой", "DATE_FROM": "12.10.2026 14:30:00"}]},
-            "calendar.event.getbyid": lambda p: {"result": {"UF_WEBDAV_CAL_EVENT": [770] if p["id"] == "1868" else []}},
+            "calendar.event.getbyid": lambda p: {"result": {"UF_WEBDAV_CAL_EVENT": [770] if p["id"] == "1868" else [],
+                                                          "DESCRIPTION":"Итоги рабочей встречи с клиентом и следующие действия"}},
         }
         with mock.patch.object(Bitrix24, "call", lambda self, m, p=None:
                                answers[m](p) if callable(answers[m]) else answers[m]):
@@ -847,6 +877,10 @@ class MeetingDetectionTest(unittest.TestCase):
             self.assertEqual(files(56, "Рабочая встреча с ВСМПО", "2026-10-15"), [770])
             self.assertIsNone(files(56, "Встреча с Ромашкой", "2026-10-12"))
             self.assertIsNone(files(56, "Рабочая встреча с ВСМПО", "2026-10-16"))
+            evidence=b._meeting_calendar_files('2026-10-01',include_description=True)
+            event=evidence(56,'Рабочая встреча с ВСМПО','2026-10-15')
+            self.assertEqual(event['UF_WEBDAV_CAL_EVENT'],[770])
+            self.assertGreaterEqual(len(event['DESCRIPTION']),20)
 
 
 if __name__ == "__main__":
