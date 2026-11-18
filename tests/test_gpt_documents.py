@@ -223,6 +223,153 @@ class DocumentTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "только для чтения"):
             self.docs.tool("document_edit", "chat", {"id": document["id"], "changes": [{"unit": "page:1:1", "old": "Hello", "new": "Bye"}]}, self.privacy)
 
+    def pdf_fixture(self, pages=2):
+        import pymupdf
+        from PIL import Image
+        pdf = pymupdf.open()
+        image = io.BytesIO()
+        Image.new("RGB", (24, 24), "blue").save(image, format="PNG")
+        for index in range(pages):
+            page = pdf.new_page(width=595, height=842)
+            page.insert_text((45, 50), f"Page {index + 1} complete content", fontsize=16)
+            page.insert_text((45, 75), "Tax ID 7701234567 and retained source text", fontsize=11)
+            page.insert_image(pymupdf.Rect(450, 40, 490, 80), stream=image.getvalue())
+            for y in (110, 140, 170):
+                page.draw_line((45, y), (345, y))
+            for x in (45, 195, 345):
+                page.draw_line((x, 110), (x, 170))
+            page.insert_text((52, 130), "Product")
+            page.insert_text((202, 130), "Amount")
+            page.insert_text((52, 160), "Steel")
+            page.insert_text((202, 160), "12345")
+        raw = pdf.tobytes()
+        pdf.close()
+        return raw
+
+    def test_pdf_conversion_preserves_all_pages_tables_images_and_source(self):
+        from docx import Document
+        from docx.oxml.ns import qn
+        original_raw = self.pdf_fixture()
+        original = self.upload("attachment.pdf", original_raw)
+        result = self.docs.tool("document_convert", "chat", {"id": original["id"], "format": "docx"}, self.privacy)
+        derived = result["document"]
+        self.assertEqual(derived["parent_id"], original["id"])
+        self.assertTrue(derived["name"].endswith(".docx"))
+        self.assertEqual(self.docs.download("chat", original["id"])[1], original_raw)
+        edited = Document(io.BytesIO(self.docs.download("chat", derived["id"])[1]))
+        text = "\n".join(node.text for node in edited.element.iter(qn("w:t")))
+        self.assertIn("Page 1 complete content", text)
+        self.assertIn("Page 2 complete content", text)
+        self.assertEqual(text.count("Tax ID 7701234567 and retained source text"), 2)
+        tables = [table for table in edited.tables if table.cell(0, 0).text == "Product"]
+        self.assertEqual(len(tables), 2)
+        self.assertEqual(tables[1].cell(1, 1).text, "12345")
+        self.assertEqual(len(edited.inline_shapes), 2)
+
+    def test_pdf_conversion_retry_reuses_saved_derived_document(self):
+        original = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
+        query = {"id": original["id"], "format": "docx"}
+        first = self.docs.tool("document_convert", "chat", query, self.privacy)
+        second = self.docs.tool("document_convert", "chat", query, self.privacy)
+        self.assertEqual(first["document"]["id"], second["document"]["id"])
+        self.assertEqual(len(self.docs.listing("chat")), 2)
+
+    def test_pdf_conversion_concurrent_retries_create_one_copy(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+        from app import pdf_word
+        original = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
+        converted = pdf_word.convert(self.docs.download("chat", original["id"])[1], 3 * 1024 * 1024)
+        ready = threading.Barrier(2)
+        def convert_together(*args):
+            ready.wait(timeout=10)
+            return converted
+        def request():
+            return self.docs.tool("document_convert", "chat", {"id": original["id"], "format": "docx"}, PrivacyContext(documents_only=True))
+        with patch("app.gpt_documents.pdf_word.convert", side_effect=convert_together), ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(request)
+            second = executor.submit(request)
+            self.assertEqual(first.result()["document"]["id"], second.result()["document"]["id"])
+        self.assertEqual(len(self.docs.listing("chat")), 2)
+
+    def test_pdf_conversion_timeout_and_large_output_do_not_create_partial_documents(self):
+        from unittest.mock import patch
+        original = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
+        query = {"id": original["id"], "format": "docx"}
+        with patch("app.pdf_word.CONVERSION_TIMEOUT", 0.001), self.assertRaisesRegex(ValueError, "90 секунд"):
+            self.docs.tool("document_convert", "chat", query, self.privacy)
+        with patch("app.gpt_documents.pdf_word.convert", return_value=b"0" * (3 * 1024 * 1024 + 1)), self.assertRaisesRegex(ValueError, "3 МБ"):
+            self.docs.tool("document_convert", "chat", query, self.privacy)
+        self.assertEqual(len(self.docs.listing("chat")), 1)
+
+    def test_pdf_conversion_rejects_foreign_chat_wrong_source_and_format(self):
+        pdf = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
+        text = self.upload("attachment.txt", b"text")
+        for chat, query in (("other", {"id": pdf["id"], "format": "docx"}),
+                            ("chat", {"id": text["id"], "format": "docx"}),
+                            ("chat", {"id": pdf["id"], "format": "exe"}),
+                            ("chat", {"id": pdf["id"]})):
+            with self.subTest(chat=chat, query=query), self.assertRaises(ValueError):
+                self.docs.tool("document_convert", chat, query, self.privacy)
+        self.assertEqual(len(self.docs.listing("chat")), 2)
+
+    def test_pdf_conversion_revalidates_stored_scan_encryption_size_and_pages(self):
+        from pypdf import PdfReader, PdfWriter
+        original = self.upload("attachment.pdf", self.pdf_fixture(pages=1))
+        blank = PdfWriter()
+        blank.add_blank_page(200, 200)
+        scan = io.BytesIO()
+        blank.write(scan)
+        encrypted = PdfWriter()
+        encrypted.append(PdfReader(io.BytesIO(self.pdf_fixture(pages=1))))
+        encrypted.encrypt("secret")
+        password_pdf = io.BytesIO()
+        encrypted.write(password_pdf)
+        for raw, message in ((scan.getvalue(), "текстового слоя"),
+                             (password_pdf.getvalue(), "без пароля"),
+                             (self.pdf_fixture(pages=101), "100 страниц"),
+                             (b"0" * (3 * 1024 * 1024 + 1), "3 МБ")):
+            with self.subTest(message=message):
+                self.con.execute("UPDATE gpt_documents SET content=? WHERE id=?", (raw, original["id"]))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.docs.tool("document_convert", "chat", {"id": original["id"], "format": "docx"}, self.privacy)
+        self.assertEqual(len(self.docs.listing("chat")), 1)
+
+    def test_explicit_protection_masks_generic_office_name_and_survives_edit(self):
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("ИНН 7701234567. Стоимость 100 рублей")
+        raw = io.BytesIO()
+        doc.save(raw)
+        document = self.docs.upload("chat", "attachment.docx", base64.b64encode(raw.getvalue()).decode(), protected=True)
+        self.assertTrue(self.docs.listing("chat")[0]["protected"])
+        read = self.docs.tool("document_read", "chat", {"id": document["id"]}, self.privacy)
+        self.assertNotIn("7701234567", json.dumps(read))
+        result = self.docs.tool("document_edit", "chat", {"id": document["id"], "changes": [{"unit": "p:1", "old": "100", "new": "200"}]}, self.privacy)
+        self.assertTrue(result["document"]["protected"])
+        edited = Document(io.BytesIO(self.docs.download("chat", result["document"]["id"])[1]))
+        self.assertEqual(edited.paragraphs[0].text, "ИНН 7701234567. Стоимость 200 рублей")
+
+    def test_explicit_pdf_protection_survives_conversion_and_read(self):
+        import pymupdf
+        pdf = pymupdf.open()
+        page = pdf.new_page()
+        page.insert_text((40, 60), "Contact")
+        page.insert_text((40, 90), "Email alice@example.com")
+        raw = pdf.tobytes()
+        pdf.close()
+        document = self.docs.upload("chat", "attachment.pdf", base64.b64encode(raw).decode(), protected=True)
+        read = self.docs.tool("document_read", "chat", {"id": document["id"]}, self.privacy)
+        self.assertNotIn("alice@example.com", json.dumps(read))
+        result = self.docs.tool("document_convert", "chat", {"id": document["id"], "format": "docx"}, self.privacy)
+        self.assertTrue(result["document"]["protected"])
+        read = self.docs.tool("document_read", "chat", {"id": result["document"]["id"]}, self.privacy)
+        self.assertNotIn("alice@example.com", json.dumps(read))
+        from app.gpt_documents import load
+        _, units = load(*self.docs.download("chat", result["document"]["id"]))
+        self.assertIn("alice@example.com", " ".join(u["text"] for u in units))
+
     def test_service_document_loop_masks_input_and_produces_downloadable_copy(self):
         from unittest.mock import patch
         from app.common import load_rules

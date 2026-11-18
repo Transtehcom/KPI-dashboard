@@ -10,10 +10,10 @@ import zipfile
 from pathlib import PurePath
 
 from .common import db_lock
-from . import gpt_images
+from . import gpt_images, pdf_word
 from .gpt_privacy import DOCUMENT_TITLE
 
-TOOLS = ["document_list", "document_read", "document_edit"]
+TOOLS = ["document_list", "document_read", "document_edit", "document_convert"]
 MAX_BYTES = 3 * 1024 * 1024
 FORMATS = {".docx", ".xlsx", ".txt", ".md", ".csv", ".pdf"}
 
@@ -261,7 +261,7 @@ class Documents:
 
     def listing(self, chat):
         with db_lock():
-            rows = self.con.execute("SELECT d.id,d.name,d.created,d.parent_id,d.unit_count,length(d.content) AS size,i.mime,i.width,i.height,i.protected FROM gpt_documents d LEFT JOIN gpt_image_metadata i ON i.document_id=d.id WHERE d.chat_id=? ORDER BY d.created,d.rowid", (chat,)).fetchall()
+            rows = self.con.execute("SELECT d.id,d.name,d.created,d.parent_id,d.unit_count,length(d.content) AS size,i.mime,i.width,i.height,max(coalesce(p.protected,0),coalesce(i.protected,0)) AS protected FROM gpt_documents d LEFT JOIN gpt_image_metadata i ON i.document_id=d.id LEFT JOIN gpt_document_protection p ON p.document_id=d.id WHERE d.chat_id=? ORDER BY d.created,d.rowid", (chat,)).fetchall()
         return [{**dict(r), "is_image": bool(r["mime"]), "protected": bool(r["protected"] or DOCUMENT_TITLE.search(r["name"])),
                  "protection_forced": bool(DOCUMENT_TITLE.search(r["name"])),
                  "editable": not r["mime"] and extension(r["name"]) != ".pdf"} for r in rows]
@@ -276,13 +276,14 @@ class Documents:
 
     def get(self, chat, identity):
         with db_lock():
-            row = self.con.execute("SELECT * FROM gpt_documents WHERE chat_id=? AND id=?", (chat, identity)).fetchone()
+            row = self.con.execute("SELECT d.*,max(coalesce(p.protected,0),coalesce(i.protected,0)) AS protected FROM gpt_documents d LEFT JOIN gpt_document_protection p ON p.document_id=d.id LEFT JOIN gpt_image_metadata i ON i.document_id=d.id WHERE d.chat_id=? AND d.id=?", (chat, identity)).fetchone()
         if row is None:
             raise ValueError("Документ не найден в этом чате")
-        return dict(row)
+        return {**dict(row), "protected": bool(row["protected"] or DOCUMENT_TITLE.search(row["name"]))}
 
     def save(self, chat, name, raw, parent=None, protected=False, guard=None):
         image = None
+        protected = bool(protected or DOCUMENT_TITLE.search(name))
         if extension(name) in gpt_images.FORMATS:
             raw, image = gpt_images.normalize(raw)
             units = []
@@ -300,8 +301,8 @@ class Documents:
             if count >= 30 or size + len(raw) > 30 * 1024 * 1024:
                 raise ValueError("В чате достигнут лимит 30 документов/версий или 30 МБ. Создайте новый чат")
             self.con.execute("INSERT INTO gpt_documents VALUES (?,?,?,?,?,?,?)", (identity, chat, name, raw, created, parent, len(units)))
+            self.con.execute("INSERT INTO gpt_document_protection(document_id,protected) VALUES (?,?)", (identity, int(protected)))
             if image:
-                protected = bool(protected or DOCUMENT_TITLE.search(name))
                 self.con.execute("INSERT INTO gpt_image_metadata(document_id,mime,width,height,protected) VALUES (?,?,?,?,?)",
                                  (identity, image["mime"], image["width"], image["height"], int(protected)))
             self.con.commit()
@@ -332,9 +333,8 @@ class Documents:
         with db_lock():
             row = self.get(chat, identity)
             protected = bool(protected or DOCUMENT_TITLE.search(row["name"]))
-            result = self.con.execute("UPDATE gpt_image_metadata SET protected=? WHERE document_id=?", (int(protected), identity))
-            if not result.rowcount:
-                raise ValueError("Вложение не является изображением")
+            self.con.execute("INSERT OR REPLACE INTO gpt_document_protection(document_id,protected) VALUES (?,?)", (identity, int(protected)))
+            self.con.execute("UPDATE gpt_image_metadata SET protected=? WHERE document_id=?", (int(protected), identity))
             self.con.commit()
         return {"id": identity, "protected": protected}
 
@@ -344,7 +344,7 @@ class Documents:
             image = self.con.execute("SELECT * FROM gpt_image_metadata WHERE document_id=?", (identity,)).fetchone()
         if image is None:
             raise ValueError("Вложение не является изображением")
-        protected = bool(image["protected"] or DOCUMENT_TITLE.search(row["name"]))
+        protected = bool(row["protected"] or image["protected"])
         with privacy.document(row["name"], force=protected):
             privacy.source("document:" + row["id"], row["name"], None, "Изображение чата")
             if protected:
@@ -370,11 +370,44 @@ class Documents:
             if not result.rowcount:
                 raise ValueError("Документ не найден")
             self.con.execute("DELETE FROM gpt_image_metadata WHERE document_id=?", (identity,))
+            self.con.execute("DELETE FROM gpt_document_protection WHERE document_id=?", (identity,))
             self.con.commit()
 
     def download(self, chat, identity):
         row = self.get(chat, identity)
         return row["name"], row["content"]
+
+    def convert(self, chat, row, target_format, guard=None):
+        if extension(row["name"]) != ".pdf" or target_format != "docx":
+            raise ValueError("Поддерживается преобразование PDF в DOCX. Укажите format=docx")
+        if not row["content"] or len(row["content"]) > MAX_BYTES:
+            raise ValueError("Размер документа должен быть от 1 байта до 3 МБ")
+        name = PurePath(row["name"]).stem[:175] + ".docx"
+        with db_lock():
+            if guard:
+                guard()
+            existing = next((document for document in self.listing(chat)
+                             if document["parent_id"] == row["id"] and document["name"] == name), None)
+            if existing:
+                if row["protected"] and not existing["protected"]:
+                    self.set_protection(chat, existing["id"], True)
+                    existing["protected"] = True
+                return existing
+        # Revalidate legacy rows before the layout-aware converter sees their content.
+        load(row["name"], row["content"])
+        raw = pdf_word.convert(row["content"], MAX_BYTES)
+        with db_lock():
+            if guard:
+                guard()
+            source = self.get(chat, row["id"])
+            existing = next((document for document in self.listing(chat)
+                             if document["parent_id"] == row["id"] and document["name"] == name), None)
+            if existing:
+                if source["protected"] and not existing["protected"]:
+                    self.set_protection(chat, existing["id"], True)
+                    existing["protected"] = True
+                return existing
+            return self.save(chat, name, raw, row["id"], protected=source["protected"], guard=guard)
 
     def tool(self, tool, chat, query, privacy, guard=None):
         if tool == "document_list":
@@ -391,7 +424,11 @@ class Documents:
             if tool == "document_read":
                 return {"id": row["id"], "is_image": True, "tool": "image_read", "note": "Для чтения изображения вызовите image_read с этим id"}
             raise ValueError("Правка изображений недоступна")
-        with privacy.document(row["name"]):
+        with privacy.document(row["name"], force=row["protected"]):
+            if tool == "document_convert":
+                result = self.convert(chat, row, query.get("format"), guard=guard)
+                return {"document": {**result, "name": privacy.register("ДОКУМЕНТ", result["name"])},
+                        "format": "docx", "note": "Создана копия Word. Исходный PDF сохранён"}
             if tool == "document_read":
                 obj, units = load(row["name"], row["content"])
                 if extension(row["name"]) == ".xlsx":
@@ -449,5 +486,5 @@ class Documents:
                 raise ValueError("Передайте от 1 до 50 адресных правок changes")
             raw = edit(row["name"], row["content"], changes)
             name = PurePath(row["name"]).stem[:140] + " — правки" + extension(row["name"])
-            result = self.save(chat, name, raw, row["id"], guard=guard)
+            result = self.save(chat, name, raw, row["id"], protected=row["protected"], guard=guard)
             return {"document": {**result, "name": privacy.register("ДОКУМЕНТ", result["name"])}, "changes_applied": len(changes), "note": "Создана новая копия. Оригинал сохранён"}

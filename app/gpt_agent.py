@@ -61,7 +61,7 @@ def tool_specs():
 
 
 def run(service, jid, mid):
-    from .gpt_assistant import SYSTEM, INTENT_SYSTEM, INTENT_SCHEMA, homework_request, now
+    from .gpt_assistant import SYSTEM, INTENT_SYSTEM, INTENT_SCHEMA, homework_request, now, record_document_output
 
     event = service.active[jid]
     started = False
@@ -187,6 +187,9 @@ def run(service, jid, mid):
                         update_preview({"tool": tool, "image": params.get("id"), "protected_text": all(c.get("type") == "inputText" for c in content)})
                         return content
                     output = service.documents.tool(tool, jid, params, privacy, guard=check_access)
+                    if tool in ("document_edit", "document_convert"):
+                        check_access()
+                        record_document_output(service.con, jid, mid, output)
                 else:
                     output = data_tools.execute(tool, query, args.get("employee") or "", args.get("month") or row["month"], privacy)
             except (ValueError, TypeError, json.JSONDecodeError) as exc:

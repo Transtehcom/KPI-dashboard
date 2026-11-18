@@ -58,6 +58,18 @@ CREATE TABLE IF NOT EXISTS gpt_image_metadata (
  mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, protected INTEGER NOT NULL DEFAULT 0);
 CREATE TRIGGER IF NOT EXISTS delete_gpt_image_metadata AFTER DELETE ON gpt_documents
  BEGIN DELETE FROM gpt_image_metadata WHERE document_id=OLD.id; END;
+CREATE TABLE IF NOT EXISTS gpt_document_protection (
+ document_id TEXT PRIMARY KEY REFERENCES gpt_documents(id) ON DELETE CASCADE,
+ protected INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER IF NOT EXISTS delete_gpt_document_protection AFTER DELETE ON gpt_documents
+ BEGIN DELETE FROM gpt_document_protection WHERE document_id=OLD.id; END;
+CREATE TABLE IF NOT EXISTS gpt_document_outputs (
+ chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, document_id TEXT NOT NULL,
+ PRIMARY KEY(message_id,document_id));
+CREATE TRIGGER IF NOT EXISTS delete_gpt_document_outputs AFTER DELETE ON gpt_documents
+ BEGIN DELETE FROM gpt_document_outputs WHERE document_id=OLD.id; END;
+CREATE TRIGGER IF NOT EXISTS delete_gpt_message_outputs AFTER DELETE ON gpt_messages
+ BEGIN DELETE FROM gpt_document_outputs WHERE message_id=OLD.id; END;
 CREATE TABLE IF NOT EXISTS gpt_document_deletions (
  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, created TEXT,
  parent_id TEXT, size INTEGER, deleted TEXT NOT NULL);

@@ -1,4 +1,6 @@
 """Durable private-message bridge between Bitrix24 Bot API v2 and ttkGPT."""
+import base64
+import hashlib
 import json
 import re
 import threading
@@ -6,6 +8,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from .call_analysis import model_options
 from .common import db_lock
+from .bitrix_files import BitrixFiles, message_files
 
 
 DELIVERY_UNKNOWN = 'Доставка ответа не подтверждена. Команда /retry повторит отправку сохранённого ответа.'
@@ -62,6 +65,7 @@ def _answer_parts(text, sources):
 class BitrixBot:
     def __init__(self, con, config, api, gpt_factory):
         self.con, self.config, self.api, self.gpt_factory = con, config, api, gpt_factory
+        self.files = BitrixFiles(api, config)
         self._activation_lock = threading.Lock()
         self._tick_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
@@ -90,7 +94,15 @@ class BitrixBot:
                     part_index INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
                     UNIQUE(bot_id,message_id));
                 CREATE INDEX IF NOT EXISTS ix_bitrix_bot_pending ON bitrix_bot_jobs(bot_id,state,user_id,id);
+                CREATE TABLE IF NOT EXISTS bitrix_bot_imports (
+                    job_id INTEGER NOT NULL, file_id INTEGER NOT NULL, chat_id TEXT NOT NULL,
+                    document_id TEXT, name TEXT NOT NULL, content_hash TEXT NOT NULL,
+                    baseline TEXT NOT NULL, PRIMARY KEY(job_id,file_id));
             ''')
+            columns = {row[1] for row in con.execute('PRAGMA table_info(bitrix_bot_jobs)')}
+            for name, declaration in (('attachments', "TEXT NOT NULL DEFAULT '[]'"), ('document_baseline', 'TEXT')):
+                if name not in columns:
+                    con.execute('ALTER TABLE bitrix_bot_jobs ADD COLUMN ' + name + ' ' + declaration)
             con.execute("UPDATE bitrix_bot_jobs SET state='uncertain',error=? WHERE state='sending'", (DELIVERY_UNKNOWN,))
             pending = [dict(row) for row in con.execute("SELECT * FROM bitrix_bot_jobs WHERE state='submitting'")]
             for job in pending:
@@ -207,10 +219,18 @@ class BitrixBot:
                 or not _positive_id(chat.get('id')) or chat['id'] != message.get('chatId')):
             return None
         owner = self._owner(user_id)
+        attachments = message_files(data)
         text = message.get('text')
-        if not owner or not isinstance(text, str) or not text.strip():
+        if text is None and attachments:
+            text = ''
+        if not owner or not isinstance(text, str) or not text.strip() and not attachments:
             return None
-        return (bot_id, event['eventId'], message_id, user_id, str(user_id), owner, text.strip())
+        question = text.strip() or (
+            'Прикреплён файл. Если в предыдущем запросе пользователь просил обработать или преобразовать файл, '
+            'выполни этот запрос с новым вложением. Иначе кратко уточни задачу.'
+        )
+        return (bot_id, event['eventId'], message_id, user_id, str(user_id), owner, question,
+                json.dumps(attachments, ensure_ascii=False))
 
     def _fetch(self, bot_id):
         with db_lock():
@@ -232,7 +252,8 @@ class BitrixBot:
                         incoming = self._incoming(bot_id, event)
                         if incoming:
                             self.con.execute('''INSERT OR IGNORE INTO bitrix_bot_jobs
-                                (bot_id,event_id,message_id,user_id,dialog_id,owner,question) VALUES (?,?,?,?,?,?,?)''', incoming)
+                                (bot_id,event_id,message_id,user_id,dialog_id,owner,question,attachments)
+                                VALUES (?,?,?,?,?,?,?,?)''', incoming)
                 self.con.execute("UPDATE bitrix_bot_state SET next_offset=?,last_error='' WHERE id=1", (next_offset,))
                 self.con.commit()
             except Exception:
@@ -285,8 +306,9 @@ class BitrixBot:
             effort = 'medium' if 'medium' in options['model_efforts'][model] else next(iter(options['model_efforts'][model]))
         return {'model': model, 'effort': effort, 'fast': admin and settings.get('fast') is True}
 
-    def _ready(self, job, text, sources=None):
-        parts = _answer_parts(text, sources)
+    def _ready(self, job, text, sources=None, documents=None):
+        parts = [{'kind': 'file', 'document_id': document['id']} for document in documents or []]
+        parts.extend({'kind': 'text', 'text': text} for text in _answer_parts(text, sources))
         with db_lock():
             current = self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()
             if current[0] not in ('queued', 'running'):
@@ -324,7 +346,7 @@ class BitrixBot:
                 return
         service = self.gpt_factory()
         if job['state'] == 'queued':
-            if self._command(service, job):
+            if not json.loads(job['attachments']) and self._command(service, job):
                 if job['state'] == 'delivering':
                     self._deliver(service, job)
                 return
@@ -343,7 +365,7 @@ class BitrixBot:
             if message['status'] in ('running', 'cancelling'):
                 return
             if message['status'] == 'completed':
-                self._ready(job, message['content'], message['sources'])
+                self._ready(job, message['content'], message['sources'], self._output_documents(job))
             else:
                 self._ready(job, REQUEST_FAILED)
         if job['state'] == 'delivering':
@@ -359,8 +381,25 @@ class BitrixBot:
             chat_id = self._chat(service, job)
             if chat_id in service.active or len(service.active) >= 2:
                 return
+            self._update(job['id'], chat_id=chat_id)
+            job['chat_id'] = chat_id
+        if not self._import_files(service, job):
+            return
+        with db_lock():
+            if self._owner(job['user_id']) != job['owner']:
+                self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                return
+            try:
+                service.check_chat(job['owner'], chat_id)
+            except ValueError:
+                self._update(job['id'], state='ignored', error='Права доступа изменились до обработки вложений.')
+                return
+            if chat_id in service.active or len(service.active) >= 2:
+                return
             baseline = self.con.execute('SELECT coalesce(max(id),0) FROM gpt_messages WHERE chat_id=?', (chat_id,)).fetchone()[0]
-            self._update(job['id'], state='submitting', chat_id=chat_id, baseline_id=baseline)
+            documents = [row[0] for row in self.con.execute('SELECT id FROM gpt_documents WHERE chat_id=?', (chat_id,))]
+            self._update(job['id'], state='submitting', chat_id=chat_id, baseline_id=baseline,
+                         document_baseline=json.dumps(documents))
             try:
                 result = service.submit(job['owner'], chat_id, job['question'], **self._selection(job['owner']))
                 self._update(job['id'], state='running', assistant_id=result['id'])
@@ -372,6 +411,92 @@ class BitrixBot:
                 current = self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()[0]
                 if current == 'queued':
                     self._ready(job, REQUEST_FAILED)
+
+    def _import_files(self, service, job):
+        for reference in json.loads(job['attachments']):
+            with db_lock():
+                if self._owner(job['user_id']) != job['owner']:
+                    self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                    return False
+                saved = self.con.execute('SELECT * FROM bitrix_bot_imports WHERE job_id=? AND file_id=?',
+                                         (job['id'], reference['id'])).fetchone()
+                if saved and saved['chat_id'] == job['chat_id'] and saved['document_id']:
+                    existing = self.con.execute('SELECT 1 FROM gpt_documents WHERE chat_id=? AND id=?',
+                                                (job['chat_id'], saved['document_id'])).fetchone()
+                    if existing:
+                        continue
+            try:
+                # The OAuth download can wait on the network. It runs outside db_lock().
+                name, raw = self.files.download(job['bot_id'], job['dialog_id'], reference)
+                from .gpt_images import FORMATS, normalize
+                expected = normalize(raw)[0] if name.lower().endswith(tuple(FORMATS)) else raw
+                digest = hashlib.sha256(expected).hexdigest()
+                with db_lock():
+                    if self._owner(job['user_id']) != job['owner']:
+                        self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                        return False
+                    service.check_chat(job['owner'], job['chat_id'])
+                    baseline = [row[0] for row in self.con.execute('SELECT id FROM gpt_documents WHERE chat_id=?', (job['chat_id'],))]
+                    if saved and saved['chat_id'] == job['chat_id'] and saved['content_hash'] == digest:
+                        previous = set(json.loads(saved['baseline']))
+                        candidates = self.con.execute('''SELECT id,content FROM gpt_documents
+                            WHERE chat_id=? AND name=? AND parent_id IS NULL ORDER BY rowid''', (job['chat_id'], name)).fetchall()
+                        recovered = next((row['id'] for row in candidates if row['id'] not in previous
+                                          and hashlib.sha256(row['content']).hexdigest() == digest), None)
+                        if recovered:
+                            self.con.execute('UPDATE bitrix_bot_imports SET document_id=? WHERE job_id=? AND file_id=?',
+                                             (recovered, job['id'], reference['id']))
+                            self.con.commit()
+                            continue
+                    self.con.execute('INSERT OR REPLACE INTO bitrix_bot_imports VALUES (?,?,?,NULL,?,?,?)',
+                                     (job['id'], reference['id'], job['chat_id'], name, digest, json.dumps(baseline)))
+                    self.con.commit()
+                document = service.document_upload(job['owner'], job['chat_id'], name,
+                                                   base64.b64encode(raw).decode('ascii'), protected=True)
+                with db_lock():
+                    service.check_chat(job['owner'], job['chat_id'])
+                    if self._owner(job['user_id']) != job['owner']:
+                        self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                        return False
+                    self.con.execute('UPDATE bitrix_bot_imports SET document_id=? WHERE job_id=? AND file_id=?',
+                                     (document['id'], job['id'], reference['id']))
+                    self.con.commit()
+            except Exception:
+                label = _plain(reference.get('name') or 'вложение')[:120]
+                self._ready(job, 'Не удалось загрузить файл «' + label + '». Прикрепите его повторно. Запрос ещё не обработан.')
+                return False
+        return True
+
+    def _output_documents(self, job):
+        with db_lock():
+            bindings = self.con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gpt_document_outputs'").fetchone()
+            if bindings:
+                bound = self.con.execute('SELECT 1 FROM gpt_document_outputs WHERE chat_id=? AND message_id=? LIMIT 1',
+                                         (job['chat_id'], job['assistant_id'])).fetchone()
+                if bound:
+                    return [dict(row) for row in self.con.execute('''SELECT d.id,d.parent_id
+                        FROM gpt_document_outputs output JOIN gpt_documents d
+                          ON d.id=output.document_id AND d.chat_id=output.chat_id
+                        WHERE output.chat_id=? AND output.message_id=? AND d.parent_id IS NOT NULL
+                        ORDER BY d.created,d.rowid''', (job['chat_id'], job['assistant_id']))]
+            if job['document_baseline'] is None:
+                return []
+            turn = self.con.execute('''SELECT created,finished FROM gpt_messages
+                WHERE chat_id=? AND id=? AND role='assistant' AND status='completed' ''',
+                                    (job['chat_id'], job['assistant_id'])).fetchone()
+            if not turn or not turn['finished']:
+                return []
+            candidates = [dict(row) for row in self.con.execute('''SELECT id,parent_id FROM gpt_documents
+                WHERE chat_id=? AND parent_id IS NOT NULL AND created>=? AND created<=?
+                ORDER BY created,rowid''', (job['chat_id'], turn['created'], turn['finished']))]
+        # Only descendants of the documents present when this exact turn began belong to its output.
+        parents = set(json.loads(job['document_baseline']))
+        output = []
+        for document in candidates:
+            if document['id'] not in parents and document['parent_id'] in parents:
+                output.append(document)
+                parents.add(document['id'])
+        return output
 
     def _deliver(self, service, job):
         with db_lock():
@@ -389,13 +514,29 @@ class BitrixBot:
                     return
             parts = json.loads(job['parts'])
             index = job['part_index']
+            part = parts[index]
+            # Already queued textual replies from the first bridge version remain valid.
+            if isinstance(part, str):
+                part = {'kind': 'text', 'text': part}
+            if part['kind'] == 'file':
+                try:
+                    document = service.document_download(job['owner'], job['chat_id'], part['document_id'])
+                except ValueError:
+                    self._update(job['id'], state='failed', error='Сохранённый файл недоступен для отправки.')
+                    return
+                method = 'imbot.v2.File.upload'
+                fields = {'name': document['name'], 'content': document['content'], 'message': ''}
+            else:
+                method = 'imbot.v2.Chat.Message.send'
+                fields = {'message': part['text'], 'urlPreview': False, 'replyId': job['message_id']}
             self._update(job['id'], state='sending')
         try:
-            result = self.api.call('imbot.v2.Chat.Message.send', {
+            result = self.api.call(method, {
                 'botId': job['bot_id'], 'dialogId': job['dialog_id'],
-                'fields': {'message': parts[index], 'urlPreview': False, 'replyId': job['message_id']},
+                'fields': fields,
             })
-            if not isinstance(result, dict) or not _positive_id(result.get('id')):
+            identity = result.get('file', {}).get('id') if method == 'imbot.v2.File.upload' else result.get('id')
+            if not isinstance(result, dict) or not _positive_id(identity):
                 raise ValueError
         except Exception as error:
             if getattr(error, 'ambiguous', True):
