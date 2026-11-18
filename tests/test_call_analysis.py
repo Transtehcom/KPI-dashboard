@@ -48,6 +48,96 @@ class AnonymizeTest(unittest.TestCase):
         self.assertEqual(p.restore({"a": ["[ИМЯ_1] перезвонит"], "b": 1, "c": "[ИМЯ_9]"}),
                          {"a": ["Андрей Петров перезвонит"], "b": 1, "c": "[ИМЯ_9]"})
 
+    def test_crm_spelling_restored_instead_of_recognition_error(self):
+        cases = [
+            ('Верхнетагильская ГРЭС, филиал АО "Интер РАО-Электрогенерация"',
+             'Подскажите, пожалуйста, в Верхнетагильскую Бряз, да, попал?'),
+            ('Рудник Таборный, ООО', 'Мы направляли на имя компании Родник Таборный письмо.'),
+            ('НОВОКАОЛИНОВЫЙ ГОК, АО', 'Вас приветствует Новокаалиновый горно-обогатительный комбинат.'),
+        ]
+        for name, text in cases:
+            with self.subTest(name=name):
+                p = Pseudonymizer([name], canonical_crm=True)
+                masked = p.mask(text)
+                self.assertIn('[ОРГ_1]', masked)
+                self.assertEqual(p.restore('[ОРГ_1]'), name)
+                self.assertNotIn(name, masked)
+
+    def test_ambiguous_crm_stem_does_not_choose_first_company(self):
+        p = Pseudonymizer(['Северсталь-Сервис, ООО', 'Северсталь-Сервис, АО'], canonical_crm=True)
+        masked = p.mask('Компания Северсталь-Сервис, здравствуйте.')
+        self.assertNotIn('Северсталь-Сервис', masked)
+        self.assertEqual(p.restore('[ОРГ_1]'), 'Северсталь-Сервис')
+
+    def test_ambiguous_lowercase_crm_name_is_still_masked(self):
+        p = Pseudonymizer(['Северсталь-Сервис, ООО', 'Северсталь-Сервис, АО'], canonical_crm=True)
+        masked = p.mask('Звоню в северсталь-сервис.')
+        self.assertNotIn('северсталь-сервис', masked)
+        self.assertEqual(p.restore('[ОРГ_1]'), 'северсталь-сервис')
+
+    def test_company_intro_keeps_full_overlapping_entity(self):
+        for name in ['Красная звезда', 'Силовые машины', 'Уральская горно-металлургическая компания']:
+            with self.subTest(name=name):
+                p = Pseudonymizer()
+                self.assertEqual(p.mask(f'Звоню из компании {name}.'), 'Звоню из компании [ОРГ_1].')
+                self.assertEqual(p.restore('[ОРГ_1]'), name)
+
+    def test_shared_geographical_word_does_not_replace_another_company(self):
+        p = Pseudonymizer(['Нытвинский маслозавод, ООО'], canonical_crm=True)
+        masked = p.mask('Работали с Нытвинским металлургическим заводом.')
+        self.assertNotIn('Нытвинским', masked)
+        self.assertEqual(p.restore('[ОРГ_1]'), 'Нытвинским металлургическим заводом')
+
+    def test_generic_word_prefix_does_not_exempt_crm_brands(self):
+        for name in ['Доминион', 'Домино']:
+            with self.subTest(name=name):
+                p = Pseudonymizer([f'{name}, ООО'], canonical_crm=True)
+                self.assertNotIn(name.lower(), p.mask(f'Звоню в {name.lower()}.'))
+
+    def test_numbered_product_does_not_become_same_named_crm_company(self):
+        p = Pseudonymizer(['Опора, ООО'], canonical_crm=True)
+        self.assertEqual(p.mask('Опора 3.'), 'Опора 3.')
+        self.assertEqual(p.mapping, {})
+
+    def test_numbered_product_inside_company_name_stays_masked(self):
+        for text in ['Звоню из ООО «Опора 3».', 'Это ООО Опора 3 Сервис.']:
+            with self.subTest(text=text):
+                p = Pseudonymizer()
+                masked = p.mask(text)
+                self.assertNotIn('Опора', masked)
+                self.assertNotIn('Сервис', masked)
+
+    def test_different_plant_type_does_not_get_canonical_name(self):
+        p = Pseudonymizer(['Верхнетагильская ГРЭС, ООО'], canonical_crm=True)
+        p.mask('Компания Верхнетагильская ТЭЦ.')
+        self.assertEqual(p.restore('[ОРГ_1]'), 'Верхнетагильская ТЭЦ')
+
+    def test_generic_crm_word_does_not_become_full_company_name(self):
+        p = Pseudonymizer(['РИР Энерго-Тамбовская генерация, АО'])
+        masked = p.mask('Директор всей генерации.')
+        self.assertEqual(masked, 'Директор всей генерации.')
+
+    def test_discourse_and_technical_terms_remain_readable(self):
+        p = Pseudonymizer()
+        for text in ['Да-да.', 'Да-да-да, конечно.', 'Нет-нет.', 'Всё-всё.', 'Мы-то.',
+                     'Так-так.', 'Ноль-ноль.', 'Сегодня-завтра.', 'Там-там.', 'Ещё.',
+                     'Защита от БПЛА.', 'Откройте ПДФ.', 'Опора 3.', 'Сумма без НДС.']:
+            with self.subTest(text=text):
+                self.assertEqual(p.mask(text), text)
+        self.assertEqual(p.mapping, {})
+
+    def test_known_company_wins_over_generic_technical_word(self):
+        p = Pseudonymizer(['Опора, ООО'], canonical_crm=True)
+        masked = p.mask('Компания Опора, здравствуйте.')
+        self.assertNotIn('Опора', masked)
+        self.assertEqual(p.restore('[ОРГ_1]'), 'Опора, ООО')
+
+    def test_product_word_used_as_company_name_is_still_masked(self):
+        p = Pseudonymizer()
+        masked = p.mask('Компания Опора, здравствуйте.')
+        self.assertNotIn('Опора', masked)
+        self.assertIn('Опора', ' '.join(p.mapping.values()))
+
 
 ANSWER = {"turns": [{"from": 1, "to": 1, "who": "М"}, {"from": 2, "to": 2, "who": "К"}, {"from": 3, "to": 3, "who": "М"},
                     {"from": 4, "to": 4, "who": "К"}], "call_type": "продажа", "summary": "[ИМЯ_1] договорилась выслать КП",
@@ -180,6 +270,19 @@ class QueueTest(unittest.TestCase):
         a = {c["id"]: c["analysis"] for c in self.cr.listing(self.con, {})}
         self.assertEqual((a["call1"]["offer"], a["call1"]["summary"][:16]), (True, "Мария Мельникова"))
         self.assertIsNone(a["call3"])
+
+    def test_crm_company_spelling_requires_company_reference(self):
+        for reference, expected in [(None, 'Нытвинский маслозавод'), ('LEAD:1', 'Нытвинский маслозавод'),
+                                    ('CONTACT:1', 'Нытвинский маслозавод'),
+                                    ('COMPANY:1', 'Нытвинский маслозавод, ООО')]:
+            with self.subTest(reference=reference):
+                self.con.execute("UPDATE call_records SET client_ref=? WHERE id='call1'", (reference,))
+                row = self.con.execute("SELECT c.*,t.segments,t.text FROM call_records c "
+                                       "JOIN call_transcripts t ON t.id=c.id WHERE c.id='call1'").fetchone()
+                with self.fake_run({**ANSWER, 'summary': 'Позвонили в [ОРГ_1].'}):
+                    self.assertEqual(call_analysis.analyze_row(self.con, {}, dict(row), {}), 'ok')
+                self.assertEqual(call_analysis.get(self.con, 'call1')['summary'], f'Позвонили в {expected}.')
+                self.assertNotIn('Нытвинский', self.sent[-1])
 
     def test_manual_job_transcribes_missing_and_analyzes_selected(self):
         import time

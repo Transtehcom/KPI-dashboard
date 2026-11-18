@@ -48,6 +48,16 @@ class RecheckTest(unittest.TestCase):
         result=call_recheck.listing(self.con,["call1"])["call1"][0]
         self.assertEqual(result["findings"][0]["verdict"],"insufficient_data")
 
+    def test_recheck_restores_verified_company_without_sending_its_name(self):
+        self.row.update(client='Рудник Таборный, ООО', client_ref='COMPANY:1520',
+                        segments=json.dumps([[5, 10, 'Компания Родник Таборный, давайте встретимся на объекте.'],
+                                             [11, 15, 'Да, приеду во вторник.']], ensure_ascii=False))
+        self.blind['summary'] = 'Позвонили в компанию «[ОРГ_1]».'
+        self.assertEqual(self.run_review(), 'ok')
+        self.assertEqual(call_analysis.get(self.con, 'call1')['summary'],
+                         'Позвонили в компанию «Рудник Таборный, ООО».')
+        self.assertNotIn('Таборный', '\n'.join(self.prompts))
+
     def test_rejected_complaint_and_unselected_fields_do_not_change_blind_result(self):
         review=copy.deepcopy(self.review);review["findings"][0]["verdict"]="not_confirmed"
         review["analysis"]["secretary"]=True

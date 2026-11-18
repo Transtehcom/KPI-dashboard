@@ -169,7 +169,8 @@ def analyze_row(con, config, row, titles, jid, model=call_analysis.MODEL, effort
         source = call_analysis.sentences(json.loads(row["segments"] or "[]"))
         if not source:
             raise ValueError("Нужна непустая расшифровка звонка")
-        ps = Pseudonymizer([row.get("client") or ""])
+        ps = Pseudonymizer([row.get("client") or ""],
+                           canonical_crm=str(row.get("client_ref") or "").startswith("COMPANY:"))
         numbered = [(t, ps.mask(text)) for t, text in source]
         meta = {"direction": row["direction"], "duration": row["duration"], "position": titles.get(row["emp"])}
         # This first request deliberately has no employee feedback or previous answer.

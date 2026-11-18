@@ -7,6 +7,7 @@
 Название нашей компании оставляется — по нему Codex понимает, кто менеджер."""
 import re
 import threading
+from difflib import SequenceMatcher
 
 # своя компания и её искажения при распознавании — не обезличиваются
 OWN_COMPANY = re.compile(r"транс\s*-?\s*те[хк]?\s*ком|транстелеком|транстеком|\bттк\b", re.I)
@@ -14,7 +15,8 @@ OWN_COMPANY = re.compile(r"транс\s*-?\s*те[хк]?\s*ком|трансте
 GENERIC = {"ооо", "оао", "зао", "пао", "ао", "ип", "фгуп", "муп", "гуп", "компания", "группа", "завод", "филиал",
            "общество", "ограниченной", "ответственностью", "акционерное", "публичное", "холдинг", "предприятие",
            "производственная", "производственное", "торговый", "дом", "центр", "управление", "служба", "входящий",
-           "исходящий", "звонок", "лид", "сделка", "контакт", "новый"}
+           "исходящий", "звонок", "лид", "сделка", "контакт", "новый", "генерация", "комбинат",
+           "горно-обогатительный", "электросетевая"}
 PATTERNS = [  # (метка, регулярное выражение) — порядок важен: сначала почта, потом сайты и номера
     ("EMAIL", r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|[\w.-]+\s+собачк[аеуи]\s+[\w.-]+(?:\.[a-zа-я]{2,})?"),
     ("САЙТ", r"\b[\w-]+(?:\.[\w-]+)*\.(?:ru|рф|com|net|org|su|info|pro)\b"),
@@ -60,7 +62,18 @@ def _normal(text, morph):
 
 # слова, которые natasha принимает за организации, но это термины разговора — их оставляем
 NOT_ORG = {"кп", "ткп", "нмцк", "ндс", "вкс", "звкс", "упд", "тз", "тендер", "закупка", "почта", "компания", "отдел",
-           "служба", "скайп", "skype", "zoom", "зум", "телемост", "teams", "whatsapp", "ватсап", "телеграм", "telegram"}
+           "служба", "скайп", "skype", "zoom", "зум", "телемост", "teams", "whatsapp", "ватсап", "телеграм", "telegram",
+           "бпла", "пдф", "pdf", "жд", "лэп", "жби", "лкм", "рэб"}
+
+# Разговорные частицы и числительные не должны превращаться в названия из-за заглавной буквы
+# или дефиса в автоматической расшифровке («Да-да», «Ноль-ноль», «Мы-то»).
+DISCOURSE = {"да", "нет", "всё", "все", "так", "там", "тут", "мы", "вы", "я", "ты", "то", "это", "ещё", "еще",
+             "сегодня", "завтра", "ноль", "ага", "угу", "алло", "ало", "ааа", "аа", "ээ", "эээ"}
+
+
+def _discourse(text):
+    words = re.findall(r"[a-zа-яё]+", text.lower())
+    return bool(words) and all(w in DISCOURSE for w in words)
 
 
 # слова с заглавной буквы, которые словарь считает именами или не знает, но это не персональные данные
@@ -71,23 +84,82 @@ KEEP_WORDS = {"битрикс", "битрикс24", "макс", "максе", "m
 def _not_org(text, morph):
     """Фрагмент — не название организации: только термины из NOT_ORG или в нём есть глагол («Вышлите КП»)."""
     words = re.findall(r"[\w-]+", text.lower())
-    return all(w in NOT_ORG for w in words) or any(morph.parse(w)[0].tag.POS in ("VERB", "INFN") for w in words)
+    return all(w in NOT_ORG or w.isdigit() or morph.parse(w)[0].normal_form in NOT_ORG for w in words) or any(
+        morph.parse(w)[0].tag.POS in ("VERB", "INFN") for w in words)
+
+
+def _one_edit_apart(left, right):
+    if abs(len(left) - len(right)) > 1:
+        return False
+    edits = sum(max(left_end - left_start, right_end - right_start)
+                for kind, left_start, left_end, right_start, right_end
+                in SequenceMatcher(None, left, right).get_opcodes() if kind != "equal")
+    return edits <= 1
 
 
 class Pseudonymizer:
     """Метки одного звонка: одна и та же сущность получает одну метку во всех предложениях."""
 
-    def __init__(self, crm_names=()):
-        self.mapping = {}  # метка → исходное значение (первое встретившееся написание)
+    def __init__(self, crm_names=(), *, canonical_crm=False):
+        self.mapping = {}  # метка → подтверждённое название CRM или исходное значение
         self._keys = {}  # нормализованный ключ → метка
         self._count = {}
+        self.canonical_crm = canonical_crm  # только подтверждённая компания, не заголовок лида или имя контакта
         # отличительные слова названия клиента / контакта из CRM: ищутся по началу слова (падежи)
-        self.crm = {}  # основа слова → номер названия
-        for i, name in enumerate(crm_names):
+        self.crm_names = tuple(dict.fromkeys(name.strip() for name in crm_names if name and name.strip()))
+        morph = _natasha()["morph"] if self.crm_names else None
+        self.generic_lemmas = {morph.parse(w)[0].normal_form for w in GENERIC} if morph else GENERIC
+        self.crm = {}  # основа слова → номера названий, включая неоднозначные совпадения
+        for i, name in enumerate(self.crm_names):
             for w in re.findall(r"[\w-]+", name or ""):
-                if len(w) >= 5 and w.lower() not in GENERIC and not OWN_COMPANY.search(w):
-                    self.crm.setdefault(w.lower()[:max(5, len(w) - 2)], i)
-        self.crm_stems = sorted(self.crm, key=len, reverse=True)
+                word = w.lower().replace("ё", "е")
+                if (len(word) >= 5 and not word.isdigit() and not OWN_COMPANY.search(word)
+                        and morph.parse(word)[0].normal_form not in self.generic_lemmas):
+                    self.crm.setdefault(word[:max(5, len(word) - 2)], set()).add(i)
+
+    def _crm_matches(self, text):
+        words = re.findall(r"[\w-]+", text.lower().replace("ё", "е"))
+        matches = set()
+        for stem, identities in self.crm.items():
+            if any(w.startswith(stem) for w in words):
+                matches.update(identities)
+        if not matches and self.canonical_crm:
+            # Одна небольшая ошибка в длинном отличительном слове («Новокаалиновый»).
+            # Сверяем только с клиентами этого звонка. Короткие и неоднозначные названия не угадываем.
+            for stem, identities in self.crm.items():
+                if len(stem) < 8:
+                    continue
+                prefixes = [w[:len(stem)] for w in words if len(w) >= len(stem) and w[:4] == stem[:4]]
+                if any(_one_edit_apart(prefix, stem) for prefix in prefixes):
+                    matches.update(identities)
+        return matches
+
+    def _compatible_crm(self, text, identity):
+        """Общий географический признак не должен подменять другую явно названную организацию."""
+        morph = _natasha()["morph"]
+        known = [morph.parse(w)[0].normal_form for w in re.findall(r"[\w-]+", self.crm_names[identity].lower())]
+        stems = [stem for stem, identities in self.crm.items() if identity in identities]
+        for raw in re.findall(r"[\w-]+", text):
+            word = morph.parse(raw.lower())[0].normal_form
+            if word in self.generic_lemmas or (len(raw) < 5 and not raw.isupper() and not raw.isdigit()):
+                continue
+            if any(word.startswith(stem) for stem in stems):
+                continue
+            if not any(_one_edit_apart(word, candidate) for candidate in known):
+                return False
+        return True
+
+    def _crm_label(self, text, *, canonical=True):
+        matches = self._crm_matches(text)
+        if not matches:
+            return None
+        words, _ = _normal(text, _natasha()["morph"])
+        key, surface = " ".join(sorted(words)), text
+        if len(matches) == 1 and canonical and self.canonical_crm:
+            identity = next(iter(matches))
+            if self._compatible_crm(text, identity):
+                key, surface = f"crm:{identity}", self.crm_names[identity]
+        return self._label("ОРГ", key, surface)
 
     def _label(self, kind, key, surface):
         key = (kind, key.lower().replace("ё", "е"))
@@ -109,15 +181,40 @@ class Pseudonymizer:
         doc = n["Doc"](text)
         doc.segment(n["seg"])
         doc.tag_ner(n["ner"])
+        # Явное представление организации имеет приоритет над словарём обычных слов.
+        # Например, «компания Опора» — название, а «опора 3» — товарная позиция.
+        for m in re.finditer(r'\b(?i:компани[яию]|фирм[ауы])\s+[«"“]?'
+                             r'([A-ZА-ЯЁ][\w-]*(?:\s+[A-ZА-ЯЁ][\w-]*){0,3})', text):
+            start, end = m.span(1)
+            for sp in doc.spans:
+                if sp.start < end and start < sp.stop:
+                    start, end = min(start, sp.start), max(end, sp.stop)
+            end = start + len(text[start:end].rstrip(".,!?… "))
+            name = text[start:end]
+            if OWN_COMPANY.search(name) or any(s < end and start < e for s, e, _ in spans):
+                continue
+            words, _ = _normal(name, n["morph"])
+            label = self._crm_label(name) or self._label("ОРГ", " ".join(sorted(words)), name)
+            spans.append((start, end, label))
+        # Сохраняем номерные товарные позиции читаемыми даже при одноимённом клиенте CRM.
+        # Явное представление компании выше уже получило приоритет.
+        for m in re.finditer(r"\bопор[а-яё]*\s+\d+\b", text, re.I):
+            product_words = re.findall(r"[\w-]+", m.group().lower())
+            larger_entity = any(sp.type in ("ORG", "PER") and sp.start < m.end() and m.start() < sp.stop
+                                and re.findall(r"[\w-]+", sp.text.lower()) != product_words for sp in doc.spans)
+            if not larger_entity and not any(s < m.end() and m.start() < e for s, e, _ in spans):
+                spans.append((m.start(), m.end(), m.group()))
         for sp in doc.spans:
             if OWN_COMPANY.search(sp.text) or any(s < sp.stop and sp.start < e for s, e, _ in spans):
                 continue
+            label = self._crm_label(sp.text)
+            if label:
+                spans.append((sp.start, sp.stop, label))
+                continue
+            if _discourse(sp.text):
+                continue
             words = re.findall(r"[\w-]+", sp.text.lower())
             if (sp.type == "ORG" and _not_org(sp.text, n["morph"])) or all(w in KEEP_WORDS or w in NOT_ORG for w in words):
-                continue
-            stem = next((st for st in self.crm_stems for w in sp.text.lower().split() if w.startswith(st)), None)
-            if stem:  # клиент из CRM — организация, даже если natasha сочла его именем или местом
-                spans.append((sp.start, sp.stop, self._label("ОРГ", f"crm:{self.crm[stem]}", sp.text)))
                 continue
             words, nomn = _normal(sp.text, n["morph"])
             kind = NER_LABELS.get(sp.type, "ОРГ")
@@ -127,15 +224,15 @@ class Pseudonymizer:
             w = m.group().lower()
             if any(s < m.end() and m.start() < e for s, e, _ in spans):
                 continue
-            stem = next((st for st in self.crm_stems if w.startswith(st)), None)
-            if stem:
-                spans.append((m.start(), m.end(), self._label("ОРГ", f"crm:{self.crm[stem]}", m.group())))
+            label = self._crm_label(m.group(), canonical=False)
+            if label:
+                spans.append((m.start(), m.end(), label))
         # второй проход: слова с заглавной буквы, которые natasha пропустила (часто в начале предложения или искажённые
         # распознаванием): имя/фамилия/отчество/город/организация по словарю или вовсе незнакомое словарю слово
         for m in re.finditer(r"\b[A-ZА-ЯЁ][\w-]{2,}", text):
             w = m.group()
             if any(s < m.end() and m.start() < e for s, e, _ in spans) or OWN_COMPANY.search(w) \
-                    or w.lower() in NOT_ORG or w.lower() in KEEP_WORDS or w.isupper():
+                    or w.lower() in NOT_ORG or w.lower() in KEEP_WORDS or _discourse(w) or w.isupper():
                 continue
             p = n["morph"].parse(w)[0]
             g = set(str(p.tag).replace(" ", ",").split(","))
