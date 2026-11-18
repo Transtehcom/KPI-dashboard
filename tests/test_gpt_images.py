@@ -32,6 +32,41 @@ class ImageAttachmentTest(unittest.TestCase):
     def upload(self, name="photo.png", protected=False, raw=None):
         return self.docs.upload("chat", name, base64.b64encode(raw or self.image()).decode(), protected=protected)
 
+    def test_convert_image_to_real_jpeg_preserves_dimensions_protection_and_source(self):
+        for fmt, suffix in (("PNG", "png"), ("WEBP", "webp"), ("JPEG", "jpeg")):
+            with self.subTest(fmt=fmt):
+                original = self.upload("screen." + suffix, protected=True, raw=self.image(fmt))
+                query = {"id": original["id"], "format": "jpeg"}
+                result = self.docs.tool("document_convert", "chat", query, self.privacy)
+                child = self.docs.get("chat", result["document"]["id"])
+                self.assertEqual(child["parent_id"], original["id"])
+                self.assertTrue(child["protected"])
+                self.assertTrue(child["name"].endswith(".jpg"))
+                with Image.open(io.BytesIO(child["content"])) as image:
+                    self.assertEqual(image.format, "JPEG")
+                    self.assertEqual(image.size, (40, 30))
+                    self.assertEqual(image.mode, "RGB")
+                    self.assertFalse(image.getexif())
+                repeated = self.docs.tool("document_convert", "chat", query, self.privacy)
+                self.assertEqual(child["id"], repeated["document"]["id"])
+                self.assertEqual(self.docs.get("chat", original["id"])["parent_id"], None)
+                with self.assertRaises(ValueError):
+                    self.docs.tool("document_convert", "other", query, self.privacy)
+
+    def test_convert_transparent_image_to_jpeg_uses_white_background_and_checks_guard(self):
+        stream = io.BytesIO()
+        image = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+        image.save(stream, "PNG")
+        original = self.upload(raw=stream.getvalue())
+        query = {"id": original["id"], "format": "jpg"}
+        with self.assertRaisesRegex(ValueError, "cancelled"):
+            self.docs.tool("document_convert", "chat", query, self.privacy,
+                           guard=lambda: (_ for _ in ()).throw(ValueError("cancelled")))
+        self.assertEqual(len(self.docs.listing("chat")), 1)
+        result = self.docs.tool("document_convert", "chat", query, self.privacy)
+        with Image.open(io.BytesIO(self.docs.get("chat", result["document"]["id"])["content"])) as converted:
+            self.assertEqual(converted.getpixel((10, 10)), (255, 255, 255))
+
     def test_upload_validates_pixels_and_strips_metadata_before_vision(self):
         document = self.upload()
         self.assertTrue(document["is_image"])

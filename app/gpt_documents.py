@@ -378,11 +378,13 @@ class Documents:
         return row["name"], row["content"]
 
     def convert(self, chat, row, target_format, guard=None):
-        if extension(row["name"]) != ".pdf" or target_format != "docx":
-            raise ValueError("Поддерживается преобразование PDF в DOCX. Укажите format=docx")
-        if not row["content"] or len(row["content"]) > MAX_BYTES:
-            raise ValueError("Размер документа должен быть от 1 байта до 3 МБ")
-        name = PurePath(row["name"]).stem[:175] + ".docx"
+        image = extension(row["name"]) in gpt_images.FORMATS and target_format in ("jpg", "jpeg")
+        if not image and (extension(row["name"]) != ".pdf" or target_format != "docx"):
+            raise ValueError("Поддерживаются PDF в DOCX (format=docx) и изображения в JPEG (format=jpeg)")
+        limit = gpt_images.MAX_BYTES if image else MAX_BYTES
+        if not row["content"] or len(row["content"]) > limit:
+            raise ValueError("Размер файла должен быть от 1 байта до " + ("10 МБ" if image else "3 МБ"))
+        name = PurePath(row["name"]).stem[:175] + (".jpg" if image else ".docx")
         with db_lock():
             if guard:
                 guard()
@@ -394,8 +396,11 @@ class Documents:
                     existing["protected"] = True
                 return existing
         # Revalidate legacy rows before the layout-aware converter sees their content.
-        load(row["name"], row["content"])
-        raw = pdf_word.convert(row["content"], MAX_BYTES)
+        if image:
+            raw = gpt_images.to_jpeg(row["content"])
+        else:
+            load(row["name"], row["content"])
+            raw = pdf_word.convert(row["content"], MAX_BYTES)
         with db_lock():
             if guard:
                 guard()
@@ -420,7 +425,7 @@ class Documents:
         if not isinstance(query, dict):
             raise ValueError("Параметры документа должны быть JSON-объектом")
         row = self.get(chat, str(query.get("id") or ""))
-        if extension(row["name"]) in gpt_images.FORMATS:
+        if extension(row["name"]) in gpt_images.FORMATS and tool != "document_convert":
             if tool == "document_read":
                 return {"id": row["id"], "is_image": True, "tool": "image_read", "note": "Для чтения изображения вызовите image_read с этим id"}
             raise ValueError("Правка изображений недоступна")
@@ -428,7 +433,7 @@ class Documents:
             if tool == "document_convert":
                 result = self.convert(chat, row, query.get("format"), guard=guard)
                 return {"document": {**result, "name": privacy.register("ДОКУМЕНТ", result["name"])},
-                        "format": "docx", "note": "Создана копия Word. Исходный PDF сохранён"}
+                        "format": extension(result["name"]).lstrip("."), "note": "Создан преобразованный файл. Исходный файл сохранён"}
             if tool == "document_read":
                 obj, units = load(row["name"], row["content"])
                 if extension(row["name"]) == ".xlsx":

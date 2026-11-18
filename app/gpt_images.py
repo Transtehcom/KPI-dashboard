@@ -33,7 +33,8 @@ def normalize(raw):
                 pixels = Image.new(mode, oriented.size)
                 pixels.paste(oriented.convert(mode))
                 output = io.BytesIO()
-                pixels.save(output, fmt)
+                options = {"quality": 95, "subsampling": 0} if fmt == "JPEG" else {}
+                pixels.save(output, fmt, **options)
                 clean = output.getvalue()
                 if len(clean) > MAX_BYTES:
                     raise ValueError("После очистки изображение превышает 10 МБ. Уменьшите его размер")
@@ -44,6 +45,22 @@ def normalize(raw):
         raise
     except Exception:
         raise ValueError("Не удалось прочитать изображение. Прикрепите корректный PNG, JPEG или WebP до 20 миллионов пикселей") from None
+
+
+def to_jpeg(raw):
+    """Convert validated local pixels to JPEG, flattening transparency onto white."""
+    from PIL import Image
+    clean, _metadata = normalize(raw)
+    with Image.open(io.BytesIO(clean)) as source:
+        rgba = source.convert("RGBA")
+        pixels = Image.new("RGB", source.size, "white")
+        pixels.paste(rgba, mask=rgba.getchannel("A"))
+        output = io.BytesIO()
+        pixels.save(output, "JPEG", quality=95, subsampling=0)
+        raw = output.getvalue()
+    if len(raw) > MAX_BYTES:
+        raise ValueError("Преобразованное изображение превышает 10 МБ")
+    return raw
 
 
 def local_ocr(raw):
