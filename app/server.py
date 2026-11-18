@@ -39,6 +39,7 @@ ASSET_TYPES = {".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-ico
                ".js": "text/javascript; charset=utf-8"}
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 PLAN_METRICS = {"gross_profit", "revenue"}
+BITRIX_APP_PATHS = {"/bitrix24/ttkgpt/", "/bitrix24/ttkgpt/install"}
 # защита от подбора пароля: не больше LOGIN_MAX_FAILS неудачных попыток за LOGIN_WINDOW секунд
 LOGIN_MAX_FAILS = 10
 LOGIN_WINDOW = 15 * 60
@@ -101,6 +102,13 @@ class App:
             if not hasattr(self, "_call_jobs"):
                 self._call_jobs = JobQueue(self.con, self.config)
             return self._call_jobs
+
+    def bitrix_app_service(self):
+        from .bitrix_app import BitrixApp
+        with self.lock:
+            if not hasattr(self, "_bitrix_app"):
+                self._bitrix_app = BitrixApp(self.con, self.config)
+            return self._bitrix_app
 
     def login_blocked(self, key):
         now = time.monotonic()
@@ -529,8 +537,61 @@ class Handler(BaseHTTPRequestHandler):
         return v
 
     # ---------- маршруты
+    def bitrix_app_response(self, method, url):
+        fields = {}
+        if method == "POST":
+            try:
+                lengths = self.headers.get_all("Content-Length", [])
+                if len(lengths) != 1 or self.headers.get("Transfer-Encoding"):
+                    raise ValueError
+                size = int(lengths[0])
+            except (TypeError, ValueError):
+                self.close_connection = True
+                return self.send_json({"error": "Некорректный размер запроса"}, 400)
+            if not 0 < size <= 65536:
+                self.close_connection = True
+                return self.send_json({"error": "Допустимый размер запроса — до 64 КБ"}, 413)
+            content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type != "application/x-www-form-urlencoded":
+                self.close_connection = True
+                return self.send_json({"error": "Ожидается форма Битрикс24"}, 415)
+            try:
+                values = parse_qs(self.rfile.read(size).decode("utf-8"), keep_blank_values=True,
+                                  strict_parsing=True, max_num_fields=128, errors="strict")
+                query = parse_qs(url.query, keep_blank_values=True, max_num_fields=32, errors="strict")
+                if any(len(items) != 1 for items in values.values()):
+                    raise ValueError
+                fields = {name: items[0] for name, items in values.items()}
+                for name in ("DOMAIN", "PROTOCOL"):
+                    if name in query:
+                        if len(query[name]) != 1 or name in fields and fields[name] != query[name][0]:
+                            raise ValueError
+                        fields[name] = query[name][0]
+            except (UnicodeError, ValueError):
+                return self.send_json({"error": "Некорректная форма Битрикс24"}, 400)
+        try:
+            status, page = self.app.bitrix_app_service().page(method, url.path, fields)
+        except Exception:
+            return self.send_json({"error": "Не удалось обработать подключение Битрикс24"}, 500)
+        body = page.encode("utf-8")
+        portal = portal_origin(self.app.config)
+        ancestors = "'self'" + (" " + portal if portal else "")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
+                         "script-src 'unsafe-inline' https://api.bitrix24.tech; base-uri 'none'; "
+                         "form-action 'none'; frame-ancestors " + ancestors)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path in BITRIX_APP_PATHS:
+            return self.bitrix_app_response("GET", u)
         if not u.path.startswith("/api/"):
             if u.path in ("/", "/index.html"):
                 return self.send_file(os.path.join(WEB, "index.html"), "text/html; charset=utf-8")
@@ -547,6 +608,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path in BITRIX_APP_PATHS:
+            return self.bitrix_app_response("POST", u)
         self.api("POST", u.path, {k: v[0] for k, v in parse_qs(u.query).items()})
 
     def operations_response(self, method, path, query, body, me):
