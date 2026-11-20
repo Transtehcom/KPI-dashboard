@@ -877,7 +877,7 @@ class Handler(BaseHTTPRequestHandler):
                             return JsonResponse(service.manage_chat(me["login"], str(b.get("id") or ""), b.get("action"), b.get("value")))
                         if path == "/api/gpt-send" and method == "POST":
                             return JsonResponse(service.submit(me["login"],str(b.get("id") or ""),b.get("text"),
-                                b.get("model") or "gpt-6-luna",b.get("effort") or "medium",b.get("month"),fast=b.get("fast",False)))
+                                b.get("model"),b.get("effort") or "medium",b.get("month"),fast=b.get("fast",False)))
                         if path == "/api/gpt-cancel" and method == "POST":
                             service.cancel(me["login"],str(b.get("id") or ""))
                             return JsonResponse({"ok":True})

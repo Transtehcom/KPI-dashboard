@@ -24,16 +24,24 @@ MODELS = {"gpt-6.2-sol": "GPT-6.2 Sol", "gpt-6.2-astra": "GPT-6.2 Astra",
           "gpt-6-sol": "GPT-6 Sol", "gpt-6-luna": "GPT-6 Luna", "gpt-5.6-sol": "GPT-5.6 Sol",
           "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna"}
 MODEL = "gpt-5.6-terra"  # по умолчанию; руководитель выбирает модель в разделе «Звонки»
-EFFORTS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "xhigh": "Сверхвысокий", "max": "Максимальный", "ultra": "Ультра"}
+EFFORTS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "xhigh": "Очень высокое", "max": "Максимальный", "ultra": "Ультра"}
 EFFORT = "high"
+STAFF_MODEL_EFFORTS = {
+    "gpt-6.1-terra": ("low", "medium", "high", "xhigh"),
+    "gpt-6.2-sol": ("low", "medium", "high"),
+}
+
+
+def default_chat_model(admin):
+    return "gpt-6-luna" if admin else "gpt-6.1-terra"
 
 def model_options(admin=True):
-    models = MODELS if admin else {key: MODELS[key] for key in ("gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol")}
+    models = MODELS if admin else {key: MODELS[key] for key in STAFF_MODEL_EFFORTS}
     levels = {}
     for model in models:
         allowed = {k: v for k, v in EFFORTS.items() if k != "ultra" or "luna" not in model}
         if not admin:
-            allowed = {k: v for k, v in allowed.items() if model != "gpt-6.1-sol" or k in ("low", "medium")}
+            allowed = {k: EFFORTS[k] for k in STAFF_MODEL_EFFORTS[model]}
         levels[model] = allowed
     return {"models": models, "efforts": EFFORTS, "model_efforts": levels}
 

@@ -8,8 +8,9 @@ import time
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit
 
-from .call_analysis import model_options
+from .call_analysis import default_chat_model, model_options, validate_fast, validate_selection
 from .common import db_lock
+from .gpt_access import Access
 from .section_access import visible
 from .bitrix_files import BitrixFiles, message_files
 from . import gpt_voice
@@ -167,6 +168,8 @@ class BitrixBot:
                     bot_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                     owner TEXT NOT NULL, chat_id TEXT NOT NULL,
                     PRIMARY KEY(bot_id,user_id));
+                CREATE TABLE IF NOT EXISTS bot_model_preferences (
+                    owner TEXT PRIMARY KEY, model TEXT NOT NULL, effort TEXT NOT NULL, fast INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS bitrix_bot_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, bot_id INTEGER NOT NULL,
                     event_id INTEGER NOT NULL, message_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -396,17 +399,72 @@ class BitrixBot:
         return service.shared_chat(job['owner'])['id']
 
     def _selection(self, owner):
-        employee = next(employee for employee in self.config['employees'] if employee['login'] == owner)
-        admin = employee.get('role') == 'manager'
+        admin = Access(self.config, owner).admin
         options = model_options(admin)
-        settings = self.config.get('bitrix_app', {})
-        model = settings.get('model', 'gpt-6.1-sol')
+        with db_lock():
+            row = self.con.execute('SELECT model,effort,fast FROM bot_model_preferences WHERE owner=?', (owner,)).fetchone()
+        settings = dict(row) if row else self.config.get('bitrix_app', {})
+        default_model = 'gpt-6.1-sol' if admin else default_chat_model(admin)
+        model = settings.get('model', default_model)
         if model not in options['models']:
-            model = 'gpt-6.1-sol' if 'gpt-6.1-sol' in options['models'] else next(iter(options['models']))
+            model = default_model
         effort = settings.get('effort', 'high' if admin else 'medium')
         if effort not in options['model_efforts'][model]:
             effort = 'medium' if 'medium' in options['model_efforts'][model] else next(iter(options['model_efforts'][model]))
-        return {'model': model, 'effort': effort, 'fast': admin and settings.get('fast') is True}
+        return {'model': model, 'effort': effort, 'fast': admin and settings.get('fast') in (True, 1)}
+
+    def _model_command(self, job):
+        words = job['question'].split(maxsplit=1)
+        if not words or words[0].lower() not in ('/settings', '/model', '/effort', '/speed'):
+            return False
+        command = words[0].lower()
+        value = words[1].strip().casefold() if len(words) == 2 else ''
+        owner = job['owner']
+        with db_lock():
+            if self.job_owner(job) != owner:
+                self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                return True
+            admin = Access(self.config, owner).admin
+            options = model_options(admin)
+            selection = self._selection(owner)
+            try:
+                if value:
+                    if command == '/model':
+                        model = next((key for key, title in options['models'].items()
+                                      if value in (key, title.casefold())), None)
+                        if not model:
+                            raise ValueError('Модель недоступна. Список моделей: /model.')
+                        selection['model'] = model
+                        levels = options['model_efforts'][model]
+                        if selection['effort'] not in levels:
+                            selection['effort'] = next(reversed(levels))
+                    elif command == '/effort':
+                        selection['effort'] = next((key for key, title in options['efforts'].items()
+                                                    if value in (key, title.casefold())), value)
+                    elif command == '/speed' and value in ('normal', 'fast'):
+                        selection['fast'] = value == 'fast'
+                    else:
+                        raise ValueError('Доступные команды и значения: /settings.')
+                    validate_selection(selection['model'], selection['effort'], admin)
+                    validate_fast(selection['fast'], admin)
+                    self.con.execute('INSERT INTO bot_model_preferences(owner,model,effort,fast) VALUES (?,?,?,?) '
+                                     'ON CONFLICT(owner) DO UPDATE SET model=excluded.model,effort=excluded.effort,fast=excluded.fast',
+                                     (owner, selection['model'], selection['effort'], int(selection['fast'])))
+                model, effort = selection['model'], selection['effort']
+                reply = (f"Модель: {options['models'][model]}\nМышление: {options['efforts'][effort]}\n"
+                         f"Скорость: {'Fast' if selection['fast'] else 'обычная'}")
+                if not value:
+                    if command in ('/settings', '/model'):
+                        reply += '\n/model <модель> — ' + ', '.join(options['models'])
+                    if command in ('/settings', '/effort'):
+                        levels = options['model_efforts'][model]
+                        reply += '\n/effort <уровень> — ' + ', '.join(f'{k} ({v})' for k,v in levels.items())
+                    if admin and command in ('/settings', '/speed'):
+                        reply += '\n/speed <скорость> — normal, fast'
+            except ValueError as error:
+                reply = str(error)
+            self._ready(job, reply)
+        return True
 
     def _ready(self, job, text, sources=None, documents=None):
         parts = [{'kind': 'file', 'document_id': document['id']} for document in documents or []]
@@ -419,6 +477,8 @@ class BitrixBot:
             job.update(state='delivering', parts=json.dumps(parts, ensure_ascii=False), part_index=0)
 
     def _command(self, service, job):
+        if self._model_command(job):
+            return True
         if self._file_to_notes(service, job):
             return True
         if self._delete_command(job):

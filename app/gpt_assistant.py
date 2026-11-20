@@ -274,7 +274,7 @@ class GPTAssistant:
                 visible.append(row)
             last_sync=dict(self.con.execute("SELECT finished,status FROM sync_log ORDER BY id DESC LIMIT 1").fetchone() or {})
         return {"chats": visible, "access": access.public(), **call_analysis.model_options(access.admin),
-                "default_model": "gpt-6-luna", "default_effort": "medium",
+                "default_model": call_analysis.default_chat_model(access.admin), "default_effort": "medium",
                 "last_sync":last_sync, "fast_allowed": access.admin}
 
     def chat(self, owner, jid, after=None):
@@ -393,11 +393,14 @@ class GPTAssistant:
                 raise ValueError("Сообщение не найдено")
             return {"outbound":row[0] or "Контекст ещё не подготовлен"}
 
-    def submit(self, owner, jid, text, model="gpt-6-luna", effort="medium", month=None, launch=True, fast=False, *, bot_job_id=None):
+    def submit(self, owner, jid, text, model=None, effort="medium", month=None, launch=True, fast=False, *, bot_job_id=None):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 6000:
             raise ValueError("Введите вопрос длиной до 6 000 символов")
-        call_analysis.validate_selection(model, effort, Access(self.config, owner).admin)
-        call_analysis.validate_fast(fast, Access(self.config, owner).admin)
+        admin = Access(self.config, owner).admin
+        if model is None:
+            model = call_analysis.default_chat_model(admin)
+        call_analysis.validate_selection(model, effort, admin)
+        call_analysis.validate_fast(fast, admin)
         if month and (not isinstance(month,str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])",month)):
             raise ValueError("Укажите месяц ГГГГ-ММ")
         with db_lock():

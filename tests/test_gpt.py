@@ -80,17 +80,17 @@ class ModelPolicyTest(unittest.TestCase):
         admin=model_options(True);staff=model_options(False)
         for model in ("gpt-6.2-sol", "gpt-6.2-astra"):
             self.assertIn(model, admin["models"])
-            self.assertNotIn(model, staff["models"])
             for effort in ("low", "medium", "high", "xhigh", "max", "ultra"):
                 validate_selection(model, effort, True)
-            with self.assertRaises(ValueError):
-                validate_selection(model, "low", False)
-        self.assertEqual(len(staff["models"]),4)
+        expected = {"gpt-6.1-terra": ("low", "medium", "high", "xhigh"),
+                    "gpt-6.2-sol": ("low", "medium", "high")}
+        self.assertEqual(set(staff["models"]), set(expected))
+        for model, efforts in expected.items():
+            self.assertEqual(tuple(staff["model_efforts"][model]), efforts)
+            for effort in efforts:
+                validate_selection(model, effort, False)
         validate_selection("gpt-6.1-sol","ultra",True)
-        validate_selection("gpt-6.1-sol","medium",False)
-        validate_selection("gpt-5.6-terra","max",False)
-        validate_selection("gpt-5.6-terra","ultra",False)
-        for model,effort,manager in [("gpt-6.1-sol","high",False),("gpt-6-astra","low",False),("gpt-6-luna","ultra",True)]:
+        for model,effort,manager in [("gpt-6.1-terra","max",False),("gpt-6.2-sol","xhigh",False),("gpt-6-astra","low",False),("gpt-6-luna","ultra",True)]:
             with self.assertRaises(ValueError):validate_selection(model,effort,manager)
 
 
@@ -191,8 +191,16 @@ class GPTTest(unittest.TestCase):
         for model,effort in [("gpt-6-astra","low"),("gpt-6.1-sol","high")]:
             with self.assertRaises(ValueError):
                 self.service.submit("pm",chat["id"],"Мой KPI",model=model,effort=effort,launch=False)
-        job=self.service.submit("pm",chat["id"],"Мой KPI",model="gpt-6.1-sol",effort="medium",launch=False)
+        job=self.service.submit("pm",chat["id"],"Мой KPI",model="gpt-6.2-sol",effort="high",launch=False)
         self.assertEqual(job["status"],"running")
+
+    def test_staff_default_is_available_in_catalog_and_used_for_submission(self):
+        listing = self.service.chats("pm")
+        self.assertEqual(listing["default_model"], "gpt-6.1-terra")
+        self.assertIn(listing["default_model"], listing["models"])
+        job = self.service.submit("pm", self.service.create_chat("pm")["id"], "Мой KPI", launch=False)
+        row = self.con.execute("SELECT model,effort,fast FROM gpt_messages WHERE id=?", (job["id"],)).fetchone()
+        self.assertEqual(tuple(row), ("gpt-6.1-terra", "medium", 0))
 
     def test_chat_ownership(self):
         chat=self.service.create_chat("boss")

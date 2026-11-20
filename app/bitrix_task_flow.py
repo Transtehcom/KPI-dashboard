@@ -70,7 +70,7 @@ class TaskFlow:
     def process(self, job, key, messages):
         writing = False
         try:
-            parsed = bitrix_task_parse.parse(messages, self.bot.config, job['owner'])
+            parsed = bitrix_task_parse.parse(messages, self.bot.config, **self.bot._selection(job['owner']))
             question = parsed.get('question') or ''
             try:
                 people = self.resolve(parsed['responsible'], job['user_id'])

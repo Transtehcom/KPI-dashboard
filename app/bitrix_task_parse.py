@@ -52,7 +52,7 @@ def starts(text):
     return isinstance(text, str) and bool(_CREATE.match(' '.join(text.split())))
 
 
-def parse(messages, config, owner):
+def parse(messages, config, *, model, effort, fast):
     """Parse only the current draft's user messages. Directory resolution happens locally."""
     if not messages or isinstance(messages, str) or not all(isinstance(text, str) for text in messages):
         raise ValueError("Нет сообщений для постановки задачи.")
@@ -60,12 +60,11 @@ def parse(messages, config, owner):
     privacy.config_secrets(config)
     quoted = [privacy.redact_secrets(text) for text in messages]
     payload = {'now': dt.datetime.now(_EKB).isoformat(timespec='minutes'), 'messages': quoted}
-    settings = {'codex_web_search': False, 'call_records': {
+    settings = {'codex_web_search': False, 'codex_fast': fast, 'call_records': {
         'codex_path': call_analysis.codex_path(config), 'analysis_timeout_seconds': 90}}
     response = call_analysis.run_codex(
         _PROMPT + '\n' + json.dumps(payload, ensure_ascii=False), settings, attempts=1,
-        model=(config.get('bitrix_app') or {}).get('model') or 'gpt-6.1-sol',
-        effort='low', schema=_SCHEMA)['result']
+        model=model, effort=effort, schema=_SCHEMA)['result']
     if (not isinstance(response, dict) or set(response) != set(_SCHEMA['properties'])
             or not all(isinstance(response[key], str) for key in _TEXT)):
         raise ValueError("Не удалось разобрать поля задачи.")

@@ -31,6 +31,7 @@ class TaskFlowTest(unittest.TestCase):
             self.fixture.bot.tick()
             self.send(1002, 'staff и third, согласовать оформление сайта')
             self.assertEqual(len(parse.call_args.args[0]), 2)
+            self.assertEqual(parse.call_args.kwargs, self.fixture.bot._selection(job['owner']))
             self.fixture.bot.tick()
             self.send(1002, 'staff и third, согласовать оформление сайта')
         self.fixture.api.create_user_task.assert_called_once_with(7, {'TITLE':complete['title'], 'RESPONSIBLE_ID':8,'ACCOMPLICES':[9]})

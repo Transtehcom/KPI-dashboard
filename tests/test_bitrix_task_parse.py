@@ -27,23 +27,27 @@ class TaskParserTest(unittest.TestCase):
         self.runner = runner.start()
         self.addCleanup(runner.stop)
         self.messages = ['Поставь задачу Валентине. Мне надо, чтобы она согласовала оформление сайта.']
+        self.selection = {'model':'gpt-6.2-sol', 'effort':'high', 'fast':True}
 
     def test_restricts_model_inputs_and_preserves_roles(self):
-        config = {'webhook': 'xyzSecret', 'employees': [{'name': 'Скрытый сотрудник'}]}
+        config = {'webhook': 'xyzSecret', 'employees': [{'name': 'Скрытый сотрудник', 'login':'private_login'}]}
         self.messages.append('Для наблюдателя Ивана, соисполнитель Анна. Пароль: xyzSecret')
         self.result.update(auditors=['Ивана'], accomplices=['Анна'], deadline='2026-11-20T15:00:00+05:00')
         self.messages.append('До завтра в 15:00.')
-        self.assertEqual(parser.parse(self.messages, config, 'private_login'), self.result)
+        self.assertEqual(parser.parse(self.messages, config, **self.selection), self.result)
         prompt, settings = self.runner.call_args.args
         for secret in ('xyzSecret', 'Скрытый сотрудник', 'private_login'):
             self.assertNotIn(secret, prompt)
             self.assertNotIn(secret, str(settings))
         self.assertFalse(settings['codex_web_search'])
+        self.assertTrue(settings['codex_fast'])
+        self.assertEqual(self.runner.call_args.kwargs['model'], 'gpt-6.2-sol')
+        self.assertEqual(self.runner.call_args.kwargs['effort'], 'high')
         self.assertFalse(self.runner.call_args.kwargs['schema']['additionalProperties'])
 
     def test_unknown_or_partial_person_requires_clarification(self):
         self.result['auditors'] = ['Валентин', 'Пётр']
-        draft = parser.parse(self.messages, {}, 'owner')
+        draft = parser.parse(self.messages, {}, **self.selection)
         self.assertEqual(draft['auditors'], [])
         self.assertTrue(draft['question'])
 
@@ -51,23 +55,23 @@ class TaskParserTest(unittest.TestCase):
         for invalid in ('завтра', '2026-11-20', '2026-11-20T12:00'):
             with self.subTest(invalid=invalid):
                 self.result['deadline'] = invalid
-                draft = parser.parse(self.messages, {}, 'owner')
+                draft = parser.parse(self.messages, {}, **self.selection)
                 self.assertEqual(draft['deadline'], '')
                 self.assertTrue(draft['question'])
 
     def test_incomplete_or_unrelated_requires_clarification(self):
         self.result.update(responsible=[], title='')
-        self.assertTrue(parser.parse(['Мне надо поставить задачу'], {}, 'owner')['question'])
+        self.assertTrue(parser.parse(['Мне надо поставить задачу'], {}, **self.selection)['question'])
         self.result['question'] = 'Продолжить постановку задачи или отменить её?'
-        self.assertEqual(parser.parse(self.messages + ['Какая погода?'], {}, 'owner')['question'],
+        self.assertEqual(parser.parse(self.messages + ['Какая погода?'], {}, **self.selection)['question'],
                          self.result['question'])
 
     def test_complete_task_requires_description(self):
         self.result['description'] = ' '
         with self.assertRaisesRegex(ValueError, 'описание'):
-            parser.parse(self.messages, {}, 'owner')
+            parser.parse(self.messages, {}, **self.selection)
 
     def test_rejects_unexpected_model_fields(self):
         self.result['responsibleId'] = 55
         with self.assertRaisesRegex(ValueError, 'разобрать поля'):
-            parser.parse(self.messages, {}, 'owner')
+            parser.parse(self.messages, {}, **self.selection)

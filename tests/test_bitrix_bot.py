@@ -344,7 +344,33 @@ class BitrixBotTest(unittest.TestCase):
         self.config['bitrix_app'] = {'model': 'gpt-6.1-sol', 'effort': 'high', 'fast': True}
         self.feed(event(), event(1002, user=8))
         self.assertEqual(self.submit.call_args_list[0].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'high', 'fast': True, 'bot_job_id':self.jobs()[0]['id']})
-        self.assertEqual(self.submit.call_args_list[1].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'medium', 'fast': False, 'bot_job_id':self.jobs()[1]['id']})
+        self.assertEqual(self.submit.call_args_list[1].kwargs, {'model': 'gpt-6.1-terra', 'effort': 'high', 'fast': False, 'bot_job_id':self.jobs()[1]['id']})
+
+    def test_personal_model_commands_persist_and_do_not_generate_a_turn(self):
+        self.activate()
+        self.feed(event(1001,text='/model gpt-6.2-astra'))
+        self.feed(event(1002,text='/effort ultra'))
+        self.feed(event(1003,text='/speed fast'))
+        self.bot = self.Bot(self.con,self.config,self.api,lambda: self.gpt)
+        self.feed(event(1004,text='/settings'))
+        self.assertIn('GPT-6.2 Astra', self.api.sent[-1]['fields']['message'])
+        self.submit.assert_not_called()
+        self.feed(event(1005))
+        self.assertEqual(self.submit.call_args.kwargs, dict(model='gpt-6.2-astra',effort='ultra',fast=True,bot_job_id=self.jobs()[-1]['id']))
+        self.assertFalse(self.bot._selection('staff')['fast'])
+        self.config['employees'][0]['role'] = 'employee'
+        self.assertEqual(self.bot._selection('admin'), dict(model='gpt-6.1-terra',effort='medium',fast=False))
+
+    def test_staff_model_commands_apply_each_role_limit(self):
+        self.activate()
+        for identity, command in enumerate(('/model','/effort Очень высокое','/model gpt-6.2-sol','/effort xhigh','/model gpt-6.2-astra','/speed fast'),1001):
+            self.feed(event(identity,user=8,text=command))
+        self.submit.assert_not_called()
+        help_text = self.api.sent[0]['fields']['message']
+        self.assertIn('gpt-6.1-terra', help_text)
+        self.assertNotIn('astra', help_text)
+        self.feed(event(1007,user=8))
+        self.assertEqual(self.submit.call_args.kwargs, dict(model='gpt-6.2-sol',effort='high',fast=False,bot_job_id=self.jobs()[-1]['id']))
 
     def test_changed_access_creates_new_context_and_old_response_is_withheld(self):
         self.activate()
