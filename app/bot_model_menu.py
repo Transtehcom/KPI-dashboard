@@ -57,7 +57,7 @@ def choose(con, owner, channel, admin, value):
     title = options["models"][model] + " · " + options["efforts"][effort]
     if step == "effort" and admin:
         return _prompt(con, owner, channel, "speed", title + " · Выберите скорость.",
-                       {"normal": "Обычная", "fast": "Fast"}, model, effort)
+                       {"normal": "Обычная", "fast": "🚀 Fast"}, model, effort)
     if step == "speed" and (not admin or choice not in ("normal", "fast")):
         return stale
     fast = step == "speed" and choice == "fast"

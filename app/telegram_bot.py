@@ -12,17 +12,27 @@ import time
 import urllib.request
 import uuid
 
-from . import bot_model_menu
+from . import bot_chat_controls, bot_model_menu
 from .common import db_lock
 from .bitrix_bot import ATTACHMENT_QUESTION
 from .gpt_access import Access
 
 
 OPEN_SETTINGS = 'ttk:open'
+OPEN_HELP = 'menu:help'
+OPEN_RESTART = 'menu:restart'
+OPEN_MENU = 'menu:home'
 
 
-def settings_reply(text):
-    return {'text':text, 'buttons':[('Настройки модели',OPEN_SETTINGS)]}
+def menu_reply(text=None):
+    return {'text':text or bot_chat_controls.MENU_TEXT,
+            'buttons':[(bot_chat_controls.MODELS_LABEL,OPEN_SETTINGS),
+                       (bot_chat_controls.HELP_LABEL,OPEN_HELP),
+                       (bot_chat_controls.RESTART_LABEL,OPEN_RESTART)]}
+
+
+def help_reply():
+    return {'text':bot_chat_controls.HELP_TEXT,'buttons':[('↩️ В меню',OPEN_MENU)]}
 
 
 def telegram_message(peer, reply):
@@ -78,6 +88,7 @@ class Telegram:
     def unlink(self, owner):
         with db_lock():
             self.con.execute("DELETE FROM bot_model_menus WHERE owner=? AND channel LIKE 'tg:%'", (owner,))
+            self.con.execute("DELETE FROM bot_chat_restarts WHERE owner=? AND channel LIKE 'tg:%'", (owner,))
             self.con.execute('DELETE FROM tg_binding WHERE owner=?', (owner,))
             self.con.execute('DELETE FROM tg_ticket WHERE owner=?', (owner,))
             self.con.commit()
@@ -141,8 +152,9 @@ class Telegram:
                 if uid and self.bridge._owner(uid) == owner:
                     self.con.execute('DELETE FROM tg_ticket WHERE hash=?',(digest,))
                     self.con.execute('DELETE FROM bot_model_menus WHERE channel=?',(f'tg:{self.bot_id}:{peer}',))
+                    self.con.execute('DELETE FROM bot_chat_restarts WHERE channel=?',(f'tg:{self.bot_id}:{peer}',))
                     self.con.execute('INSERT OR REPLACE INTO tg_binding VALUES(?,?,?,?)',(self.bot_id,peer,owner,uid))
-                    return settings_reply('Telegram подключён к ttkGPT. Можно задать вопрос или поставить задачу. Настройки модели — /settings.')
+                    return menu_reply('Telegram подключён к ttkGPT.\n' + bot_chat_controls.MENU_TEXT)
             return 'Ссылка недействительна. Получите новую в разделе ttkGPT дашборда.'
         row = self.binding(peer)
         if not row:
@@ -157,13 +169,20 @@ class Telegram:
             return 'Отправьте текст, документ, фото или голосовое сообщение.'
         if not references:
             command = text.strip().casefold().removesuffix('@' + self.username.casefold())
-            if command == '/start':
-                return settings_reply('Вы подключены. Задайте вопрос или напишите «Поставь задачу». Настройки модели — /settings.')
+            if command in ('/start', '/menu'):
+                return menu_reply()
+            if command == '/help':
+                return help_reply()
+            if command == '/restart':
+                return bot_chat_controls.request_restart(self.con,row[0],f'tg:{self.bot_id}:{peer}')
             if command in ('/settings','/model','/effort','/speed'):
                 return self.model_menu(row[0],peer,OPEN_SETTINGS)
+        self.enqueue(peer,row,update_id,text,references)
+
+    def enqueue(self, peer, binding, update_id, text, references):
         self.con.execute("""INSERT OR IGNORE INTO bitrix_bot_jobs
             (bot_id,event_id,message_id,user_id,dialog_id,owner,question,attachments) VALUES(?,?,?,?,?,?,?,?)""",
-            (-self.bot_id,update_id,update_id,row[1],str(peer),row[0],text,json.dumps(references)))
+            (-self.bot_id,update_id,update_id,binding[1],str(peer),binding[0],text,json.dumps(references)))
 
     def binding(self, peer):
         row = self.con.execute('SELECT owner,uid FROM tg_binding WHERE bot=? AND peer=?',(self.bot_id,peer)).fetchone()
@@ -175,6 +194,25 @@ class Telegram:
         if value == OPEN_SETTINGS:
             return bot_model_menu.begin(self.con,owner,channel,admin,self.bridge._selection(owner))
         return bot_model_menu.choose(self.con,owner,channel,admin,value)
+
+    def chat_button(self, binding, peer, value, update_id):
+        owner = binding[0]
+        channel = f'tg:{self.bot_id}:{peer}'
+        if value == OPEN_HELP:
+            return help_reply()
+        if value == OPEN_MENU:
+            return menu_reply()
+        if value == OPEN_RESTART:
+            return bot_chat_controls.request_restart(self.con,owner,channel)
+        if value.startswith('restart:'):
+            answer = bot_chat_controls.consume_restart(self.con,owner,channel,value)
+            if answer == 'yes':
+                self.enqueue(peer,binding,update_id,'/new',[])
+                return menu_reply('Запрос на новый чат принят.')
+            if answer == 'no':
+                return menu_reply('Продолжаем текущий чат.')
+            return {'text':'Подтверждение устарело. Откройте /restart ещё раз.','stale':True}
+        return self.model_menu(owner,peer,value)
 
     def handle_update(self, update):
         callback = update.get('callback_query')
@@ -193,7 +231,7 @@ class Telegram:
                     elif (message.get('from') or {}).get('id') != self.bot_id or not message.get('message_id'):
                         alert = 'Откройте настройки командой /settings.'
                     else:
-                        menu = self.model_menu(row[0],peer,callback.get('data') or '')
+                        menu = self.chat_button(row,peer,callback.get('data') or '',update['update_id'])
                         if menu.get('stale'):
                             alert = menu['text']
                         else:

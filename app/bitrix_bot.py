@@ -8,7 +8,7 @@ import time
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit
 
-from . import bot_model_menu
+from . import bot_chat_controls, bot_model_menu
 from .call_analysis import default_chat_model, model_options, validate_fast, validate_selection
 from .common import db_lock
 from .gpt_access import Access
@@ -187,6 +187,7 @@ class BitrixBot:
                     PRIMARY KEY(job_id,file_id));
             ''')
             bot_model_menu.ensure_schema(con)
+            bot_chat_controls.ensure_schema(con)
             columns = {row[1] for row in con.execute('PRAGMA table_info(bitrix_bot_jobs)')}
             for name, declaration in (('attachments', "TEXT NOT NULL DEFAULT '[]'"), ('document_baseline', 'TEXT')):
                 if name not in columns:
@@ -495,7 +496,46 @@ class BitrixBot:
             self._update(job['id'], state='delivering', parts=json.dumps(parts, ensure_ascii=False), part_index=0, error='')
             job.update(state='delivering', parts=json.dumps(parts, ensure_ascii=False), part_index=0)
 
+    def _chat_control(self, service, job):
+        command = job['question'].strip().casefold()
+        new_chat = command in ('/new', 'новый чат')
+        confirmation = command.startswith('restart:')
+        if not new_chat and (job['bot_id'] < 0 or
+                             (not confirmation and command not in ('/start', '/menu', '/help', '/restart'))):
+            return False
+        buttons = [(bot_chat_controls.MODELS_LABEL, '/settings'),
+                   (bot_chat_controls.HELP_LABEL, '/help'),
+                   (bot_chat_controls.RESTART_LABEL, '/restart')]
+        owner = job['owner']
+        channel = f"b24:{job['bot_id']}:{job['dialog_id']}"
+        with db_lock():
+            if self.job_owner(job) != owner:
+                self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                return True
+            if command in ('/start', '/menu', '/help'):
+                text = bot_chat_controls.HELP_TEXT if command == '/help' else bot_chat_controls.MENU_TEXT
+            elif command == '/restart':
+                prompt = bot_chat_controls.request_restart(self.con, owner, channel)
+                text, buttons = prompt['text'], prompt['buttons']
+            else:
+                choice = 'yes' if new_chat else bot_chat_controls.consume_restart(self.con, owner, channel, job['question'].strip())
+                if choice == 'yes':
+                    self.con.execute('DELETE FROM bot_chat_restarts WHERE owner=?', (owner,))
+                    self.tasks.clear((job['bot_id'], job['user_id'], owner))
+                    self.con.execute('DELETE FROM bot_task_delete WHERE bot=? AND sender=? AND dialog=? AND owner=?',
+                                     (job['bot_id'], job['user_id'], job['dialog_id'], owner))
+                    self._chat(service, job, reset=True)
+                    text = 'Новый общий чат открыт в дашборде, Битрикс24 и Telegram. История предыдущего диалога сохранена в дашборде.'
+                elif choice == 'no':
+                    text = 'Продолжаем текущий чат.'
+                else:
+                    text = 'Эта кнопка уже недоступна. Для нового чата нажмите кнопку перезапуска.'
+            self._ready(job, text, buttons=buttons if job['bot_id'] > 0 else None)
+        return True
+
     def _command(self, service, job):
+        if self._chat_control(service, job):
+            return True
         if self._model_command(job):
             return True
         if self._file_to_notes(service, job):
@@ -507,10 +547,6 @@ class BitrixBot:
         if self._write_command(job):
             return True
         command = job['question'].casefold()
-        if command in ('/new', 'новый чат'):
-            self._chat(service, job, reset=True)
-            self._ready(job, 'Новый общий чат открыт в дашборде, Битрикс24 и Telegram.')
-            return True
         if command == '/retry':
             with db_lock():
                 previous = self.con.execute('''SELECT id FROM bitrix_bot_jobs

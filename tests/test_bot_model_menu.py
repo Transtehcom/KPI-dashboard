@@ -37,9 +37,9 @@ class ModelMenuTest(unittest.TestCase):
         levels = dict(self.press(models["GPT-6.2 Astra"], True)["buttons"])
         speeds = dict(self.press(levels["Ультра"], True)["buttons"])
         self.assertIsNone(self.saved())
-        self.assertEqual(set(speeds), {"Обычная", "Fast"})
-        self.assertTrue(self.press(speeds["Fast"])["stale"])
-        self.press(speeds["Fast"], True)
+        self.assertEqual(set(speeds), {"Обычная", "🚀 Fast"})
+        self.assertTrue(self.press(speeds["🚀 Fast"])["stale"])
+        self.press(speeds["🚀 Fast"], True)
         self.assertEqual(self.saved(), ("gpt-6.2-astra", "ultra", 1))
 
     def test_old_menu_wrong_user_other_chat_and_forged_choice(self):

@@ -390,7 +390,7 @@ class BitrixBotTest(unittest.TestCase):
         self.feed(event(1103, text='/model'))
         self.feed(event(1104, text=button('GPT-6.2 Astra')))
         self.feed(event(1105, text=button('Очень высокое')))
-        self.feed(event(1106, text=button('Fast')))
+        self.feed(event(1106, text=button('🚀 Fast')))
         self.assertNotIn('keyboard', self.api.sent[-1]['fields'])
         self.assertEqual(self.bot._selection('admin'), dict(model='gpt-6.2-astra', effort='xhigh', fast=True))
         self.submit.assert_not_called()
@@ -473,6 +473,38 @@ class BitrixBotTest(unittest.TestCase):
         self.feed(event(1004), event(1005, user=8))
         self.assertNotEqual(self.jobs()[3]['chat_id'], self.jobs()[0]['chat_id'])
         self.assertEqual(self.jobs()[4]['chat_id'], staff_chat)
+
+    def test_bitrix_help_and_restart_buttons_preserve_history_and_cancel_stale_confirmation(self):
+        from app import bot_chat_controls as controls
+        self.activate()
+        old = self.gpt.shared_chat('staff')['id']
+        admin_chat = self.gpt.shared_chat('admin')['id']
+        def buttons():
+            return {b['TEXT']:b['ACTION_VALUE'] for b in self.api.sent[-1]['fields']['keyboard']['BUTTONS'] if 'TEXT' in b}
+
+        self.feed(event(1200, user=8, text='/menu'))
+        self.assertEqual(set(buttons().values()), {'/settings','/help','/restart'})
+        self.feed(event(1201, user=8, text=buttons()[controls.HELP_LABEL]))
+        self.assertIn('/settings', self.api.sent[-1]['fields']['message'])
+        self.feed(event(1202, user=8, text=buttons()[controls.RESTART_LABEL]))
+        actions = {value.rsplit(':', 1)[-1]: value for value in buttons().values()}
+        confirm, cancel = actions['yes'], actions['no']
+        self.feed(event(1203, user=7, text=confirm))
+        self.assertEqual(self.gpt.shared_chat('admin')['id'], admin_chat)
+        self.feed(event(1204, user=8, text=cancel))
+        self.feed(event(1205, user=8, text=confirm))
+        self.assertEqual(self.gpt.shared_chat('staff')['id'], old)
+        self.con.execute('INSERT INTO bitrix_task_drafts VALUES (456,8,?,?)', ('staff','["draft"]'))
+        self.feed(event(1206, user=8, text='/restart'))
+        confirm = next(value for value in buttons().values() if value.endswith(':yes'))
+        self.feed(event(1207, user=8, text=confirm))
+        fresh = self.gpt.shared_chat('staff')['id']
+        self.assertNotEqual(fresh, old)
+        self.assertEqual(self.gpt.chat('staff', old)['id'],old)
+        self.assertIsNone(self.con.execute('SELECT 1 FROM bitrix_task_drafts WHERE owner=?',('staff',)).fetchone())
+        self.feed(event(1208, user=8, text=confirm))
+        self.assertEqual(self.gpt.shared_chat('staff')['id'], fresh)
+        self.submit.assert_not_called()
 
     def test_dashboard_and_both_private_channels_share_the_owners_chat(self):
         old = self.gpt.create_chat('admin')['id']
