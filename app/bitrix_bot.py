@@ -8,6 +8,7 @@ import time
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit
 
+from . import bot_model_menu
 from .call_analysis import default_chat_model, model_options, validate_fast, validate_selection
 from .common import db_lock
 from .gpt_access import Access
@@ -185,6 +186,7 @@ class BitrixBot:
                     baseline TEXT NOT NULL, source_hash TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY(job_id,file_id));
             ''')
+            bot_model_menu.ensure_schema(con)
             columns = {row[1] for row in con.execute('PRAGMA table_info(bitrix_bot_jobs)')}
             for name, declaration in (('attachments', "TEXT NOT NULL DEFAULT '[]'"), ('document_baseline', 'TEXT')):
                 if name not in columns:
@@ -415,6 +417,21 @@ class BitrixBot:
 
     def _model_command(self, job):
         words = job['question'].split(maxsplit=1)
+        if job['bot_id'] > 0 and (job['question'].casefold() in ('/settings', '/model')
+                                  or job['question'].startswith('ttk:')):
+            with db_lock():
+                owner = job['owner']
+                if self.job_owner(job) != owner:
+                    self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
+                    return True
+                admin = Access(self.config, owner).admin
+                channel = f"b24:{job['bot_id']}:{job['dialog_id']}"
+                if job['question'].startswith('ttk:'):
+                    menu = bot_model_menu.choose(self.con, owner, channel, admin, job['question'])
+                else:
+                    menu = bot_model_menu.begin(self.con, owner, channel, admin, self._selection(owner))
+                self._ready(job, menu['text'], buttons=menu['buttons'])
+            return True
         if not words or words[0].lower() not in ('/settings', '/model', '/effort', '/speed'):
             return False
         command = words[0].lower()
@@ -466,9 +483,11 @@ class BitrixBot:
             self._ready(job, reply)
         return True
 
-    def _ready(self, job, text, sources=None, documents=None):
+    def _ready(self, job, text, sources=None, documents=None, *, buttons=None):
         parts = [{'kind': 'file', 'document_id': document['id']} for document in documents or []]
         parts.extend({'kind': 'text', 'text': text} for text in _answer_parts(text, sources, telegram=job['bot_id'] < 0))
+        if buttons:
+            parts[-1]['buttons'] = buttons
         with db_lock():
             current = self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()
             if current[0] not in ('queued', 'running'):
@@ -1032,6 +1051,13 @@ class BitrixBot:
             else:
                 method = 'imbot.v2.Chat.Message.send'
                 fields = {'message': part['text'], 'urlPreview': False, 'replyId': job['message_id']}
+                if part.get('buttons') and job['bot_id'] > 0:
+                    keyboard = []
+                    for position, (label, value) in enumerate(part['buttons']):
+                        if position and position % 2 == 0:
+                            keyboard.append({'TYPE': 'NEWLINE'})
+                        keyboard.append({'TEXT': label, 'ACTION': 'SEND', 'ACTION_VALUE': value})
+                    fields['keyboard'] = {'BOT_ID': job['bot_id'], 'BUTTONS': keyboard}
             if job['bot_id'] < 0 and part['kind'] == 'text' and len(fields['message']) > 2000:
                 text = fields['message']
                 parts[index:index+1] = [{'kind':'text','text':chunk} for chunk in _split_reply(text, 2000)]

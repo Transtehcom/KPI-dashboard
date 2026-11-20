@@ -106,7 +106,7 @@ class BitrixBotTest(unittest.TestCase):
         tg = self.bot.telegram = Telegram(self.bot)
         tg.bot_id, tg.username = 50, 'demo_bot'
         code = tg.ticket('staff')['url'].split('start=')[1]
-        self.assertIn('подключён', tg.accept(901, {'text':'/start '+code}, 100))
+        self.assertIn('подключён', tg.accept(901, {'text':'/start '+code}, 100)['text'])
         self.assertIn('недействительна', tg.accept(902, {'text':'/start '+code}, 101))
         self.assertIn('дашборде', tg.accept(902, {'text':'вопрос'}, 102))
         tg.accept(901, {'text':'вопрос'}, 103)
@@ -353,7 +353,8 @@ class BitrixBotTest(unittest.TestCase):
         self.feed(event(1003,text='/speed fast'))
         self.bot = self.Bot(self.con,self.config,self.api,lambda: self.gpt)
         self.feed(event(1004,text='/settings'))
-        self.assertIn('GPT-6.2 Astra', self.api.sent[-1]['fields']['message'])
+        self.assertTrue(any('GPT-6.2 Astra' in button.get('TEXT', '') for button in
+                            self.api.sent[-1]['fields']['keyboard']['BUTTONS']))
         self.submit.assert_not_called()
         self.feed(event(1005))
         self.assertEqual(self.submit.call_args.kwargs, dict(model='gpt-6.2-astra',effort='ultra',fast=True,bot_job_id=self.jobs()[-1]['id']))
@@ -366,11 +367,33 @@ class BitrixBotTest(unittest.TestCase):
         for identity, command in enumerate(('/model','/effort Очень высокое','/model gpt-6.2-sol','/effort xhigh','/model gpt-6.2-astra','/speed fast'),1001):
             self.feed(event(identity,user=8,text=command))
         self.submit.assert_not_called()
-        help_text = self.api.sent[0]['fields']['message']
-        self.assertIn('gpt-6.1-terra', help_text)
-        self.assertNotIn('astra', help_text)
+        names = [b['TEXT'] for b in self.api.sent[0]['fields']['keyboard']['BUTTONS'] if 'TEXT' in b]
+        self.assertEqual(set(names), {'GPT-6.1 Terra', 'GPT-6.2 Sol'})
         self.feed(event(1007,user=8))
         self.assertEqual(self.submit.call_args.kwargs, dict(model='gpt-6.2-sol',effort='high',fast=False,bot_job_id=self.jobs()[-1]['id']))
+
+    def test_bitrix_model_keyboard_staff_and_admin_complete(self):
+        self.activate()
+        def button(label):
+            keyboard = self.api.sent[-1]['fields']['keyboard']
+            self.assertEqual(keyboard['BOT_ID'], 456)
+            result = next(b for b in keyboard['BUTTONS'] if b.get('TEXT', '').casefold() == label.casefold())
+            self.assertEqual(result['ACTION'], 'SEND')
+            return result['ACTION_VALUE']
+
+        self.feed(event(1100, user=8, text='/settings'))
+        self.feed(event(1101, user=8, text=button('GPT-6.2 Sol')))
+        self.feed(event(1102, user=8, text=button('Высокий')))
+        self.assertNotIn('keyboard', self.api.sent[-1]['fields'])
+        self.assertEqual(self.bot._selection('staff'), dict(model='gpt-6.2-sol', effort='high', fast=False))
+
+        self.feed(event(1103, text='/model'))
+        self.feed(event(1104, text=button('GPT-6.2 Astra')))
+        self.feed(event(1105, text=button('Очень высокое')))
+        self.feed(event(1106, text=button('Fast')))
+        self.assertNotIn('keyboard', self.api.sent[-1]['fields'])
+        self.assertEqual(self.bot._selection('admin'), dict(model='gpt-6.2-astra', effort='xhigh', fast=True))
+        self.submit.assert_not_called()
 
     def test_changed_access_creates_new_context_and_old_response_is_withheld(self):
         self.activate()
