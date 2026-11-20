@@ -3,6 +3,7 @@ import datetime as dt
 import hashlib
 import hmac
 import html
+import http.client
 import json
 import re
 import secrets
@@ -49,6 +50,9 @@ class _Transport(_Unavailable):
 class _Expired(_Denied):
     pass
 
+class _InsufficientScope(_Denied):
+    pass
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -75,19 +79,25 @@ def _request(url, values, json_body=False, limit=65536):
         error.close()
         if isinstance(error_data, dict) and error_data.get("error") == "expired_token":
             raise _Expired() from None
+        if isinstance(error_data, dict) and error_data.get("error") == "insufficient_scope":
+            raise _InsufficientScope() from None
         if error.code == 429 or (isinstance(error_data, dict) and error_data.get("error") in
                                 ("QUERY_LIMIT_EXCEEDED", "OPERATION_TIME_LIMIT")):
             raise _Unavailable() from None
         if 400 <= error.code < 500 and error.code != 408:
             raise _Denied() from None
         raise _Transport() from None
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         raise _Transport() from None
     if isinstance(result, dict) and result.get("error") == "expired_token":
         raise _Expired()
+    if isinstance(result, dict) and result.get("error") == "insufficient_scope":
+        raise _InsufficientScope()
     if isinstance(result, dict) and result.get("error") in ("QUERY_LIMIT_EXCEEDED", "OPERATION_TIME_LIMIT"):
         raise _Unavailable()
-    if not isinstance(result, dict) or "error" in result:
+    if not isinstance(result, dict):
+        raise _Transport()
+    if "error" in result:
         raise _Denied()
     return result
 
@@ -136,6 +146,7 @@ class BitrixApp:
         self.con = con
         self.config = config
         self.bot_factory = bot_factory
+        self._note_sessions = {}
         with db_lock():
             self.con.execute("""CREATE TABLE IF NOT EXISTS bitrix_app_installation (
                 id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL,
@@ -275,6 +286,143 @@ class BitrixApp:
         except (TypeError, ValueError):
             raise BitrixAppError("Не удалось выполнить запрос приложения к Битрикс24.") from None
 
+    def _verified_user(self, user_id):
+        session_message = "Откройте приложение ТТКGPT в Битрикс24 под своей учётной записью и повторите команду."
+        stored = self._installed()
+        if not stored:
+            raise BitrixAppError("Приложение Битрикс24 не подключено.")
+        origin = portal_origin(self.config)
+        try:
+            user_id = _user_id(user_id)
+            if not origin or not origin.startswith("https://"):
+                raise _Denied()
+            self._same_installation(stored, self.config.get("bitrix_app", {}).get("client_id"),
+                                    stored["member_id"], origin)
+            session = self._note_sessions.get(user_id)
+            if session and session[1] > dt.datetime.now(dt.timezone.utc) and session[2] == stored["member_id"]:
+                token = session[0]
+            elif stored["user_id"] == user_id:
+                token = self._access_token()
+            else:
+                raise _Denied()
+            profile = _post(origin + "/rest/profile.json", token)
+            if not isinstance(profile, dict) or _user_id(profile.get("ID")) != user_id:
+                raise _Denied()
+        except _Denied:
+            raise BitrixAppError(session_message) from None
+        except _Unavailable:
+            raise BitrixAppError("Не удалось проверить пользователя в Битрикс24. Повторите команду позже.",
+                                 retryable=True) from None
+
+        return origin, token, user_id
+
+    def read_for_user(self, user_id, method, arguments=None):
+        from .gpt_live import B24
+        allowed = {prefix + suffix for prefix, _ in B24.values()
+                   for suffix in (".list", ".get", ".fields", ".getFields")}
+        if method not in allowed and method != "calendar.event.get":
+            raise ValueError("Метод чтения Б24 недоступен.")
+        origin, token, _ = self._verified_user(user_id)
+        try:
+            return _request(origin + "/rest/" + method + ".json",
+                            {**(arguments or {}), "auth": token}, json_body=True, limit=4 * 1024 * 1024)
+        except (_Denied, _Unavailable):
+            raise ValueError("Битрикс24 не предоставил данные для вашей учётной записи.") from None
+
+    def delete_user_task(self, user_id, task_id):
+        origin, token, _ = self._verified_user(user_id)
+        try:
+            response = _request(origin + "/rest/tasks.task.delete.json",
+                                {"auth": token, "taskId": int(task_id)}, json_body=True)
+        except _Denied:
+            raise BitrixAppError("Битрикс24 отклонил удаление. Проверьте доступ к задаче и права на удаление.") from None
+        except _Unavailable:
+            response = {}
+        if response.get("result") != {"task":True}:
+            raise BitrixAppError("Битрикс24 не подтвердил удаление. Проверьте карточку задачи перед повтором.")
+
+    def create_user_task(self, user_id, fields):
+        """Create one task using the requester's verified OAuth identity."""
+        origin, token, user_id = self._verified_user(user_id)
+        session_message = "Откройте приложение ТТКGPT в Битрикс24 под своей учётной записью и повторите команду."
+        uncertain_message = "Битрикс24 не подтвердил создание задачи. Проверьте список задач перед повтором."
+        accepted = ("TITLE", "DESCRIPTION", "RESPONSIBLE_ID", "ACCOMPLICES", "AUDITORS", "DEADLINE")
+        task_fields = {key: fields[key] for key in accepted if key in fields}
+        task_fields["CREATED_BY"] = user_id
+        try:
+            response = _request(origin + "/rest/tasks.task.add.json", {"auth": token, "fields": task_fields},
+                                json_body=True, limit=4 * 1024 * 1024)
+        except _Expired:
+            raise BitrixAppError(session_message) from None
+        except _InsufficientScope:
+            raise BitrixAppError("Для создания задач приложению нужно право «Задачи» (task). "
+                                 "После его подключения откройте приложение ТТКGPT заново.") from None
+        except _Denied:
+            raise BitrixAppError("Битрикс24 отклонил создание задачи. Проверьте поля задачи "
+                                 "и право назначать задачи выбранным сотрудникам.") from None
+        except _Transport:
+            raise BitrixAppError(uncertain_message, ambiguous=True) from None
+        except _Unavailable:
+            raise BitrixAppError("Битрикс24 временно ограничил запросы. Повторите команду позже.",
+                                 retryable=True) from None
+        try:
+            return _user_id(response["result"]["task"]["id"])
+        except (KeyError, TypeError, _Denied):
+            raise BitrixAppError(uncertain_message, ambiguous=True) from None
+
+    def write_personal_note(self, user_id, text, document=None):
+        """Resolve the personal notes chat in the verified sender's own session."""
+        stored = self._installed()
+        if not stored:
+            raise ValueError("Приложение Битрикс24 не подключено.")
+        session = self._note_sessions.get(user_id)
+        if stored["user_id"] == user_id:
+            token = self._access_token()
+        elif session and session[1] > dt.datetime.now(dt.timezone.utc) and session[2] == stored["member_id"]:
+            token = session[0]
+        else:
+            raise ValueError("Откройте приложение ТТКGPT в Битрикс24 под своей учётной записью и повторите команду.")
+        def call(method, params):
+            return _request(stored["portal"] + "/rest/" + method + ".json",
+                            {**params, "auth": token}, json_body=True, limit=4*1024*1024).get("result")
+        try:
+            if _user_id(call("profile", {})["ID"]) != user_id:
+                raise _Denied()
+            try:
+                dialog = call("im.dialog.get", {"DIALOG_ID": str(user_id)})
+            except _InsufficientScope:
+                if stored["user_id"] != user_id:
+                    raise
+                token = self._access_token(rejected_token=token)
+                dialog = call("im.dialog.get", {"DIALOG_ID": str(user_id)})
+            except _Denied:
+                dialog = None
+            def own_notes(chat):
+                return (isinstance(chat, dict) and str(chat.get("owner")) == str(user_id)
+                        and str(chat.get("entity_type") or chat.get("type")).upper() == "FAVORITE"
+                        and str(chat.get("id", "")).isdigit())
+            if not own_notes(dialog):
+                recent = call("im.recent.list", {})
+                dialogs = recent.get("items", []) if isinstance(recent, dict) else recent
+                dialog = next((row["chat"] for row in dialogs or [] if own_notes(row.get("chat"))), None)
+            if not own_notes(dialog):
+                raise ValueError("Откройте «Мои заметки» в мессенджере и повторите команду. Личный чат заметок пока не найден.")
+            if document is not None:
+                result = call("im.v2.File.upload", {"dialogId": "chat" + str(dialog["id"]),
+                              "fields": {"name": document["name"], "content": document["content"]}})
+                if not isinstance(result, dict) or str(result.get("chatId")) != str(dialog["id"]):
+                    raise ValueError("Битрикс24 не подтвердил загрузку. Проверьте «Мои заметки».")
+                return _user_id(result.get("messageId"))
+            result = call("im.message.add", {"DIALOG_ID": "chat" + str(dialog["id"]), "MESSAGE": text,
+                                             "URL_PREVIEW": "N"})
+            return _user_id(result)
+        except _Expired:
+            raise ValueError("Сессия истекла. Откройте приложение ТТКGPT в Битрикс24 и повторите команду.") from None
+        except _InsufficientScope:
+            raise ValueError("Текущая сессия Битрикс24 не получила право im. Если право уже включено, откройте приложение ТТКGPT из Битрикс24 и повторите команду.") from None
+        except _Denied:
+            raise ValueError("Битрикс24 отклонил доступ к личным заметкам. Откройте приложение ТТКGPT под своей учётной записью.") from None
+
     def _issue_ticket(self, stored, user_id):
         ticket = secrets.token_urlsafe(32)
         now = int(dt.datetime.now(dt.timezone.utc).timestamp())
@@ -398,6 +546,7 @@ class BitrixApp:
                     return 409, _document("Завершите первоначальную установку приложения в Битрикс24.")
                 if not hmac.compare_digest(app_token.encode(), stored["application_token"].encode()):
                     raise _Denied()
+                self._note_sessions[_user_id(profile["ID"])] = (token, dt.datetime.fromisoformat(result["expires"]), member)
                 return self._main_page(profile, stored, origin)
             if profile.get("ADMIN") is not True:
                 raise _Denied()

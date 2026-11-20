@@ -102,7 +102,8 @@ class DataTools:
         if not cfg.get("webhook"):
             raise ValueError("Подключение календаря Б24 не настроено")
         try:
-            schedule = b24_calendar.day_schedule({**cfg, "request_attempts": 1, "request_timeout_seconds": 25}, int(uid), day)
+            schedule = b24_calendar.day_schedule({**cfg, "request_attempts": 1, "request_timeout_seconds": 25}, int(uid), day,
+                                                 **({"personal_read": self.live.b24_read} if self.live.b24_read else {}))
         except Exception:
             raise ValueError("Не удалось загрузить расписание из Б24") from None
         errors = {}
@@ -127,11 +128,19 @@ class DataTools:
     def execute(self, tool, query, employee, month, privacy):
         if tool not in TOOLS:
             raise ValueError("Неизвестный инструмент; произвольный SQL и изменение данных недоступны")
+        if self.live.b24_read and self.access:
+            from .section_access import visible
+            section = {"kpi":"kpi", "calendar":"funnel", "calls":"calls", "call_detail":"calls",
+                       "money":"money", "operations_report":"metrics", "employees":"staff"}.get(tool)
+            with db_lock():
+                if section and section not in visible(self.con, self.access.employee.get("department")):
+                    raise ValueError("Этот раздел дашборда закрыт для вашего отдела.")
         if tool == "weather":
             return gpt_weather.lookup(query or "{}", self.config, privacy)
         if self.access:
             self.access.check_tool(tool)
-            self.access.check_employee(privacy.restore(employee or ""))
+            if not tool.startswith("onec_"):
+                self.access.check_employee(privacy.restore(employee or ""))
             if tool in ("calendar", "kpi", "calls", "call_detail"):
                 employee = self.access.login
         if tool == "python_calculate":
@@ -206,6 +215,8 @@ class DataTools:
                     raise ValueError("Укажите имя, компанию или номер документа (до 300 символов)")
                 rows, totals = [], {}
                 for table, (columns, fields, title) in SEARCH.items():
+                    if self.live.b24_read and table in ("clients", "crm_deals"):
+                        continue  # CRM cards must be read through the employee's portal session.
                     if self.access and table not in self.access.tables:
                         continue
                     where = "(" + " OR ".join(f"gpt_casefold({field}) LIKE ?" for field in fields) + ")"

@@ -10,6 +10,10 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
+import sqlite3
+from contextlib import closing
+from pathlib import Path
 import threading
 import time
 import traceback
@@ -21,14 +25,15 @@ from .crm_links import employee_url, portal_origin
 from . import call_feedback, call_recheck, operations, operations_views
 from . import tender_followups, daily_calls
 from . import supplier_directory
-from . import supplier_export
+from . import supplier_export, gpt_voice, help_requests
+from . import section_access
 
 from . import money, onec_money, onec_suppliers, sales_panel, b24_calendar, call_analysis, call_records, employees, manual, metrics, sync, transcripts, workload
 from .common import (ROOT, connect, current_month, db_lock, load_config, load_rules, month_add, month_bounds,
                      weeks_of_month)
 from .engine import CRITERIA_TITLES, Engine
 from .onec import OneC
-from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, deal_funnel
+from .funnel import DATE_FIELDS as FUNNEL_DATE_FIELDS, KINDS as FUNNEL_KINDS, deal_funnel, sales_staff
 
 WEB = os.path.join(ROOT, "web")
 PAGE_HEAD = (b'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
@@ -85,6 +90,7 @@ class App:
         self.engine = Engine(self.con, self.rules, self.config)
         # та же блокировка, под которой синхронизация пишет в базу: расчёт не увидит недописанные таблицы
         self.lock = db_lock()
+        self.operations_lock = threading.Lock()
         self.login_fails = {}  # (ip, login) -> [время неудачных попыток]
         self.money_busy = threading.Lock()  # идёт загрузка остатков и планов платежей из 1С («Деньги»)
         self.suppliers_busy = threading.Lock()  # идёт загрузка закупок из 1С («Поставщики»)
@@ -93,7 +99,7 @@ class App:
         from .gpt_assistant import GPTAssistant
         with self.lock:
             if not hasattr(self,"_gpt"):
-                self._gpt=GPTAssistant(self.con,self.config,self.rules)
+                self._gpt=GPTAssistant(self.con,self.config,self.rules,bitrix_app=self.bitrix_app_service)
             return self._gpt
 
     def processing_jobs(self):
@@ -231,6 +237,7 @@ class App:
                           for k, v in self.rules["positions"].items()},
             "months": [month_add(cm, -k) for k in range(0, 12)],
             "current_month": cm,
+            "visible_sections": list(section_access.SECTIONS) if is_mgr else section_access.visible(self.con, me.get("department")),
             "mode": self.config.get("mode", "demo"),
             "payout_mode": self.rules.get("payout", {}).get("mode", "binary"),
             "criteria_titles": CRITERIA_TITLES,
@@ -486,6 +493,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
+        if self.path.split("?", 1)[0] == "/api/help" and not 0 < n <= 14000000:
+            raise BadRequest("Общий размер скриншотов — до 10 МБ.")
+        if self.path.split("?", 1)[0] == "/api/gpt-voice" and not 0 < n <= 14000000:
+            raise BadRequest("Размер аудиозаписи превышает 10 МБ")
         if self.path.split("?", 1)[0] == "/api/gpt-upload" and not 0 < n <= 14000000:
             raise BadRequest("Размер запроса загрузки превышает лимит 10 МБ для изображения")
         if not n:
@@ -619,40 +630,62 @@ class Handler(BaseHTTPRequestHandler):
             return self.bitrix_app_response("POST", u)
         self.api("POST", u.path, {k: v[0] for k, v in parse_qs(u.query).items()})
 
+    def operations_report(self, con, config, kind, first, last, employee, channel, cutoff):
+        tables = ('operations_snapshots', 'operations_source_history', 'operations_events',
+                  'operations_item_scope', 'operations_price_approval', 'operations_deadline_approval')
+        revision = tuple(con.execute('SELECT MAX(id) FROM ' + table).fetchone()[0] for table in tables)
+        key = (kind, first, last, employee, channel, revision, json.dumps(config, sort_keys=True),
+               cutoff.replace(second=0, microsecond=0))
+        cache = getattr(self.app, '_operations_cache', {})
+        if key not in cache:
+            report = operations_views.build(con, config, kind, first, last, employee, channel, now=cutoff)
+            if len(cache) >= 4:
+                del cache[next(iter(cache))]
+            cache[key] = report
+            self.app._operations_cache = cache
+        return JsonResponse(cache[key])
+
     def operations_response(self, method, path, query, body, me):
-        if me.get('role') != 'manager':
+        if me.get('role') != 'manager' and method != 'GET':
             return JsonResponse({'error':'Доступно только руководителю'},403)
         app = self.app
         today = dt.date.today()
-        first = self.date_param(query.get('date_from')) or today.isoformat()
         last = self.date_param(query.get('date_to')) or today.isoformat()
+        first = self.date_param(query.get('date_from')) or last
         if first > last:
             raise BadRequest('Начало периода позже его конца')
         cutoff = min(dt.datetime.combine(dt.date.fromisoformat(last),dt.time.max),dt.datetime.now())
+        if path == '/api/operations' and method == 'GET':
+            kind = query.get('kind') or 'sales'
+            if kind not in ('sales','supply'):
+                raise BadRequest('Неизвестная панель')
+            employee = query.get('emp') or 'Все'
+            valid_employees = {e['login'] for e in app.config.get('employees',[])}
+            if employee != 'Все' and employee not in valid_employees:
+                raise BadRequest('Сотрудник не найден')
+            channel = query.get('channel') or 'Все'
+            if channel not in ('Все','Тендеры','Прямые'):
+                raise BadRequest('Неизвестный канал')
+            with app.lock:
+                config = {'employees': copy.deepcopy(app.config.get('employees', []))}
+                filename = app.con.execute('PRAGMA database_list').fetchone()[2]
+                if not filename:
+                    return self.operations_report(app.con, config, kind, first, last, employee, channel, cutoff)
+            with app.operations_lock, closing(sqlite3.connect(Path(filename).as_uri() + '?mode=ro', uri=True)) as reader:
+                reader.row_factory = sqlite3.Row
+                reader.execute('BEGIN')
+                return self.operations_report(reader, config, kind, first, last, employee, channel, cutoff)
         with app.lock:
-            if path == '/api/operations' and method == 'GET':
-                kind = query.get('kind') or 'sales'
-                if kind not in ('sales','supply'):
-                    raise BadRequest('Неизвестная панель')
-                employee = query.get('emp') or 'Все'
-                valid_employees = {e['login'] for e in app.config.get('employees',[])}
-                if employee != 'Все' and employee not in valid_employees:
-                    raise BadRequest('Сотрудник не найден')
-                channel = query.get('channel') or 'Все'
-                if channel not in ('Все','Тендеры','Прямые'):
-                    raise BadRequest('Неизвестный канал')
-                revision = tuple(app.con.execute('SELECT COALESCE(MAX(id),0) FROM '+table).fetchone()[0] for table in
-                                 ('operations_snapshots','operations_source_history','operations_item_scope','operations_price_approval','operations_deadline_approval'))
-                key = (kind,first,last,employee,channel,revision,cutoff.strftime('%Y-%m-%dT%H:%M'))
-                cache = getattr(app,'_operations_cache',{})
-                if key not in cache:
-                    cache = {key:operations_views.build(app.con,app.config,kind,first,last,employee,channel)}
-                    app._operations_cache = cache
-                return JsonResponse(cache[key])
             identity = str(body.get('request_id') or query.get('request_id') or query.get('id') or '')
             entity = operations.get_entity(app.con,'onec',identity,cutoff) or operations.get_entity(app.con,'bitrix',identity,cutoff)
             if entity is None:
                 return JsonResponse({'error':'Документ не найден в выбранном срезе'},404)
+            if path == '/api/operations/price-comparison' and method == 'GET':
+                if entity.get('kind') != 'supply' or entity.get('status') != 'Отработана':
+                    raise BadRequest('Выберите отработанную заявку снабжения')
+                operations_views.attach_supply_comparison(app.con, entity, cutoff)
+                fields = ('name','title','unit','selected_price','currency','previous_price','comparison_note')
+                return JsonResponse({'items': [{key:item.get(key) for key in fields} for item in entity.get('items') or []]})
             if path == '/api/operations/document' and method == 'GET':
                 document = operations_views.document_detail(app.con,app.config,identity,cutoff)
                 versions = [row for row in operations.versions(app.con,entity.get('_source') or 'onec',cutoff) if row['id']==identity]
@@ -737,6 +770,26 @@ class Handler(BaseHTTPRequestHandler):
             if not me:
                 return JsonResponse({"error": "Требуется вход"}, 401)
             is_mgr = me.get("role") == "manager"
+            section = section_access.section_for(path)
+            if section and not is_mgr:
+                with app.lock:
+                    if section not in section_access.visible(app.con, me.get("department")):
+                        return JsonResponse({"error": "Раздел закрыт для вашего отдела"}, 403)
+            if path == "/api/help" and method == "POST":
+                try:
+                    help_requests.send(app.con,app.bitrix_bot_service(),me,b)
+                except ValueError as exc:
+                    raise BadRequest(str(exc))
+                return JsonResponse({"ok":True})
+            if path == "/api/gpt-telegram" and method == "POST":
+                telegram = app.bitrix_bot_service().telegram
+                if b.get("action") == "unlink":
+                    telegram.unlink(me["login"])
+                    return JsonResponse({"ok":True})
+                try:
+                    return JsonResponse(telegram.ticket(me["login"]))
+                except ValueError as exc:
+                    raise BadRequest(str(exc))
             month = self.month_param(q["month"]) if q.get("month") else current_month()
 
             if path == '/api/supplier-directory/gpt' and method == 'POST':
@@ -751,9 +804,18 @@ class Handler(BaseHTTPRequestHandler):
                                                effort=b.get('effort') or 'medium', fast=b.get('fast', False))
                 return JsonResponse(result)
 
+            if path in ('/api/carriers', '/api/carriers.xlsx') and method == 'GET':
+                from . import carrier_directory
+                with app.lock:
+                    rows = carrier_directory.rows(app.con)
+                if path.endswith('.xlsx'):
+                    search = q.get('search', '').strip().casefold()
+                    rows = [row for row in rows if search in ' '.join(str(v or '') for v in row).casefold()]
+                    return FileResponse(carrier_directory.workbook(rows), 'carriers.xlsx',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                return JsonResponse({'columns': carrier_directory.COLUMNS, 'rows': rows})
+
             if path in ('/api/supplier-directory', '/api/supplier-directory.xlsx') and method == 'GET':
-                if not is_mgr:
-                    return JsonResponse({'error': 'Доступно только руководителю'}, 403)
                 started = False
                 with app.lock:
                     if path.endswith('.xlsx'):
@@ -778,9 +840,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/call-audio":  # аудио отдаётся долго — без общей блокировки базы
                 return self.send_call_audio(me, q.get("id") or "")
 
-            if path in ("/api/gpt-upload", "/api/gpt-document", "/api/gpt-document-delete", "/api/gpt-document-protection"):
+            if path in ("/api/gpt-voice", "/api/gpt-upload", "/api/gpt-document", "/api/gpt-document-delete", "/api/gpt-document-protection"):
                 service = app.gpt_service()
                 try:
+                    if path == "/api/gpt-voice" and method == "POST":
+                        with app.lock:
+                            service.check_chat(me["login"], str(b.get("id") or ""))
+                        raw = gpt_voice.decode_upload(b.get("content"))
+                        return JsonResponse({"text": gpt_voice.recognize(str(b.get("name") or ""), raw)})
                     if path == "/api/gpt-upload" and method == "POST":
                         return JsonResponse(service.document_upload(me["login"], str(b.get("id") or ""), b.get("name"), b.get("content"), protected=b.get("protected", False)))
                     if path == "/api/gpt-document-protection" and method == "POST":
@@ -798,13 +865,14 @@ class Handler(BaseHTTPRequestHandler):
                     service=app.gpt_service()
                     try:
                         if path == "/api/gpt-chats" and method == "GET":
-                            return JsonResponse(service.chats(me["login"]))
+                            shared = service.shared_chat(me["login"])
+                            return JsonResponse({**service.chats(me["login"]), "shared_chat_id":shared["id"]})
                         if path == "/api/gpt-chat" and method == "GET":
-                            return JsonResponse(service.chat(me["login"],q.get("id") or ""))
+                            return JsonResponse(service.chat(me["login"],q.get("id") or "",q.get("after")))
                         if path == "/api/gpt-preview" and method == "GET":
                             return JsonResponse(service.preview(me["login"],q.get("id") or "",int(q.get("message") or 0)))
                         if path == "/api/gpt-new" and method == "POST":
-                            return JsonResponse(service.create_chat(me["login"]))
+                            return JsonResponse(service.create_chat(me["login"], shared=True))
                         if path == "/api/gpt-manage" and method == "POST":
                             return JsonResponse(service.manage_chat(me["login"], str(b.get("id") or ""), b.get("action"), b.get("value")))
                         if path == "/api/gpt-send" and method == "POST":
@@ -844,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError as exc:
                         raise BadRequest(str(exc)) from None
                     return JsonResponse(deal_funnel(app.con, app.config, logins, q.get("category"), kind,
-                                                      date_from, date_to, date_field, deps, mode, directions))
+                                                      date_from, date_to, date_field, deps, mode, directions, roster=sales_staff(app.con)))
                 if path == "/api/call-funnel":  # воронка звонков ответственных из «Воронок»: сотрудник — только своя
                     date_from, date_to = self.date_param(q.get("date_from")), self.date_param(q.get("date_to"))
                     if not date_from and not date_to:  # период не выбран — текущий месяц, как в KPI
@@ -855,8 +923,9 @@ class Handler(BaseHTTPRequestHandler):
                     if date_from > date_to:
                         raise BadRequest("Начало периода позже его конца")
                     people = []
+                    eligible = {e["login"] for e in sales_staff(app.con)}
                     for key in [k for k in (q.get("login") or "").split(",") if k][:20]:
-                        if key.startswith("id:") or not app.engine.employee(key):
+                        if key not in eligible or not app.engine.employee(key):
                             continue  # ответственный не из дашборда — звонки по нему не выгружаются
                         if not is_mgr and key != me["login"]:
                             people.append({"login": key, "error": "Звонки других сотрудников видит только руководитель"})
@@ -866,8 +935,6 @@ class Handler(BaseHTTPRequestHandler):
                     return JsonResponse({"date_from": date_from, "date_to": date_to, "min_call": app.engine.min_call,
                                            "people": people})
                 if path == "/api/metrics":  # «Метрики»: где сейчас находится работа отдела — только руководителю
-                    if not is_mgr:
-                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     if q.get("kind") not in ("supply", "logistics", "sales"):
                         raise BadRequest("Неизвестный раздел метрик")
                     today_ = dt.date.today()
@@ -968,7 +1035,19 @@ class Handler(BaseHTTPRequestHandler):
                         return JsonResponse(employees.directory(app.con, app.rules, app.config))
                     if method == "POST":
                         try:
-                            if b.get("action") == "delete":
+                            if b.get("action") == "department-sections":
+                                departments = employees.listing(app.con, app.rules)["departments"]
+                                try:
+                                    section_access.save(app.con, b.get("department"), b.get("sections"),
+                                                        {d["key"] for d in departments} | {""})
+                                except ValueError as exc:
+                                    raise BadRequest(str(exc))
+                            elif b.get("action") == "help-recipient":
+                                try:
+                                    help_requests.configure(app.con,str(b.get("login") or ""))
+                                except ValueError as exc:
+                                    raise BadRequest(str(exc))
+                            elif b.get("action") == "delete":
                                 employees.delete(app.con, str(b.get("login") or ""), me["login"])
                             elif b.get("action") in ("create", "update"):
                                 employees.save(app.con, app.rules, b, me["login"], b["action"] == "create", hash_password)
@@ -978,6 +1057,11 @@ class Handler(BaseHTTPRequestHandler):
                             raise BadRequest(str(e))
                         employees.apply(app.con, app.config, app.rules)
                     listing = employees.listing(app.con, app.rules)
+                    listing["section_labels"] = section_access.SECTIONS
+                    listing["department_sections"] = {key: section_access.visible(app.con, key)
+                        for key in {"", *(section_access.department_key(d["key"]) for d in listing["departments"])}}
+                    recipient = help_requests.recipient(app.con)
+                    listing["help_recipient"] = recipient["login"] if recipient else ""
                     for employee in listing["employees"]:
                         employee["url"] = employee_url(app.config, employee["login"])
                     return JsonResponse(listing)
@@ -1020,6 +1104,27 @@ class Handler(BaseHTTPRequestHandler):
                         with db_lock():
                             manual.set_logistics_budget_inclusion(app.con,emp,month,str(b.get("ref") or ""),b.get("value"),me["login"])
                             app.con.commit()
+                    except ValueError as exc:
+                        raise BadRequest(str(exc))
+                    return JsonResponse({"ok": True})
+                if path in ("/api/kpi-decision", "/api/kpi-exclusion") and method == "POST":
+                    if not is_mgr:
+                        return JsonResponse({"error": "Согласование доступно администратору"}, 403)
+                    emp = self.employee_param(b.get("emp"))
+                    month = self.month_param(b.get("month"))
+                    code, kind, ref = (b.get(field) for field in ("code", "kind", "ref"))
+                    if "value" not in b or not all(isinstance(key, str) and key for key in (code, kind, ref)):
+                        raise BadRequest("Не указана запись KPI или решение")
+                    employee = app.engine.employee(emp)
+                    if not employee or employee.get("position") not in app.rules["positions"]:
+                        raise BadRequest("Сотруднику не назначен KPI")
+                    item = next((row for row in app.engine.compute(emp, month)["items"] if row["code"] == code), {})
+                    if not any(row["kind"] == kind and str(row["ref"]) == ref for row in item.get("review_rows", [])):
+                        raise BadRequest("Запись не входит в этот KPI сотрудника за выбранный месяц")
+                    try:
+                        with app.con:
+                            write = manual.set_kpi_decision if path == "/api/kpi-decision" else manual.set_kpi_exclusion
+                            write(app.con, emp, month, code, kind, ref, b["value"], me["login"])
                     except ValueError as exc:
                         raise BadRequest(str(exc))
                     return JsonResponse({"ok": True})
@@ -1159,8 +1264,6 @@ class Handler(BaseHTTPRequestHandler):
                         app.con.commit()
                     return JsonResponse({"ok": True})
                 if path == "/api/suppliers" and method == "GET":  # вкладка «Поставщики»: закупки и цены из 1С — только руководителю
-                    if not is_mgr:
-                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     today_ = dt.date.today()
                     date_from = self.date_param(q.get("date_from")) or today_.replace(month=1, day=1).isoformat()
                     date_to = self.date_param(q.get("date_to")) or today_.isoformat()
@@ -1186,11 +1289,12 @@ class Handler(BaseHTTPRequestHandler):
                         res["list"] = onec_suppliers.suppliers(app.con, date_from, date_to, q.get("search"))
                     return JsonResponse(res)
                 if path == "/api/workload" and method == "GET":  # Temporarily admin-only.
-                    if not is_mgr:
-                        return JsonResponse({"error": "Доступно только администратору"},403)
                     portal = urlparse(portal_origin(app.config) or "").netloc
-                    return JsonResponse(workload.build(app.con, app.config, uids=None,
-                                                         portal=portal or None, dept_titles=app.rules.get("departments")))
+                    data = workload.build(app.con, app.config, viewer_login=None if is_mgr else me["login"],
+                                          portal=portal or None, dept_titles=app.rules.get("departments"))
+                    if not is_mgr:
+                        data.pop("configuration", None)
+                    return JsonResponse(data)
                 if path == "/api/workload-members" and method == "POST":
                     if not is_mgr:
                         return JsonResponse({"error": "Доступно только администратору"}, 403)
@@ -1200,8 +1304,6 @@ class Handler(BaseHTTPRequestHandler):
                         raise BadRequest(str(error)) from None
                     return JsonResponse({"ok": True})
                 if path == "/api/money" and method == "GET":  # вкладка «Деньги» — только руководителю
-                    if not is_mgr:
-                        return JsonResponse({"error": "Доступно только руководителю"}, 403)
                     st = money.settings(app.con)
                     stale = not st["synced_at"] or dt.datetime.fromisoformat(st["synced_at"]) < dt.datetime.now() - dt.timedelta(minutes=15)
                     if stale:  # открытие вкладки обновляет данные из 1С в фоне, если им больше 15 минут
@@ -1358,6 +1460,15 @@ class Handler(BaseHTTPRequestHandler):
             return JsonResponse({"error": f"Ошибка сервера: {e}"}, 500)
 
 
+class DashboardHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        if os.name == "nt":
+            self.allow_reuse_address = False
+            self.allow_reuse_port = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def serve():
     app = App()
     Handler.app = app
@@ -1377,7 +1488,7 @@ def serve():
     host = cfg.get("server", {}).get("host", "0.0.0.0")
     port = int(cfg.get("server", {}).get("port", 8080))
     try:
-        httpd = ThreadingHTTPServer((host, port), Handler)
+        httpd = DashboardHTTPServer((host, port), Handler)
     except OSError as e:
         print(f"Не удалось занять порт {port}: {e}. Возможно, дашборд уже запущен в другом окне "
               f"или порт занят другой программой — поменяйте server.port в config.json.")
@@ -1385,6 +1496,9 @@ def serve():
     app.gpt_service()  # восстановить прерванные чаты только после успешной привязки порта
     app.processing_jobs().start()
     bot = app.bitrix_bot_service()
+    from .telegram_bot import Telegram
+    bot.telegram = Telegram(bot)
+    threading.Thread(target=bot.telegram.run, daemon=True, name="telegram-ttkgpt").start()
     bot.start()
     sync.start_scheduler(app.con, cfg)  # только процесс, успешно занявший порт, запускает автообновления
     url = f"http://localhost:{port}"
@@ -1395,5 +1509,6 @@ def serve():
     try:
         httpd.serve_forever()
     finally:
+        bot.telegram.stop.set()
         bot.stop()
         httpd.server_close()

@@ -4,14 +4,20 @@ import hashlib
 import json
 import re
 import threading
+import time
+from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit
 
 from .call_analysis import model_options
 from .common import db_lock
+from .section_access import visible
 from .bitrix_files import BitrixFiles, message_files
+from . import gpt_voice
 
 
 DELIVERY_UNKNOWN = 'Доставка ответа не подтверждена. Команда /retry повторит отправку сохранённого ответа.'
+ATTACHMENT_QUESTION = ('Прикреплён файл. Если в предыдущем запросе пользователь просил обработать или преобразовать файл, '
+                       'выполни этот запрос с новым вложением. Иначе кратко уточни задачу.')
 REQUEST_FAILED = 'Не удалось подготовить ответ. Отправьте вопрос ещё раз.'
 
 
@@ -26,6 +32,36 @@ def _plain(text):
     # Fullwidth brackets render as text and cannot open Bitrix mentions or BB codes.
     text = str(text or '').replace('[', '［').replace(']', '］')
     return ''.join(char for char in text if char in '\n\t' or ord(char) >= 32)
+
+
+@lru_cache(maxsize=1)
+def _name_morphology():
+    try:
+        import pymorphy3
+        return pymorphy3.MorphAnalyzer()
+    except ImportError:
+        return None
+
+
+@lru_cache(maxsize=512)
+def _recipient_names(name):
+    parts = name.casefold().replace('ё', 'е').split()
+    if not parts:
+        return set()
+    aliases = {' '.join(parts), parts[0]}
+    morph = _name_morphology()
+    if morph:
+        inflected = []
+        for i, part in enumerate(parts):
+            tag = 'Name' if i == 0 else 'Surn'
+            form = next((p.inflect({'datv'}) for p in morph.parse(part)
+                         if tag in p.tag and 'nomn' in p.tag), None)
+            if not form:
+                break
+            inflected.append(form.word.replace('ё', 'е'))
+            if i == 0 or len(inflected) == len(parts):
+                aliases.add(' '.join(inflected))
+    return aliases
 
 
 def _source_line(source):
@@ -48,14 +84,54 @@ def _source_line(source):
     return '[URL=' + url + ']' + title + '[/URL]'
 
 
-def _answer_parts(text, sources):
-    text = _plain(text).strip() or REQUEST_FAILED
+def _split_reply(text, limit):
+    chunks = []
+    while len(text) > limit:
+        cut = next((i for sep in ("\n\n", "\n", " ") if (i := text.rfind(sep, 0, limit + 1)) > 0), limit)
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip()
+    if text:
+        chunks.append(text)
+    return chunks
+
+
+def _chat_text(text):
+    lines = str(text or '').splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        if (i + 1 < len(lines) and '|' in lines[i]
+                and re.fullmatch(r'\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*', lines[i+1])):
+            headers = [s.strip() for s in lines[i].strip().strip('|').split('|')]
+            i += 2
+            while i < len(lines) and '|' in lines[i]:
+                cells = [s.strip() for s in lines[i].strip().strip('|').split('|')]
+                if len(headers) == len(cells):
+                    out.extend([cells[0], *(f"{key}: {value}" for key,value in zip(headers[1:], cells[1:])), ""])
+                else:
+                    out.append(lines[i])
+                i += 1
+        else:
+            out.append(lines[i])
+            i += 1
+    return re.sub(r'\*\*([^*\n]+)\*\*', r'\1', '\n'.join(out))
+
+
+def _answer_parts(text, sources, telegram=False):
+    urls = {source['url'] for source in (sources or [])[:10] if _source_line(source)}
+    # The channel renders these verified links below the answer.
+    text = re.sub(r'\[([^\]\n]+)\]\((https?://[^\s<>()[\]]+)\)',
+                  lambda match: match[1] if match[2] in urls else match[0], str(text or ''))
+    text = _plain(_chat_text(text)).strip() or REQUEST_FAILED
     # 9,000 Unicode code points remain below 20,000 UTF-16 units, including emoji.
-    parts = [text[index:index + 9000] for index in range(0, len(text), 9000)]
+    limit = 2000 if telegram else 9000
+    parts = _split_reply(text, limit)
     for source in (sources or [])[:10]:
         line = _source_line(source)
-        if line:
-            if len(parts[-1]) + len(line) + 2 <= 9000:
+        if line and source['url'] not in text.split():
+            if telegram:
+                line = _plain(source.get('title') or 'Источник')[:200] + '\n' + source['url']
+            if len(parts[-1]) + len(line) + 2 <= limit:
                 parts[-1] += '\n\n' + line
             else:
                 parts.append(line)
@@ -68,9 +144,12 @@ class BitrixBot:
         self.files = BitrixFiles(api, config)
         self._activation_lock = threading.Lock()
         self._tick_lock = threading.Lock()
+        self._submitting_owners = set()
         self._lifecycle_lock = threading.Lock()
         self._stopped = threading.Event()
         self._wake = threading.Event()
+        self._indicators = {}
+        self._telegram_drafts = {}
         self._thread = None
         with db_lock():
             con.executescript('''
@@ -78,6 +157,9 @@ class BitrixBot:
                     id INTEGER PRIMARY KEY CHECK(id=1), bot_id INTEGER,
                     next_offset INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '');
                 INSERT OR IGNORE INTO bitrix_bot_state(id) VALUES (1);
+                CREATE TABLE IF NOT EXISTS bot_task_delete (
+                    bot INTEGER, sender INTEGER, dialog TEXT, owner TEXT, task INTEGER, expires REAL,
+                    PRIMARY KEY(bot,sender,dialog,owner));
                 CREATE TABLE IF NOT EXISTS bitrix_bot_events (
                     bot_id INTEGER NOT NULL, event_id INTEGER NOT NULL,
                     PRIMARY KEY(bot_id,event_id));
@@ -108,10 +190,15 @@ class BitrixBot:
             if 'source_hash' not in import_columns:
                 con.execute("ALTER TABLE bitrix_bot_imports ADD COLUMN source_hash TEXT NOT NULL DEFAULT ''")
             con.execute("UPDATE bitrix_bot_jobs SET state='uncertain',error=? WHERE state='sending'", (DELIVERY_UNKNOWN,))
+            con.execute("UPDATE bitrix_bot_jobs SET state='delivering',parts=? WHERE state='writing'",
+                        (json.dumps([{'kind': 'text', 'text': 'Битрикс24 не подтвердил результат команды. Проверьте диалог перед повторной отправкой.'}]),))
             pending = [dict(row) for row in con.execute("SELECT * FROM bitrix_bot_jobs WHERE state='submitting'")]
             for job in pending:
                 self._reconcile_submit(job)
             con.commit()
+
+        from .bitrix_task_flow import TaskFlow
+        self.tasks = TaskFlow(self)
 
     def status(self):
         with db_lock():
@@ -122,7 +209,7 @@ class BitrixBot:
                 AND state IN ('uncertain','failed','delivering') AND error<>'' ORDER BY id DESC LIMIT 1""",
                                             (state['bot_id'],)).fetchone()
         return {'bot_id': state['bot_id'], 'queued': counts.get('queued', 0),
-                'running': sum(counts.get(key, 0) for key in ('submitting', 'running', 'delivering', 'sending')),
+                'running': sum(counts.get(key, 0) for key in ('task_parsing', 'writing', 'submitting', 'running', 'delivering', 'sending')),
                 'uncertain': counts.get('uncertain', 0), 'failed': counts.get('failed', 0),
                 'last_error': state['last_error'] or (latest_error[0] if latest_error else '')}
 
@@ -156,6 +243,8 @@ class BitrixBot:
             self._stopped.clear()
             self._thread = threading.Thread(target=self._run, daemon=True, name='bitrix-ttkgpt')
             self._thread.start()
+            self._activity_thread = threading.Thread(target=self._activity_loop, daemon=True, name='ttkgpt-activity')
+            self._activity_thread.start()
 
     def stop(self):
         self._stopped.set()
@@ -163,6 +252,9 @@ class BitrixBot:
         thread = self._thread
         if thread and thread is not threading.current_thread():
             thread.join(5)
+        activity = getattr(self, '_activity_thread', None)
+        if activity and activity is not threading.current_thread():
+            activity.join(5)
 
     def _run(self):
         while not self._stopped.is_set():
@@ -184,26 +276,38 @@ class BitrixBot:
             if not bot_id:
                 return
             self._fetch(bot_id)
-            with db_lock():
-                jobs = [dict(row) for row in self.con.execute('''
-                    SELECT j.* FROM bitrix_bot_jobs j
-                    WHERE j.bot_id=? AND j.state IN ('queued','submitting','running','delivering')
-                      AND NOT EXISTS (SELECT 1 FROM bitrix_bot_jobs earlier
-                          WHERE earlier.bot_id=j.bot_id AND earlier.user_id=j.user_id AND earlier.id<j.id
-                            AND earlier.state IN ('queued','submitting','running','delivering','sending'))
-                    ORDER BY j.id LIMIT 100
-                ''', (bot_id,))]
-            for job in jobs:
-                if self._stopped.is_set() and self._thread is threading.current_thread():
-                    break
-                self._process(job)
+            self.process_jobs(bot_id)
         finally:
             self._tick_lock.release()
+
+    def process_jobs(self, bot_id):
+        with db_lock():
+            jobs = [dict(row) for row in self.con.execute('''
+                SELECT j.* FROM bitrix_bot_jobs j
+                WHERE j.bot_id=? AND j.state IN ('queued','submitting','running','delivering')
+                  AND NOT EXISTS (SELECT 1 FROM bitrix_bot_jobs earlier
+                      WHERE earlier.bot_id=j.bot_id AND earlier.user_id=j.user_id AND earlier.id<j.id
+                        AND earlier.state IN ('queued','task_parsing','writing','submitting','running','delivering','sending'))
+                ORDER BY j.id LIMIT 100
+            ''', (bot_id,))]
+        for job in jobs:
+            if self._stopped.is_set() and self._thread is threading.current_thread():
+                break
+            self._process(job)
+
+    def job_owner(self, job):
+        if job['bot_id'] < 0 and not self.telegram.bound(job):
+            return None
+        return self._owner(job['user_id'])
 
     def _owner(self, user_id):
         matches = [employee for employee in self.config.get('employees', [])
                    if _positive_id(employee.get('b24_user_id')) == user_id]
         if len(matches) == 1 and isinstance(matches[0].get('login'), str) and matches[0]['login']:
+            employee = matches[0]
+            with db_lock():
+                if employee.get('role') != 'manager' and 'gpt' not in visible(self.con, employee.get('department')):
+                    return None
             return matches[0]['login']
         return None
 
@@ -229,10 +333,11 @@ class BitrixBot:
             text = ''
         if not owner or not isinstance(text, str) or not text.strip() and not attachments:
             return None
-        question = text.strip() or (
-            'Прикреплён файл. Если в предыдущем запросе пользователь просил обработать или преобразовать файл, '
-            'выполни этот запрос с новым вложением. Иначе кратко уточни задачу.'
-        )
+        question = text.strip() or ATTACHMENT_QUESTION
+        message_params = message.get('params') or {}
+        if (message.get('forward') or message.get('forwardId') or
+                isinstance(message_params, dict) and any(k.upper().startswith('FORWARD') for k in message_params)):
+            question = 'Пересланное сообщение:\n' + question
         return (bot_id, event['eventId'], message_id, user_id, str(user_id), owner, question,
                 json.dumps(attachments, ensure_ascii=False))
 
@@ -272,6 +377,10 @@ class BitrixBot:
             self.con.commit()
 
     def _reconcile_submit(self, job):
+        if job['baseline_id'] < 0:
+            # New submissions commit the exact reply ID with the messages themselves.
+            self.con.execute("UPDATE bitrix_bot_jobs SET state='queued' WHERE id=?", (job['id'],))
+            return
         matches = self.con.execute('''SELECT id FROM gpt_messages WHERE chat_id=? AND id>? AND role='assistant'
                                       ORDER BY id LIMIT 2''', (job['chat_id'], job['baseline_id'])).fetchall()
         if len(matches) == 1:
@@ -282,20 +391,9 @@ class BitrixBot:
             self.con.execute("UPDATE bitrix_bot_jobs SET state='ignored',error=? WHERE id=?", (REQUEST_FAILED, job['id']))
 
     def _chat(self, service, job, reset=False):
-        with db_lock():
-            saved = self.con.execute('SELECT owner,chat_id FROM bitrix_bot_chats WHERE bot_id=? AND user_id=?',
-                                     (job['bot_id'], job['user_id'])).fetchone()
-            if saved and saved['owner'] == job['owner'] and not reset:
-                try:
-                    service.check_chat(job['owner'], saved['chat_id'])
-                    return saved['chat_id']
-                except ValueError:
-                    pass
-            chat_id = service.create_chat(job['owner'])['id']
-            self.con.execute('INSERT OR REPLACE INTO bitrix_bot_chats VALUES (?,?,?,?)',
-                             (job['bot_id'], job['user_id'], job['owner'], chat_id))
-            self.con.commit()
-            return chat_id
+        if reset:
+            return service.create_chat(job['owner'], shared=True)['id']
+        return service.shared_chat(job['owner'])['id']
 
     def _selection(self, owner):
         employee = next(employee for employee in self.config['employees'] if employee['login'] == owner)
@@ -312,7 +410,7 @@ class BitrixBot:
 
     def _ready(self, job, text, sources=None, documents=None):
         parts = [{'kind': 'file', 'document_id': document['id']} for document in documents or []]
-        parts.extend({'kind': 'text', 'text': text} for text in _answer_parts(text, sources))
+        parts.extend({'kind': 'text', 'text': text} for text in _answer_parts(text, sources, telegram=job['bot_id'] < 0))
         with db_lock():
             current = self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()
             if current[0] not in ('queued', 'running'):
@@ -321,10 +419,18 @@ class BitrixBot:
             job.update(state='delivering', parts=json.dumps(parts, ensure_ascii=False), part_index=0)
 
     def _command(self, service, job):
+        if self._file_to_notes(service, job):
+            return True
+        if self._delete_command(job):
+            return True
+        if self.tasks.handle(job):
+            return True
+        if self._write_command(job):
+            return True
         command = job['question'].casefold()
         if command in ('/new', 'новый чат'):
             self._chat(service, job, reset=True)
-            self._ready(job, 'Создан новый чат. Отправьте вопрос.')
+            self._ready(job, 'Новый общий чат открыт в дашборде, Битрикс24 и Telegram.')
             return True
         if command == '/retry':
             with db_lock():
@@ -340,12 +446,290 @@ class BitrixBot:
             return True
         return False
 
+    def _file_to_notes(self, service, job):
+        match = re.fullmatch(
+            r'(?:отправь|перешли|скинь|сохрани|добавь)\s+(?:(?:его|её|ее|это|этот файл|этот документ|файл|документ)\s+)?'
+            r'(?:[«"]([^«»"\n]+)[»"]\s+)?(?:мне\s+)?в\s+(?:мои\s+)?заметки(?:\s+в\s+(?:б24|битрикс(?:е|24)?))?[.!]?',
+            job['question'].strip(), re.I)
+        if not match:
+            return False
+        try:
+            chat = self._chat(service, job)
+            with db_lock():
+                last = self.con.execute("""SELECT parts,assistant_id FROM bitrix_bot_jobs WHERE
+                    owner=? AND chat_id=? AND state='sent' AND id<?
+                    AND EXISTS(SELECT 1 FROM json_each(bitrix_bot_jobs.parts)
+                        WHERE json_each.type='object' AND json_each.value ->> '$.kind'='file')
+                    ORDER BY id DESC LIMIT 1""", (job['owner'],chat,job['id'])).fetchone()
+                outputs = self.con.execute("""SELECT o.message_id,o.document_id FROM gpt_document_outputs o
+                    JOIN gpt_messages m ON m.id=o.message_id AND m.chat_id=o.chat_id
+                    WHERE o.chat_id=? AND m.status='completed' AND o.message_id>=?
+                    ORDER BY o.message_id DESC""", (chat,(last['assistant_id'] or 0) if last else 0)).fetchall()
+            if outputs:
+                ids = [r['document_id'] for r in outputs if r['message_id']==outputs[0]['message_id']]
+            else:
+                ids = [p['document_id'] for p in json.loads(last[0]) if isinstance(p,dict) and p.get('kind')=='file'] if last else []
+            files = [d for d in service.documents.listing(chat) if d['id'] in ids]
+            if match[1]:
+                files = [d for d in files if d['name'].casefold()==match[1].casefold()]
+            if len(files)!=1:
+                self._ready(job, 'В последнем ответе с файлами несколько документов. Напишите: Отправь файл «имя файла» в мои заметки.' if files else 'В этом чате не нашёл подходящего готового файла.')
+                return True
+            doc = service.document_download(job['owner'], chat, files[0]['id'])
+            with db_lock():
+                if self.job_owner(job) != job['owner']:
+                    self._update(job['id'],state='ignored')
+                    return True
+                claimed = self.con.execute("UPDATE bitrix_bot_jobs SET state='writing' WHERE id=? AND state='queued'",(job['id'],)).rowcount
+                self.con.commit()
+            if not claimed:
+                return True
+            self.api.write_personal_note(job['user_id'], '', document=doc)
+            reply = f'Файл «{doc["name"]}» отправлен в ваши заметки Битрикс24.'
+        except ValueError as error:
+            reply = str(error)
+        except Exception:
+            reply = 'Не удалось подтвердить отправку файла. Проверьте «Мои заметки» в Битрикс24.'
+        self._update(job['id'],state='delivering',parts=json.dumps([reply],ensure_ascii=False),part_index=0)
+        job['state']='delivering'
+        return True
+
+    def _delete_command(self, job):
+        text = job['question'].strip().casefold()
+        scope = (job['bot_id'], job['user_id'], job['dialog_id'], job['owner'])
+        where = 'bot=? AND sender=? AND dialog=? AND owner=?'
+        match = re.fullmatch(r'(удали(?:те)?\s+задачу|подтверждаю\s+удаление(?:\s+задачи)?)\s*№?\s*([1-9]\d{0,12})[.!]?', text)
+        with db_lock():
+            pending = self.con.execute('SELECT task,expires FROM bot_task_delete WHERE '+where, scope).fetchone()
+            self.con.execute('DELETE FROM bot_task_delete WHERE '+where, scope)
+            self.con.commit()
+        if not match:
+            if pending and text in ('отмена','/cancel'):
+                self._ready(job, 'Удаление отменено.')
+                return True
+            return False
+        task = int(match[2])
+        if match[1].startswith('удали'):
+            try:
+                card = self.api.read_for_user(job['user_id'], 'tasks.task.get', {'taskId':task,'select':['ID','TITLE']})
+                item = card['result']['task']
+                if str(item.get('id') or item.get('ID')) != str(task):
+                    raise ValueError('Не удалось проверить номер задачи.')
+                title = _plain(item.get('title') or item.get('TITLE') or '')[:160]
+            except (ValueError, RuntimeError, KeyError, TypeError) as error:
+                self._ready(job, str(error) if isinstance(error,(ValueError,RuntimeError)) else 'Не удалось прочитать карточку задачи.')
+                return True
+            with db_lock():
+                self.con.execute('INSERT OR REPLACE INTO bot_task_delete VALUES(?,?,?,?,?,?)', (*scope,task,time.time()+300))
+                self._ready(job, f'Удалить задачу №{task} «{title}»? В течение 5 минут напишите «Подтверждаю удаление {task}» или «Отмена».')
+            return True
+        if not pending or pending[0] != task or pending[1] <= time.time():
+            self._ready(job, f'Нет действующего запроса. Начните с «Удали задачу {task}».')
+            return True
+        with db_lock():
+            if self.job_owner(job) != job['owner']:
+                self._update(job['id'], state='ignored')
+                return True
+            self._update(job['id'], state='writing')
+        try:
+            self.api.delete_user_task(job['user_id'],task)
+            reply = f'Задача №{task} удалена.'
+        except RuntimeError as error:
+            reply = str(error)
+        except Exception:
+            reply = 'Результат удаления неизвестен. Проверьте карточку задачи.'
+        self._update(job['id'], state='delivering', parts=json.dumps([reply],ensure_ascii=False),part_index=0)
+        return True
+
+    def _write_command(self, job):
+        question = job['question'].strip()
+        flags = re.IGNORECASE | re.DOTALL
+        bot_link = re.fullmatch(
+            r'(?:кинь|скинь|отправь|пришли|перешли)\s+ссылку\s+'
+            r'([^:\n!?]{1,100}?)\s+в\s+(?:битрикс(?:е|24)?|б24)\s+на\s+'
+            r'(?:нашего\s+)?(?:тг|телеграм|telegram)[ -]?бота[.!]?', question, flags)
+        note = re.fullmatch(r'(?:/note\s+|(?:запиши|сохрани|добавь|напиши)\s+в\s+(?:мои\s+)?заметки\s*:\s*)(.+)', question, flags)
+        quoted = re.fullmatch(r'(?:напиши|запиши|сохрани|добавь)(?:\s+сообщение)?\s+(?:"([^"]+)"|«([^»]+)»)\s+в\s+мои\s+заметки[.!]?', question, flags)
+        channel = r'в\s+(?:битрикс(?:е|24)?|б24)'
+        verb = r'(?:/send|(?:напиши|отправь|передай|скинь|кинь)(?:\s+сообщение)?)\s+(?:' + channel + r'\s+)?'
+        direct = re.fullmatch(verb + r'([^:\n"«»“”]{1,120}?)\s+(?:"(.+)"|«(.+)»|“(.+)”)[.!]?', question, flags)
+        if not direct:
+            direct = re.fullmatch(verb + r'([^:\n"«»“”]{1,120}):\s*(.+)', question, flags)
+        if not direct:
+            direct = re.fullmatch(verb + r'([\w-]+(?:\s+[\w-]+){0,2}?)\s*(?:,\s*что\s+|\s+что\s+|\s+' + channel + r'\s+)(.+)', question, flags)
+        if job['bot_id'] < 0 and (note or quoted):
+            return False
+        if not (note or quoted or direct or bot_link):
+            return False
+        recipient = None
+        if note or quoted:
+            text = note[1] if note else quoted[1] or quoted[2]
+        else:
+            target = ' '.join((bot_link or direct)[1].casefold().split())
+            target = re.sub(r'\s+' + channel + r'$', '', target).replace('ё','е')
+            if bot_link:
+                telegram = getattr(self, 'telegram', None)
+                if not telegram or not telegram.username:
+                    self._ready(job, 'Telegram-бот пока не подключён.')
+                    return True
+                text = (f'ttkGPT в Telegram: https://t.me/{telegram.username}\n'
+                        'Для привязки откройте ttkGPT в дашборде и нажмите «Подключить Telegram».')
+            else:
+                text = next(s for s in direct.groups()[1:] if s is not None)
+            matches = [e for e in self.config.get('employees', []) if _positive_id(e.get('b24_user_id'))
+                       and (target in (str(e['b24_user_id']), str(e.get('login') or '').casefold())
+                            or target.replace('ё','е') in _recipient_names(e.get('name') or ''))]
+            if job['bot_id'] < 0 and not bot_link:
+                try:
+                    local_ids = {int(e['b24_user_id']) for e in matches}
+                    matches = self._portal_recipients(target, local_ids)
+                except Exception:
+                    self._ready(job, 'Не удалось проверить адресата в справочнике Битрикс24. Сообщение не отправлено.')
+                    return True
+            if len(matches) != 1:
+                self._ready(job, 'Укажите точное имя и фамилию из справочника или ID Б24. Формат: /send ID: текст')
+                return True
+            recipient = matches[0]
+        if not text.strip() or len(text) > 6000:
+            self._ready(job, 'Укажите текст от 1 до 6 000 символов.')
+            return True
+        with db_lock():
+            if self.job_owner(job) != job['owner']:
+                self._update(job['id'], state='ignored')
+                return True
+            claimed = self.con.execute("UPDATE bitrix_bot_jobs SET state='writing' WHERE id=? AND state='queued'", (job['id'],)).rowcount
+            self.con.commit()
+        if not claimed:
+            return True
+        try:
+            if recipient:
+                source_bot = job['bot_id'] if job['bot_id'] > 0 else self.status()['bot_id']
+                if not source_bot:
+                    raise ValueError('Чат-бот Битрикс24 не подключён.')
+                result = self.api.call('imbot.v2.Chat.Message.send', {
+                    'botId': source_bot, 'dialogId': str(recipient['b24_user_id']),
+                    'fields': {'message': _plain(text), 'urlPreview': False}})
+                if not isinstance(result, dict) or not _positive_id(result.get('id')):
+                    raise RuntimeError()
+                reply = 'Сообщение отправлено: ' + _plain(recipient.get('name') or str(recipient['b24_user_id'])) + '.'
+            else:
+                self.api.write_personal_note(job['user_id'], _plain(text))
+                reply = 'Записано в ваши «Мои заметки».'
+        except ValueError as error:
+            reply = str(error) if not recipient and type(error) is ValueError else REQUEST_FAILED
+        except Exception:
+            reply = 'Битрикс24 не подтвердил отправку. Проверьте диалог перед повторной командой.'
+        self._update(job['id'], state='delivering', parts=json.dumps([{'kind':'text','text':reply}]), part_index=0)
+        job['state'] = 'delivering'
+        return True
+
+    def _portal_recipients(self, target, local_ids):
+        criteria = {'ACTIVE': True, 'USER_TYPE':'employee'}
+        if target.isdecimal():
+            criteria['ID'] = target
+        start, seen, matches = 0, set(), []
+        while True:
+            rows = self.api.call('user.get', {'filter':criteria, 'select':['ID','NAME','LAST_NAME'],
+                                              'sort':'ID','order':'ASC','start':start})
+            if not isinstance(rows,list):
+                raise ValueError('Справочник недоступен')
+            for row in rows:
+                uid = _positive_id(row.get('ID'))
+                if not uid or uid in seen:
+                    raise ValueError('Неполный справочник')
+                seen.add(uid)
+                name = ' '.join(str(row.get(field) or '') for field in ('NAME','LAST_NAME')).strip()
+                if uid in local_ids or str(uid) == target or target in _recipient_names(name):
+                    matches.append({'b24_user_id':uid,'name':name})
+            if len(rows) < 50 or len(matches)>1:
+                return matches
+            start += len(rows)
+
+    def _activity_loop(self):
+        while not self._stopped.is_set():
+            try:
+                self._refresh_activity()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning('Не удалось проверить состояние индикаторов ttkGPT')
+            self._stopped.wait(1)
+
+    def _refresh_activity(self):
+        with db_lock():
+            jobs = [dict(row) for row in self.con.execute("""
+                SELECT j.id,j.bot_id,j.dialog_id,j.user_id,j.owner,coalesce(m.content,'') AS content
+                FROM bitrix_bot_jobs j LEFT JOIN gpt_messages m ON j.assistant_id=m.id
+                WHERE j.state IN ('queued','task_parsing','submitting','writing','running')
+                  AND (j.state!='running' OR m.status='running')
+                ORDER BY j.id""")]
+        active = set()
+        for job in jobs:
+            key = (job['bot_id'], job['dialog_id'])
+            if key not in active and self.job_owner(job) == job['owner']:
+                active.add(key)
+                self._notify_activity(key, job)
+        for key in self._indicators.keys() - active:
+            self._indicators.pop(key)
+            self._telegram_drafts.pop(key, None)
+
+    def _notify_activity(self, key, job):
+        stage = job['content'].removeprefix('Агент · ')
+        action = 'THINKING'
+        for prefix, code in [('Готовлю ответ', 'GENERATING'), ('Проверяю', 'CHECKING'),
+                             ('Ищу', 'SEARCHING'), ('Читаю', 'READING_DOCS'), ('Выполняю расчёт', 'CALCULATING')]:
+            if stage.startswith(prefix):
+                action = code
+                break
+        now = time.monotonic()
+        telegram = job['bot_id'] < 0
+        if telegram:
+            labels = {'THINKING':'Думаю…', 'GENERATING':'Готовлю ответ…',
+                      'CHECKING':'Проверяю данные…', 'SEARCHING':'Ищу информацию…',
+                      'READING_DOCS':'Читаю документ…', 'CALCULATING':'Выполняю расчёт…'}
+            label = stage if stage in ('Проверяю данные 1С…', 'Проверяю данные Битрикс24…',
+                                       'Ищу звонки…', 'Собираю отчёт…', 'Изучаю изображение…') else labels[action]
+            if re.fullmatch(r'(?:Ищу компании по заданным условиям|Проверяю ИНН и общую почту)\. Подтверждено \d{1,2} из \d{1,2}…', stage):
+                label = stage
+            identity = (job['id'], label)
+            previous_draft, renewed = self._telegram_drafts.get(key, (None, 0))
+            if identity != previous_draft or now - renewed >= 20:
+                self._telegram_drafts[key] = (identity, now)
+                try:
+                    self.telegram.call('sendMessageDraft', {'chat_id':int(job['dialog_id']),
+                                       'draft_id':job['id'], 'text':label})
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).warning('Telegram не подтвердил показ этапа ttkGPT')
+        action = 'typing' if telegram else action
+        previous, sent = self._indicators.get(key, (None, 0))
+        if previous == action and now - sent < (3 if telegram else 7):
+            return
+        self._indicators[key] = (action, now)
+        try:
+            if telegram:
+                self.telegram.call('sendChatAction', {'chat_id':job['dialog_id'], 'action':'typing'})
+                return
+            params = {
+                'botId': job['bot_id'], 'dialogId': job['dialog_id'],
+                'duration': 12}
+            try:
+                result = self.api.call('imbot.v2.Chat.InputAction.notify', {
+                    **params, 'statusMessageCode': 'IMBOT_AGENT_ACTION_' + action})
+                if result is True or isinstance(result, dict) and result.get('result') is True:
+                    return
+            except Exception:
+                pass
+            self.api.call('imbot.v2.Chat.InputAction.notify', params)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('Индикатор ttkGPT недоступен в %s', 'Telegram' if telegram else 'Б24')
+
     def _process(self, job):
         with db_lock():
             job = dict(self.con.execute('SELECT * FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone())
             if job['state'] not in ('queued', 'submitting', 'running', 'delivering'):
                 return
-            if self._owner(job['user_id']) != job['owner']:
+            if self.job_owner(job) != job['owner']:
                 self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                 return
         service = self.gpt_factory()
@@ -357,7 +741,15 @@ class BitrixBot:
             if len(job['question']) > 6000:
                 self._ready(job, 'Введите вопрос длиной до 6 000 символов.')
             else:
-                self._submit(service, job)
+                with db_lock():
+                    if job['owner'] in self._submitting_owners:
+                        return
+                    self._submitting_owners.add(job['owner'])
+                try:
+                    self._submit(service, job)
+                finally:
+                    with db_lock():
+                        self._submitting_owners.discard(job['owner'])
                 return
         if job['state'] == 'running':
             try:
@@ -370,6 +762,13 @@ class BitrixBot:
                 return
             if message['status'] == 'completed':
                 self._ready(job, message['content'], message['sources'], self._output_documents(job))
+            elif message['status'] == 'error' and message.get('content') in (
+                    'Codex попытался использовать недоступный инструмент',
+                    'Общий поиск в интернете недоступен в этом чате.'):
+                if re.search(r'интернет|\bсайт\w*|\bв сети\b', job['question'], re.I) or message['content'].startswith('Общий поиск'):
+                    self._ready(job, 'Встроенный инструмент не выполнил поиск. Для проверки открытых источников в ttkGPT предусмотрен отдельный веб-поиск.')
+                else:
+                    self._ready(job, 'Для ответа потребовался инструмент, недоступный этому боту. Могу работать с данными Битрикс24, 1С и файлами этого чата.')
             else:
                 self._ready(job, REQUEST_FAILED)
         if job['state'] == 'delivering':
@@ -379,10 +778,16 @@ class BitrixBot:
         with db_lock():
             if self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()[0] != 'queued':
                 return
-            if self._owner(job['user_id']) != job['owner']:
+            if self.job_owner(job) != job['owner']:
                 self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                 return
-            chat_id = self._chat(service, job)
+            chat_id = job['chat_id'] or self._chat(service, job)
+            if job['chat_id']:
+                try:
+                    service.check_chat(job['owner'], chat_id)
+                except ValueError:
+                    self._update(job['id'],state='ignored',error='Чат запроса недоступен с текущими правами.')
+                    return
             if chat_id in service.active or len(service.active) >= 2:
                 return
             self._update(job['id'], chat_id=chat_id)
@@ -390,7 +795,7 @@ class BitrixBot:
         if not self._import_files(service, job):
             return
         with db_lock():
-            if self._owner(job['user_id']) != job['owner']:
+            if self.job_owner(job) != job['owner']:
                 self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                 return
             try:
@@ -400,17 +805,17 @@ class BitrixBot:
                 return
             if chat_id in service.active or len(service.active) >= 2:
                 return
-            baseline = self.con.execute('SELECT coalesce(max(id),0) FROM gpt_messages WHERE chat_id=?', (chat_id,)).fetchone()[0]
+            baseline = -1
             documents = [row[0] for row in self.con.execute('SELECT id FROM gpt_documents WHERE chat_id=?', (chat_id,))]
             self._update(job['id'], state='submitting', chat_id=chat_id, baseline_id=baseline,
                          document_baseline=json.dumps(documents))
             try:
-                result = service.submit(job['owner'], chat_id, job['question'], **self._selection(job['owner']))
-                self._update(job['id'], state='running', assistant_id=result['id'])
+                service.submit(job['owner'], chat_id, job['question'], bot_job_id=job['id'], **self._selection(job['owner']))
             except Exception:
                 # submit() commits its messages internally. Recover a committed turn before any retry.
                 recovery = {**job, 'chat_id': chat_id, 'baseline_id': baseline}
-                self._reconcile_submit(recovery)
+                if self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?',(job['id'],)).fetchone()[0] == 'submitting':
+                    self._reconcile_submit(recovery)
                 self.con.commit()
                 current = self.con.execute('SELECT state FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone()[0]
                 if current == 'queued':
@@ -419,7 +824,7 @@ class BitrixBot:
     def _import_files(self, service, job):
         for reference in json.loads(job['attachments']):
             with db_lock():
-                if self._owner(job['user_id']) != job['owner']:
+                if self.job_owner(job) != job['owner']:
                     self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                     return False
                 saved = self.con.execute('SELECT * FROM bitrix_bot_imports WHERE job_id=? AND file_id=?',
@@ -431,11 +836,21 @@ class BitrixBot:
                         continue
             try:
                 # The OAuth download can wait on the network. It runs outside db_lock().
-                name, raw = self.files.download(job['bot_id'], job['dialog_id'], reference)
+                if job['bot_id'] < 0:
+                    name, raw = self.telegram.download(reference)
+                else:
+                    name, raw = self.files.download(job['bot_id'], job['dialog_id'], reference)
+                if name.lower().endswith(tuple(gpt_voice.FORMATS)):
+                    speech = gpt_voice.recognize(name, raw)
+                    caption = job['question'] if job['question'] != ATTACHMENT_QUESTION else ''
+                    job['question'] = (caption + '\n' + speech).strip()
+                    if len(job['question']) > 6000:
+                        raise ValueError('Расшифровка слишком длинная. Разделите сообщение.')
+                    continue
                 source_hash = hashlib.sha256(raw).hexdigest()
                 if saved and saved['chat_id'] == job['chat_id'] and saved['source_hash'] == source_hash:
                     with db_lock():
-                        if self._owner(job['user_id']) != job['owner']:
+                        if self.job_owner(job) != job['owner']:
                             self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                             return False
                         service.check_chat(job['owner'], job['chat_id'])
@@ -457,7 +872,7 @@ class BitrixBot:
                 expected = normalize(raw)[0] if name.lower().endswith(tuple(FORMATS)) else raw
                 digest = hashlib.sha256(expected).hexdigest()
                 with db_lock():
-                    if self._owner(job['user_id']) != job['owner']:
+                    if self.job_owner(job) != job['owner']:
                         self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                         return False
                     service.check_chat(job['owner'], job['chat_id'])
@@ -482,7 +897,7 @@ class BitrixBot:
                                                    base64.b64encode(raw).decode('ascii'), protected=True)
                 with db_lock():
                     service.check_chat(job['owner'], job['chat_id'])
-                    if self._owner(job['user_id']) != job['owner']:
+                    if self.job_owner(job) != job['owner']:
                         self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                         return False
                     self.con.execute('UPDATE bitrix_bot_imports SET document_id=? WHERE job_id=? AND file_id=?',
@@ -531,7 +946,7 @@ class BitrixBot:
             job = dict(self.con.execute('SELECT * FROM bitrix_bot_jobs WHERE id=?', (job['id'],)).fetchone())
             if job['state'] != 'delivering':
                 return
-            if self._owner(job['user_id']) != job['owner']:
+            if self.job_owner(job) != job['owner']:
                 self._update(job['id'], state='ignored', error='Связь пользователя с сотрудником изменилась.')
                 return
             if job['chat_id']:
@@ -557,8 +972,17 @@ class BitrixBot:
             else:
                 method = 'imbot.v2.Chat.Message.send'
                 fields = {'message': part['text'], 'urlPreview': False, 'replyId': job['message_id']}
+            if job['bot_id'] < 0 and part['kind'] == 'text' and len(fields['message']) > 2000:
+                text = fields['message']
+                parts[index:index+1] = [{'kind':'text','text':chunk} for chunk in _split_reply(text, 2000)]
+                self._update(job['id'], parts=json.dumps(parts, ensure_ascii=False))
+                fields['message'] = parts[index]['text']
             self._update(job['id'], state='sending')
         try:
+            if job['bot_id'] < 0:
+                self.telegram.deliver(job, part, fields)
+                self._update(job['id'], part_index=index+1, state='sent' if index+1 == len(parts) else 'delivering', error='')
+                return
             result = self.api.call(method, {
                 'botId': job['bot_id'], 'dialogId': job['dialog_id'],
                 'fields': fields,

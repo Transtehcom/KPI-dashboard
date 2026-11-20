@@ -202,6 +202,7 @@ def delete(con, login, me):
         if row["admin"] and _admins(con) <= 1:
             raise EmployeeError("Должен остаться хотя бы один администратор")
         con.execute("DELETE FROM employees WHERE login=?", (login,))
+        con.execute("DELETE FROM help_recipient WHERE login=?", (login,))
         con.execute("DELETE FROM users WHERE login=?", (login,))
         con.execute("DELETE FROM sessions WHERE login=?", (login,))
         con.commit()

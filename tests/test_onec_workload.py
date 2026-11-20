@@ -543,7 +543,7 @@ class WorkloadOneCTests(unittest.TestCase):
 
     def test_tender_status_overrides_posting_and_keeps_old_open_tenders(self):
         entity = "Document_ТТК_Тендер"
-        states = [("Черновик", True), ("Подготовлен", True), ("Действует", True),
+        states = [("Черновик", True), ("Подготавливается", True), ("Действует", True),
                   ("Выиграно", False), ("Проиграно", False), ("Отменено", False), ("Отклонён", False)]
         source = Source({entity: {**COMMON, "Статус": "Edm.String", "ВедущийМенеджер_Key": "Edm.Guid"}},
                         {entity: [document(i, ВедущийМенеджер_Key=guid(90), Posted=posted, Статус=status)

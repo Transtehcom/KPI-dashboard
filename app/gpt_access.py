@@ -49,11 +49,12 @@ class Access:
             identity = {"login": login, "role": "manager"}
         else:
             identity["listen_own"] = config.get("call_records", {}).get("listen_own", True)
+            identity["onec_domains_version"] = 2
         self.signature = "v1:" + hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def public(self):
         return {"admin": self.admin, "domain": self.domain, "label": "Все рабочие данные" if self.admin else self.label,
-                "description": "Администратор — все сотрудники и направления" if self.admin else "Только свои данные и вопросы своей должности"}
+                "description": "Администратор — все сотрудники и направления" if self.admin else "Внутренние данные по вашей должности. Открытые рабочие источники и документы доступны независимо от направления."}
 
     def prompt(self):
         return "ПРАВА СЕАНСА (заданы сервером):\n" + json.dumps({**self.public(), "login": self.login, "name": self.employee.get("name"), "position": self.position}, ensure_ascii=False)
@@ -64,9 +65,11 @@ class Access:
         if not isinstance(intent, dict):
             return False
         domains = intent.get("domains")
+        if domains == ["onec_documents"]:
+            return bool(self.onec_entities())
         if not isinstance(domains, list) or not domains or any(not isinstance(d, str) for d in domains) or intent.get("other_people") is not False:
             return False
-        return set(domains).issubset({"general", "self", self.domain} - {""})
+        return set(domains).issubset({"general", "self", "onec_documents", self.domain} - {""})
 
     def check_employee(self, value):
         if not value:
@@ -107,10 +110,13 @@ class Access:
             raise ValueError("Карточка не относится к вашим данным")
 
     def onec_entities(self):
-        return ONEC.get(self.domain, {})
+        entities = set(ONEC.get(self.domain, {}))
+        if self.domain == "supply":
+            entities.add("Document_ЗаказПоставщику")
+        return entities
 
     def onec_scope(self, entity):
-        spec = self.onec_entities().get(entity)
+        spec = ONEC.get(self.domain, {}).get(entity)
         if spec is None:
             raise ValueError("Тип документа 1С недоступен для вашей должности. Свои связанные документы можно найти через search")
         owner, fields = spec

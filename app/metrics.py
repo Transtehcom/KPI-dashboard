@@ -21,7 +21,7 @@
                             истории статусов в поручении нет: поступило и вышло не считаются, дни — с даты поручения;
                             просрочено — прошла плановая дата отгрузки; «к отгрузке сегодня» — она сегодня;
   «В пути»                — поручения экспедитору в статусе «В пути»; просрочено — прошла плановая дата поставки
-                            (ТТК_ДатаПоставки); «к доставке сегодня» — она сегодня;
+                            (ТТК_ДатаПоставки); «В пути сегодня» — все действующие поручения с этим статусом;
   «Доставлено, не закрыто» — поручения экспедитору в статусе «Готов к выдаче» (плановой даты для просрочки нет);
   «Доставлено, закрыто»   — поручения в статусах «Выдан», «Завершено»: конечное состояние, поэтому считаются поручения
                             выбранного периода (по дате поручения), в «в работе» и «всего в работе» не входят.
@@ -256,8 +256,8 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
             "overdue": None, "hints": {"overdue": "Срок расчёта в заявке 1С не задан"}}
 
     # этапы из поручений экспедитору (FORWARDER_STAGES); истории статусов в поручении нет
-    fwd = [dict(r) for r in con.execute("SELECT * FROM forwarder_orders WHERE NOT deleted" +
-                                        (" AND dt >= ?" if since else ""), (since,) if since else ())]
+    all_forwarders = [dict(r) for r in con.execute("SELECT * FROM forwarder_orders WHERE NOT deleted")]
+    fwd = [r for r in all_forwarders if not since or r["dt"] >= since]
     no_history = "В поручении экспедитору нет истории статусов"
     sourced, in_stage = {"calc": calc}, {"calc": queue}
     late = {}  # id поручения → дней просрочки по плановой дате этапа
@@ -300,14 +300,14 @@ def logistics(con, names, date_from, date_to, since=None, today=None):
                  "due": r.get("due_at"), "closed": _closed_at(r),
                  "late_delta": _plan_minus_fact(r.get("due_at"), _closed_at(r))} for r in period if not r["deleted"]]
     # поручения экспедитору — все статусы, дата поручения в выбранном периоде (кроме помеченных на удаление)
-    fwd_period = sorted((r for r in map(dict, con.execute("SELECT * FROM forwarder_orders WHERE NOT deleted"))
-                         if date_from <= r["dt"] <= date_to), key=lambda r: (r["created_at"] or r["dt"], r["doc"]), reverse=True)
+    fwd_period = sorted((r for r in all_forwarders if date_from <= r["dt"] <= date_to),
+                        key=lambda r: (r["created_at"] or r["dt"], r["doc"]), reverse=True)
     return {"available": bool(allrows), "date_from": date_from, "date_to": date_to, "today": today.isoformat(),
             "tiles": {"total": len(period), "deleted": sum(1 for r in period if r["deleted"]),
                       "in_work": sum(len(x) for k, x in in_stage.items() if k not in CLOSED_STAGES),
                       "overdue": sum(sourced[k]["overdue"] or 0 for k in FORWARDER_STAGES),
                       "ship_today": sum(1 for r in in_stage["prepare"] if r["ship_date"] == today.isoformat()),
-                      "deliver_today": sum(1 for r in in_stage["transit"] if r["delivery_date"] == today.isoformat())},
+                      "deliver_today": sum(r["status"] in FORWARDER_STAGES["transit"][0] for r in all_forwarders)},
             "forwarder_orders": [{"doc": r["doc"], "dt": r["created_at"] or r["dt"],
                                   "status": FORWARDER_STATUSES.get(r["status"], r["status"] or "—"), "logist": LOGIST,
                                   "ship_date": r["ship_date"], "delivery_date": r["delivery_date"],

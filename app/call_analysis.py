@@ -285,7 +285,8 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None, session=N
                 config['codex_web_sources'] = []
         cmd[-1:-1] = ["-c", 'service_tier="fast"' if fast else 'service_tier="default"', "-c", "features.fast_mode=" + ("true" if fast else "false")]
         if session is not None:
-            cmd.remove("--ephemeral")
+            if not session.get("ephemeral"):
+                cmd.remove("--ephemeral")
             cmd.insert(2, "--json")
             cmd[-1:-1] = ["-c", "project_doc_max_bytes=0"]
             if session.get("id"):
@@ -313,7 +314,13 @@ def _call_cli(prompt, config, model=MODEL, effort=EFFORT, schema=None, session=N
                 item = event.get("item") or {}
                 if event.get("type") == "item.completed" and item.get("type") in ("web_search", "web_search_call") and item.get("status", "completed") in ("completed", "success", "succeeded"):
                     config["codex_web_used"] = True
-                    if 'codex_web_sources' in config and (item.get('action') or {}).get('type') in ('open', 'click', 'find', 'other'):
+                    if 'codex_web_excerpts' in config:
+                        for source in item.get('results') or []:
+                            if isinstance(source, dict) and source.get('type') == 'text_result' and isinstance(source.get('url'), str):
+                                excerpts = config['codex_web_excerpts']
+                                if len(excerpts) < 256:
+                                    excerpts.append((source['url'], str(source.get('snippet') or '')[:3000]))
+                    if 'codex_web_sources' in config and (item.get('action') or {}).get('type') in ('open', 'open_page', 'click', 'find', 'find_in_page', 'other'):
                         for source in item.get('results') or []:
                             if (isinstance(source, dict) and source.get('type') == 'text_result'
                                     and isinstance(source.get('url'), str) and len(config['codex_web_sources']) < 256):

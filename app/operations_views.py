@@ -6,6 +6,7 @@ import math
 import re
 import statistics
 from collections import defaultdict
+from itertools import groupby
 from urllib.parse import quote, urlsplit
 
 from . import operations
@@ -396,7 +397,7 @@ def _report_record(row):
               'late_seconds', 'timeliness', 'links', 'date', 'amount', 'currency', 'vat_included',
               'asof', 'item_count', 'required_count', 'filled_count', 'readiness', 'selected_total',
               'estimate_total', 'unestimated_count', 'group', 'due_change_pending', 'deadline_approval',
-              'action_context', 'estimates_loaded', 'submission_obligation_finished', 'active_obligation_id', 'best_price_total')
+              'action_context', 'estimates_loaded', 'submission_obligation_finished', 'active_obligation_id', 'best_price_total', 'has_price_pair')
     result = {key: row[key] for key in fields if row.get(key) is not None and row.get(key) != '' and row.get(key) != []}
     for key, limit in (('title', 140), ('client', 100), ('owner_name', 80)):
         value = result.get(key)
@@ -429,6 +430,85 @@ def _resolve_deadlines(entities, versions, approvals):
             entity['due_verified'] = True
 
 
+def _price_key(item):
+    return item.get('item_id'), item.get('characteristic'), item.get('unit_id')
+
+
+def compare_supply_prices(row, documents):
+    wanted = {_price_key(item) for item in row['items'] if item.get('item_id') and item.get('unit_id')}
+    latest = {}
+    for document in documents:
+        closed = document.get('closed_at')
+        if (document.get('status') != 'Отработана' or not closed or closed >= row['closed_at']
+                or document['id'] == row['id']):
+            continue
+        for item in document.get('items') or []:
+            identity = _price_key(item)
+            price = _number(item.get('selected_price'))
+            if identity not in wanted or not item.get('selected_supplier_id') or not price or price <= 0:
+                continue
+            if identity not in latest or latest[identity][0] < closed:
+                latest[identity] = (closed, [])
+            if latest[identity][0] == closed:
+                latest[identity][1].append((document, item))
+    for item in row['items']:
+        _, matches = latest.get(_price_key(item), (None, []))
+        if len(matches) != 1:
+            item['comparison_note'] = 'Несколько предыдущих цен' if matches else 'Нет предыдущей цены для этой позиции и единицы'
+            continue
+        document, old = matches[0]
+        price = _number(old['selected_price'])
+        current = _number(item.get('selected_price'))
+        comparable = (current and current > 0 and item.get('selected_supplier_id') and item.get('currency')
+                      and item['currency'] == old.get('currency') and isinstance(item.get('vat_included'), bool)
+                      and item['vat_included'] == old.get('vat_included'))
+        delta = current - price if comparable else None
+        item['previous_price'] = dict(number=document.get('number'), closed_at=document['closed_at'],
+                                      supplier=old.get('selected_supplier_name'), price=price, currency=old.get('currency'),
+                                      delta=delta, percent=100 * delta / price if comparable else None)
+        if (current and current > 0 and item.get('selected_supplier_id')
+                and not item.get('currency') and not old.get('currency')
+                and item.get('vat_included') is False and old.get('vat_included') is False):
+            item['previous_price']['indicative_delta'] = current - price
+            item['previous_price']['indicative_percent'] = 100 * (current - price) / price
+
+
+def _supply_snapshots(con, prefix, cutoff):
+    records = con.execute(
+        'SELECT payload FROM operations_snapshots WHERE deleted=0 AND id IN (SELECT id FROM (SELECT id,ROW_NUMBER() OVER '
+        '(PARTITION BY entity_id ORDER BY observed_at DESC,id DESC) n FROM operations_snapshots '
+        "WHERE source='onec' AND entity_id LIKE ? AND observed_at<=?) WHERE n=1)",
+        (prefix + '%', operations._stamp(cutoff)))
+    return (operations.load_snapshot(r[0]) for r in records)
+
+
+def attach_supply_comparison(con, row, cutoff):
+    if row.get('kind') != 'supply' or row.get('status') != 'Отработана' or not row.get('closed_at') or not row.get('items'):
+        return
+    compare_supply_prices(row, _supply_snapshots(con, row['id'].rsplit(':', 1)[0] + ':', cutoff))
+
+
+def _price_pair_ids(con, prefix, cutoff):
+    history = []
+    for doc in _supply_snapshots(con, prefix, cutoff):
+        if doc.get('status') != 'Отработана' or not doc.get('closed_at'):
+            continue
+        prices = [(_price_key(i), bool(i.get('selected_supplier_id'))) for i in doc.get('items') or []
+                  if i.get('item_id') and i.get('unit_id') and (_number(i.get('selected_price')) or 0) > 0]
+        history.append((doc['closed_at'], doc['id'], prices))
+    result, latest_counts = set(), {}
+    for _, group in groupby(sorted(history), key=lambda r: r[0]):
+        counts = defaultdict(int)
+        for _, doc_id, prices in group:
+            if any(latest_counts.get(key) == 1 for key, _ in prices):
+                result.add(doc_id)
+            for key, supplier_selected in prices:
+                if supplier_selected:
+                    counts[key] += 1
+        latest_counts.update(counts)
+    return result
+
+
 def document_detail(con, config, entity_id, cutoff):
     """Enrich one document on demand without expanding the entire report."""
     cutoff = operations.local_datetime(cutoff)
@@ -455,6 +535,7 @@ def document_detail(con, config, entity_id, cutoff):
                     indexed[key].append({'id': version['id'], '_observed_at': version.get('_observed_at'), 'items': [item]})
             scopes = {(audit['request_id'], audit['item_id']): audit for audit in _audit_rows(con, 'operations_item_scope', cutoff)}
             _items(row, cutoff, scopes, (indexed, _audit_rows(con, 'operations_price_approval', cutoff)))
+            attach_supply_comparison(con, {**row, 'closed_at': entity.get('closed_at')}, cutoff)
         row['events'] = events
         return row
     return None
@@ -563,11 +644,8 @@ def build(con, config, kind, date_from, date_to, emp='Все', channel='Все',
         for source in ('onec', 'bitrix'):
             entities.extend(dict(entity, _source=source) for entity in operations.snapshot(con, source, cutoff, lean=True))
             events.extend(dict(event, _source=source) for event in operations.events(con, source, cutoff))
-    submission_history_available = True
     for entity in entities:
         if entity.get('kind') == 'source_meta':
-            if entity.get('capabilities',{}).get('submission_history') is False:
-                submission_history_available = False
             for warning in (entity.get('warnings') or [])[:50]:
                 text = str(warning)[:1000]
                 if text and text not in warnings:
@@ -598,6 +676,13 @@ def build(con, config, kind, date_from, date_to, emp='Все', channel='Все',
                          aliases, employee_map, lean=True) for entity in entities]
     scopes = {(row['request_id'], row['item_id']): row for row in _audit_rows(con, 'operations_item_scope', cutoff)}
     supply_documents = [row for row in documents if row.get('kind') == 'supply']
+    if kind == 'supply':
+        pairs = set()
+        for prefix in {row['id'].rsplit(':', 1)[0] + ':' for row in supply_documents}:
+            pairs.update(_price_pair_ids(con, prefix, cutoff))
+        for row in supply_documents:
+            if row['id'] in pairs:
+                row['has_price_pair'] = True
     for row in supply_documents:
         _summarize_items(row, scopes)
     document_map = {row['id']: row for row in documents}
@@ -685,10 +770,22 @@ def build(con, config, kind, date_from, date_to, emp='Все', channel='Все',
             tiles.append({'key': key, 'title': title, 'value': len(rows), 'record_ids': [row['id'] for row in rows]})
     if kind == 'sales':
         for key, title, kinds in [('calls', 'Звонки', {'call'}), ('tasks', 'Задачи', {'task_change', 'task_completed', 'task_created'}),
-                                  ('meetings', 'Назначены встречи', {'meeting_planned'}), ('submitted', 'Поданы КП и тендеры', {'submitted'})]:
+                                  ('meetings', 'Назначены встречи', {'meeting_planned'})]:
             matching = [event for event in period_events if event.get('kind') in kinds and not event.get('observed_only')]
-            value = None if key == 'submitted' and not submission_history_available else len(matching)
-            tiles.append({'key': key, 'title': title, 'value': value, 'event_ids': [event['id'] for event in matching]})
+            tiles.append({'key': key, 'title': title, 'value': len(matching), 'event_ids': [event['id'] for event in matching]})
+        submitted = []
+        for doc_id in record_for_document:
+            doc = document_map[doc_id]
+            if (doc['_source'] != 'onec' or doc['kind'] not in {'kp', 'tender'}
+                    or _status(doc.get('status')) != 'действует' or (emp != 'Все' and doc.get('owner') != emp)):
+                continue
+            submitted_at = max((event['at'] for event in event_map[doc_id]
+                                if event.get('kind') == 'submitted' and not event.get('observed_only')), default=None)
+            at = operations.local_datetime(submitted_at or doc.get('date'))
+            if at and start <= at <= cutoff:
+                submitted.append(dict(_report_record(doc), submission_date=_iso(at), from_history=bool(submitted_at)))
+        submitted.sort(key=lambda doc: (doc['submission_date'], doc['id']), reverse=True)
+        tiles.append({'key': 'submitted', 'title': 'Поданы КП и тендеры', 'value': len(submitted), 'documents': submitted})
         completed_meetings = [event for event in period_events if event.get('kind') == 'meeting' and not event.get('observed_only')]
         if completed_meetings:
             tiles.append({'key': 'completed_meetings', 'title': 'Проведены встречи',

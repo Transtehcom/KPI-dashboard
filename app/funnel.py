@@ -73,8 +73,16 @@ def _fact_pick(sc, rows, by_rec):
     return out
 
 
+def sales_staff(con):
+    titles = {"менеджер оп", "менеджер отдела продаж", "менеджер по продажам",
+              "тендерный специалист", "специалист тендерного отдела",
+              "ведущий тендерный специалист", "ведущий специалист тендерного отдела"}
+    return [dict(r) for r in con.execute("SELECT login,name,title,department,b24_user_id FROM employees")
+            if " ".join((r["title"] or "").casefold().split()) in titles]
+
+
 def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=None, date_to=None, date_field="created",
-                departments=None, mode="date", directions=None):
+                departments=None, mode="date", directions=None, roster=None):
     """login — ключ ответственного (логин сотрудника или «id:<ID в Б24>») либо список таких ключей.
     date_from / date_to (ГГГГ-ММ-ДД, включительно) оставляют в срезе записи, у которых дата date_field попадает
     в период: created — дата создания, stage — дата перехода на текущую стадию.
@@ -101,6 +109,17 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
     dep_of = lambda r: by_login.get(r["emp"]) if r["emp"] in by_login else by_b24.get(str(r["responsible_id"] or ""), "")
     titles = load_rules().get("departments", {})
     deps_chosen = None if departments is None else set(departments)
+    if roster is not None:
+        staff = {e["login"]: e for e in roster}
+        ids = {str(e["b24_user_id"]): e["login"] for e in roster if e["b24_user_id"]}
+        selected_rows = []
+        for r in all_rows:
+            key = ids.get(str(r["responsible_id"])) if r["responsible_id"] else r["emp"]
+            if key in staff:
+                r["emp"], r["responsible"] = key, staff[key]["name"]
+                selected_rows.append(r)
+        all_rows = selected_rows
+        by_login = {e["login"]: e["department"] or "" for e in roster}
 
     # варианты фильтров — по всему срезу (чтобы выбранный вариант не пропадал из списка), счётчики — по периоду
     deps = {}
@@ -108,6 +127,12 @@ def deal_funnel(con, config, login=None, category=None, kind="deals", date_from=
         d = dep_of(r)
         deps.setdefault(d, {"value": d, "name": titles.get(d, d) if d else "Без отдела", "count": 0})
     resp = {}
+    if roster is not None:
+        for e in roster:
+            d = by_login[e["login"]]
+            deps.setdefault(d, {"value": d, "name": titles.get(d, d) if d else "Без отдела", "count": 0})
+            if deps_chosen is None or d in deps_chosen:
+                resp[e["login"]] = {"value": e["login"], "name": e["name"], "count": 0}
     for r in all_rows:
         if deps_chosen is not None and dep_of(r) not in deps_chosen:
             continue  # в списке ответственных — только из выбранных отделов

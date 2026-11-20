@@ -27,7 +27,7 @@ import math
 import re
 from .common import db_lock, merge_rows
 from . import operations
-from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, QUOTE_ENTITY, SUPPLIER_ORDER_ENTITY, _moment, document_closed
+from .onec_workload import AUTHOR_ONLY, IMMEDIATE_COMPLETION_ENTITIES, QUOTE_ENTITY, SUPPLIER_ORDER_ENTITY, TENDER_ENTITY, _moment, document_closed
 
 LOOKBACK_DAYS = 180  # задачи, изменённые за этот срок, плюс все открытые
 EKB = dt.timezone(dt.timedelta(hours=5))
@@ -154,23 +154,33 @@ def store_onec(con, data, updated=None):
                     "ON CONFLICT(entity) DO UPDATE SET error=excluded.error", (entity, error))
 
 
-def _quote_completions(con):
+def _document_state_times(con):
     completions = {}
+    tender_states = {}
     for event in operations.events(con, "onec"):
         entity_id = str(event.get("entity_id") or "")
-        if event.get("time_verified") is not True or event.get("status") != "Действует" or ":kp:" not in entity_id:
+        if event.get("time_verified") is not True:
             continue
         moment = _moment(event.get("at"))
-        if moment:
+        if not moment:
+            continue
+        if (":tender:" in entity_id and event.get("source_register") in
+                ("InformationRegister_ТТКСостоянияДокументов", "InformationRegister_ТТК_СостоянияДокументов")):
+            key = entity_id.replace(":tender:", ":" + TENDER_ENTITY + ":", 1)
+            if key not in tender_states or moment > tender_states[key][0]:
+                tender_states[key] = (moment, event.get("status"))
+            elif moment == tender_states[key][0] and event.get("status") != tender_states[key][1]:
+                tender_states[key] = (moment, None)
+        elif ":kp:" in entity_id and event.get("status") == "Действует":
             # Operational and workload identities share the database hash and document reference.
             key = entity_id.replace(":kp:", ":" + QUOTE_ENTITY + ":", 1)
             completions[key] = max(completions.get(key, ""), moment)
-    return completions
+    return completions, tender_states
 
 
 def _onec_data(con, people):
     by_login = {p["login"]: p["uid"] for p in people}
-    quote_completions = _quote_completions(con)
+    quote_completions, tender_states = _document_state_times(con)
     documents = []
     for row in con.execute("SELECT * FROM workload_onec_documents ORDER BY date DESC, id"):
         if row["emp"] not in by_login:
@@ -180,6 +190,12 @@ def _onec_data(con, people):
         if not timing_applicable:
             document.update(closed_at=document["date"], deadline=None, deadline_source=None)
         closed = document_closed(document)
+        if document["entity"] == TENDER_ENTITY:
+            key = document["id"].removesuffix(":" + document["emp"])
+            moment, status = tender_states.get(key, (None, None))
+            verified = closed and status and status == document.get("status")
+            document.update(closed_at=moment if verified else None,
+                            closed_at_source="ТТК состояния документов · " + status if verified else None)
         if document["entity"] == QUOTE_ENTITY:
             key = document["id"].removesuffix(":" + document["emp"])
             document["closed_at"] = quote_completions.get(key) if closed else None
@@ -294,7 +310,7 @@ def analyze(t, now, block_tags=(), help_tags=()):
     }
 
 
-def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
+def build(con, config, now=None, uids=None, portal=None, dept_titles=None, viewer_login=None):
     """Данные вкладки. uids — показать только этих исполнителей (не руководителю — только он сам);
     dept_titles — полные названия отделов из kpi_rules.json («ОП» → «Отдел продаж (ОП)»)."""
     st = settings(config)
@@ -302,10 +318,14 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     team = members(config)
     names = {p["uid"]: p["name"] for p in con.execute("SELECT uid, name FROM task_people")}  # постановщики не из раздела
     names.update({p["uid"]: p["name"] for p in team})
-    people = sorted((p for p in team if uids is None or p["uid"] in uids), key=lambda p: p["name"])
+    people = sorted((p for p in team if (uids is None or p["uid"] in uids)
+                     and (viewer_login is None or p["login"] == viewer_login)), key=lambda p: p["name"])
     configuration = member_configuration(con, people)
     member_settings = {p["login"]: p for p in configuration}
     shown = {p["uid"] for p in people}
+    if viewer_login is not None:
+        # A shared Bitrix ID cannot reliably identify the owner of a personal task.
+        shown.difference_update(p["uid"] for p in team if p["login"] != viewer_login)
     director = st["director"] or next((p["uid"] for p in team
                                        if "исполнительный директор" in (p["title"] or "").lower()), None)
     rows = [dict(r) for r in con.execute("SELECT * FROM task_ledger")]
@@ -321,7 +341,7 @@ def build(con, config, now=None, uids=None, portal=None, dept_titles=None):
     tasks.sort(key=lambda t: t["created"] or "", reverse=True)
     documents, onec = _onec_data(con, people)
     dept_titles = dept_titles or {}
-    return {"generated": now, "portal": portal, "has_data": bool(rows), "director": director,
+    return {"generated": now, "portal": portal, "has_data": bool(rows if viewer_login is None else tasks or documents), "director": director,
             "people": [{"uid": p["uid"], "name": p["name"], "position": p["title"],
                         "group": member_settings[p["login"]]["group"],
                         "included": member_settings[p["login"]]["included"],

@@ -247,7 +247,7 @@ def _navigation_url(onec, entity, ref):
 
 
 TENDER_ENTITY = "Document_ТТК_Тендер"
-TENDER_OPEN_STATUSES = {"Черновик", "Подготовлен", "Действует"}
+TENDER_OPEN_STATUSES = {"Черновик", "Подготавливается", "Действует"}
 QUOTE_ENTITY = "Document_КоммерческоеПредложениеКлиенту"
 QUOTE_CLOSED_STATUSES = {"Действует", "Отменено"}
 SUPPLIER_ORDER_ENTITY = "Document_ЗаказПоставщику"
@@ -280,8 +280,8 @@ def document_closed(row):
         return True
     if row.get("entity") == SUPPLIER_ORDER_ENTITY:
         return row.get("payment_pct") == 100 and row.get("receipt_pct") == 100
-    if row.get("entity") == TENDER_ENTITY and row.get("status"):
-        return row["status"] not in TENDER_OPEN_STATUSES
+    if row.get("entity") == TENDER_ENTITY:
+        return row.get("status") not in TENDER_OPEN_STATUSES
     if row.get("entity") == QUOTE_ENTITY:
         return row.get("status") in QUOTE_CLOSED_STATUSES
     if row.get("entity") == SUPPLY_ENTITY:

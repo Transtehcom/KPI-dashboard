@@ -91,7 +91,7 @@ class AccessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.tools("logist").execute("b24_search", '{"entity":"deal"}', "", "2026-11", self.p)
 
-    def test_onec_owner_filter_and_fields_cannot_be_overridden(self):
+    def test_onec_documents_readable_across_owners_within_allowed_domain(self):
         tools = self.tools("pm")
         tools.live._metadata = {"Document_ЗаказКлиента": {"fields": {"Ref_Key": "Edm.Guid", "Number": "Edm.String", "СуммаДокумента": "Edm.Decimal", "ТТК_ДатаДоставки": "Edm.DateTime"}, "references": {}}}
         import time
@@ -100,10 +100,17 @@ class AccessTest(unittest.TestCase):
         tools.live.onec._odata.return_value = []
         tools.execute("onec_search", json.dumps({"entity": "Document_ЗаказКлиента", "text": "123"}), "", "2026-11", self.p)
         _entity, args = tools.live.onec._odata.call_args.args
-        self.assertIn("Менеджер/Description eq 'ПМ'", args["$filter"])
-        self.assertNotIn("ТТК_ДатаДоставки", args["$select"])
-        with self.assertRaises(ValueError):
-            tools.execute("onec_search", json.dumps({"entity": "Document_ЗаказКлиента", "fields": ["ТТК_ДатаДоставки"], "text": "123"}), "", "2026-11", self.p)
+        self.assertNotIn("Менеджер", args.get("$filter", ""))
+        self.assertIn("ТТК_ДатаДоставки", args["$select"])
+        logistics = self.tools("logist")
+        logistics.live.metadata = Mock(return_value=tools.live._metadata)
+        logistics.live.onec = Mock()
+        self.assertEqual(logistics.live.odata("onec_entities", {}, self.p)["total"], 0)
+        for operation in ("onec_search", "onec_card", "onec_schema", "onec_count"):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "недоступен"):
+                logistics.live.odata(operation, {"entity": "Document_ЗаказКлиента"}, self.p)
+        logistics.live.onec._odata.assert_not_called()
+        self.assertTrue(Access(self.config, "logist").allows_intent({"domains":["onec_documents"],"other_people":True}))
         with self.assertRaises(ValueError):
             tools.execute("onec_card", json.dumps({"entity": "Catalog_Пользователи", "id": "123"}), "", "2026-11", self.p)
 

@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import gpt_documents, gpt_images
+from . import gpt_documents, gpt_images, gpt_voice
 from .crm_links import portal_origin
 
 
@@ -122,6 +122,16 @@ def _validate_url(url, origin):
 
 
 def _file_extension(prefix, content_type):
+    if prefix.startswith(b"OggS"):
+        return ".ogg"
+    if prefix.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
+    if prefix[4:8] == b"ftyp":
+        return ".m4a" if content_type.startswith("audio/") or b"M4A" in prefix[:20] else ""
+    if prefix.startswith(b"RIFF") and prefix[8:12] == b"WAVE":
+        return ".wav"
+    if content_type.startswith("audio/"):
+        return {"audio/mpeg":".mp3","audio/mp4":".m4a","audio/aac":".aac","audio/ogg":".ogg","audio/webm":".webm"}.get(content_type,"")
     if prefix.startswith(b"%PDF-"):
         return ".pdf"
     if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -181,13 +191,17 @@ class BitrixFiles:
                     detected = _file_extension(prefix, content_type)
                     extension = detected or os.path.splitext(name)[1].lower()
                     limit = gpt_images.MAX_BYTES if extension in gpt_images.FORMATS else gpt_documents.MAX_BYTES
+                    if extension in gpt_voice.FORMATS:
+                        limit = gpt_voice.MAX_BYTES
                     declared = response.headers.get("Content-Length")
                     if declared and int(declared) > limit:
                         raise BitrixFileError("Размер вложения превышает допустимый предел.")
                     raw = prefix + response.read(limit + 1 - len(prefix))
                 if not raw or len(raw) > limit:
                     raise BitrixFileError("Размер вложения превышает допустимый предел.")
-                if not os.path.splitext(name)[1]:
+                if detected in gpt_voice.FORMATS and os.path.splitext(name)[1].lower() not in gpt_voice.FORMATS:
+                    name += detected
+                elif not os.path.splitext(name)[1]:
                     name += detected or ".bin"
                 return _safe_name(name), raw
             raise BitrixFileError("Слишком много перенаправлений при скачивании вложения.")

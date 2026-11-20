@@ -63,15 +63,14 @@ class OneCCountTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"10 000"):
             self.count()
 
-    def test_staff_count_preserves_owner_filter_and_forbids_author_field(self):
+    def test_staff_count_includes_all_document_owners_and_can_filter_by_author(self):
         access = Access(copy.deepcopy(CONFIG), "pm")
         self.live.access = access
         self.live.onec._odata.return_value = []
         self.count(month="2026-11")
         expression = self.live.onec._odata.call_args.args[1]["$filter"]
-        self.assertIn("Менеджер", expression)
+        self.assertNotIn("Менеджер", expression)
         self.assertIn("Date ge datetime'2026-11-01", expression)
         self.live.onec._odata.reset_mock()
-        with self.assertRaises(ValueError):
-            self.count(field="Автор",text=self.author)
-        self.live.onec._odata.assert_not_called()
+        self.count(field="Автор",text=self.author)
+        self.live.onec._odata.assert_called()

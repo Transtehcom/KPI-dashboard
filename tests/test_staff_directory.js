@@ -7,7 +7,7 @@ const main = {innerHTML:'', querySelectorAll:()=>[]};
 const state = {boot:{me:{role:'employee'}}};
 const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 const link = html.slice(html.indexOf('  function crmLink('), html.indexOf('  function approvalControl('));
-const context = {state, esc, document:{getElementById:id=>id==='main'?main:null},
+const context = {state, esc, PREVIEW:false, document:{getElementById:id=>id==='main'?main:null},
   staffForm:()=>{throw Error('Employee must not receive edit form');},
   awayNow:()=>'', bindStaffForm:()=>{}, window:{}};
 vm.createContext(context);
@@ -23,9 +23,11 @@ for (const forbidden of ['data-edit=', 'addEmp', '<form', '<th>KPI', '<th>Б24 I
   assert.ok(!main.innerHTML.includes(forbidden), forbidden);
 }
 state.boot.me.role='manager';
+assert.ok(!main.innerHTML.includes('id="helpRecipient"'));
 context.renderStaff({...publicData, positions:[], departments:[], employees:[{...publicData.employees[0],login:'test',b24_user_id:56}]});
 assert.equal((main.innerHTML.match(/<th>/g)||[]).length, 9);
 assert.ok(main.innerHTML.includes('id="addEmp"'));
+assert.ok(main.innerHTML.includes('id="helpRecipient"'));
 assert.ok(main.innerHTML.includes('data-edit="test"'));
 assert.ok(main.innerHTML.includes('>56</a>'));
 assert.ok(html.includes('${crmLink(b.me.name, b.me.url)}'));

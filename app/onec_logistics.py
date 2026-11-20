@@ -114,7 +114,9 @@ def fetch_forwarder_orders(onec, ds, date_from, date_to):
         "$filter": f"Date ge datetime'{_when(date_from)}' and Date le datetime'{date_to.isoformat()}T23:59:59'",
         "$select": "Ref_Key,Number,Date,Posted,DeletionMark,ТТК_Статус,ТТК_ДатаОтгрузки,ТТК_ДатаПоставки,ТТК_ДОП,ТТК_ДФО,ТТК_ДПП,ТТК_ДФП,ТТК_ЗаказКлиента_Key,"
                    "ТТК_АдресОтгрузки,ТТК_АдресДоставки,АдресДоставки,ТТК_ОтветственныйЛогист/Description,"
-                   "ТТК_ТранспортнаяКомпания/Description"})
+                   "ТТК_ТранспортнаяКомпания/Description,ТТК_ТранспортнаяКомпания_Key"})
+    from .carrier_directory import cards
+    carrier_cards = cards(onec, (r.get("ТТК_ТранспортнаяКомпания_Key") for r in rows))
     out = []
     for r in rows:
         src, dst = _text(r.get("ТТК_АдресОтгрузки")), _text(r.get("ТТК_АдресДоставки") or r.get("АдресДоставки"))
@@ -127,5 +129,7 @@ def fetch_forwarder_orders(onec, ds, date_from, date_to):
                     "plan_sum": delivery.get(r.get("ТТК_ЗаказКлиента_Key")) or None,
                     "fact_sum": facts.get(r.get("ТТК_ЗаказКлиента_Key")) or None,
                     "carrier": _text((r.get("ТТК_ТранспортнаяКомпания") or {}).get("Description")) or None,
+                    "carrier_key": r.get("ТТК_ТранспортнаяКомпания_Key"),
+                    "carrier_card": carrier_cards.get(r.get("ТТК_ТранспортнаяКомпания_Key")),
                     "route": " → ".join(p for p in (src, dst) if p) or None})
     return out

@@ -31,10 +31,10 @@ class LeadApprovalTest(unittest.TestCase):
             self.assertEqual(item["details"]["lead_approval"]["rows"][0]["value"],value)
         self.assertEqual(self.calc()["payout"],100)
 
-    def test_yes_does_not_qualify_an_incomplete_lead_and_no_survives_refresh(self):
+    def test_yes_qualifies_an_incomplete_lead_and_no_survives_refresh(self):
         manual.set_lead_approval(self.con,"pm","2026-11","lead42",1,"boss")
         replace_rows(self.con,"leads",[{**self.full,"budget":0,"qualified_date":None}])
-        self.assertEqual(self.calc()["components"][0]["fact"],0)
+        self.assertEqual(self.calc()["components"][0]["fact"],1)
         self.assertEqual(len(self.calc()["details"]["rows"]),1)
         manual.set_lead_approval(self.con,"pm","2026-11","lead42",0,"boss")
         replace_rows(self.con,"leads",[self.full])

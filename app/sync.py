@@ -2,6 +2,7 @@
 import datetime as dt
 import threading
 import traceback
+from urllib.error import HTTPError
 
 from . import call_records, demo, employees, manual, workload, task_efficiency, supply_documents
 from .bitrix24 import Bitrix24
@@ -164,6 +165,18 @@ def run(con, config, force_demo=False):
                     data = onec.fetch(con, managers, date_from, date_to)
                     if onec_cfg.get('datasets', {}).get('forwarder_orders', {}).get('source') == 'forwarder_orders':
                         file_entity = onec_cfg['datasets']['forwarder_orders'].get('contract_files_entity')
+                        if not file_entity:
+                            try:
+                                onec._odata(supply_documents.FORWARDER_FILES,
+                                            {'$format': 'json', '$select': 'Ref_Key', '$top': 1})
+                                file_entity = supply_documents.FORWARDER_FILES
+                            except HTTPError as exc:
+                                if exc.code not in (403, 404):
+                                    status = 'error'
+                                log.append(f'1С: справочник файлов поручений экспедитору недоступен (HTTP {exc.code})')
+                            except Exception as exc:
+                                status = 'error'
+                                log.append(f'Ошибка проверки справочника файлов поручений: {exc}')
                         if file_entity:
                             try:
                                 forwarder_contracts = supply_documents.fetch_forwarder_contracts(onec, managers, date_from, date_to, file_entity)
@@ -171,8 +184,6 @@ def run(con, config, force_demo=False):
                             except Exception as e:
                                 status = 'error'
                                 log.append(f'Ошибка файлов поручений экспедитору из 1С: {e}')
-                        else:
-                            log.append('1С: файлы поручений экспедитору — ожидается настройка источника OData')
                     supplier_ds = onec_cfg.get("datasets", {}).get("supplier_orders", {})
                     if supplier_ds.get("source") == "supply_requests":
                         try:

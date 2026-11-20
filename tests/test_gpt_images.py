@@ -144,7 +144,7 @@ class ImageAttachmentTest(unittest.TestCase):
 
     def test_personal_identifier_patterns_keep_ordinary_business_text(self):
         text = "Поставка серии 4512 номер 345678. СНИЛС 112-233-445 95. Стоимость 1234567890 рублей, дата 06.11.2026"
-        self.assertEqual(PrivacyContext(documents_only=True).mask(text), text)
+        self.assertEqual(PrivacyContext(documents_only=True).mask(text), text.replace("112-233-445 95", "[СНИЛС_1]"))
 
     def test_protected_ocr_masks_passport_layouts_and_bare_number(self):
         examples = (

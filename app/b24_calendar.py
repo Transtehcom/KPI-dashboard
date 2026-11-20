@@ -141,14 +141,16 @@ def _crm_activities(b24, uid, day, portal):
     return out
 
 
-def day_schedule(cfg, uid, day):
+def day_schedule(cfg, uid, day, personal_read=None):
     """Расписание пользователя Б24 uid на дату day: {items, calendar_error}. Кэш — минута."""
     key = (cfg.get("webhook"), uid, day.isoformat())
     with _cache_lock:
         hit = _cache.get(key)
-        if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+        if not personal_read and hit and time.monotonic() - hit[0] < CACHE_SECONDS:
             return hit[1]
     b24 = Bitrix24(cfg, log=lambda *a: None)
+    if personal_read:
+        b24.call = personal_read
     items, errors = [], {}
     for name, load in (("calendar_error", lambda: _events(b24, uid, day, _portal(cfg))),
                        ("tasks_error", lambda: _tasks(b24, uid, day, _portal(cfg))),
@@ -163,6 +165,7 @@ def day_schedule(cfg, uid, day):
     for x in items:
         x.pop("sort", None)
     res = {"items": items, **errors}
-    with _cache_lock:
-        _cache[key] = (time.monotonic(), res)
+    if not personal_read:
+        with _cache_lock:
+            _cache[key] = (time.monotonic(), res)
     return res

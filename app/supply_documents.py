@@ -10,6 +10,7 @@ CONTRACT_NAME = re.compile(r"договор|(?<![а-яёa-z])дог(?![а-яёa-
 ORDER_TYPE = "StandardODATA.Document_ЗаказПоставщику"
 CONTRACT_TYPE = "StandardODATA.Catalog_ДоговорыКонтрагентов"
 FORWARDER_TYPE = "StandardODATA.Document_ПоручениеЭкспедитору"
+FORWARDER_FILES = "Catalog_ПоручениеЭкспедиторуПрисоединенныеФайлы"
 
 
 def contract_files(onec, include_contracts=True, file_entity='Catalog_Файлы'):
@@ -17,11 +18,17 @@ def contract_files(onec, include_contracts=True, file_entity='Catalog_Файлы
     attached = _pages(onec, "Catalog_ДоговорыКонтрагентовПрисоединенныеФайлы", {
         "$format": "json", "$filter": "DeletionMark eq false and IsFolder eq false",
         "$select": "Ref_Key,Description,ВладелецФайла_Key,Расширение,DeletionMark,IsFolder"}) if include_contracts else []
-    generic = _pages(onec, file_entity, {
-        "$filter": "DeletionMark eq false",
-        "$select": "Ref_Key,Description,ВладелецФайла,ВладелецФайла_Type,Расширение,DeletionMark"})
     attachments = [(CONTRACT_TYPE, file.get("ВладелецФайла_Key"), file) for file in attached]
-    attachments.extend((file.get("ВладелецФайла_Type"), file.get("ВладелецФайла"), file) for file in generic)
+    if file_entity == FORWARDER_FILES:
+        forwarder_files = _pages(onec, file_entity, {
+            "$filter": "DeletionMark eq false",
+            "$select": "Ref_Key,Description,ВладелецФайла_Key,Расширение,DeletionMark"})
+        attachments.extend((FORWARDER_TYPE, file["ВладелецФайла_Key"], file) for file in forwarder_files)
+    else:
+        generic = _pages(onec, file_entity, {
+            "$filter": "DeletionMark eq false",
+            "$select": "Ref_Key,Description,ВладелецФайла,ВладелецФайла_Type,Расширение,DeletionMark"})
+        attachments.extend((file.get("ВладелецФайла_Type"), file.get("ВладелецФайла"), file) for file in generic)
     files = {}
     for owner_type, owner_key, file in attachments:
         if file.get("DeletionMark") or file.get("IsFolder"):

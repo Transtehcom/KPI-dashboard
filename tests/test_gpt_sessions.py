@@ -98,7 +98,7 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("--last", commands[1])
         self.assertNotEqual(commands[0][commands[0].index("--output-last-message") + 1], commands[1][commands[1].index("--output-last-message") + 1])
 
-    def test_chat_second_message_sends_only_new_user_message(self):
+    def test_legacy_chat_replays_history_without_a_desktop_thread(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
         service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
@@ -113,11 +113,12 @@ class SessionTest(unittest.TestCase):
                 service.work(chat["id"], job["id"])
                 self.assertEqual(service.chat("boss", chat["id"])["messages"][-1]["status"], "completed")
         self.assertIsNotNone(calls[0][1]["master"])
-        self.assertIsNone(calls[1][1]["master"])
+        self.assertTrue(calls[1][1]["ephemeral"])
+        self.assertIsNone(calls[1][1]["id"])
         self.assertIn("new-marker", calls[1][0])
-        self.assertNotIn("initial-marker", calls[1][0])
+        self.assertIn("initial-marker", calls[1][0])
 
-    def test_tool_continuation_sends_only_latest_result(self):
+    def test_ephemeral_tool_continuation_retains_results(self):
         from app.common import load_rules
         from app.gpt_assistant import GPTAssistant
         service = GPTAssistant(self.con, {"ttkgpt_runtime":"legacy", "employees": [{"login": "boss", "name": "Администратор", "role": "manager"}]}, load_rules())
@@ -135,9 +136,9 @@ class SessionTest(unittest.TestCase):
         with patch("app.gpt_sessions.call_analysis.run_codex", side_effect=model):
             job = service.submit("boss", chat["id"], "Проверь данные", launch=False)
             service.work(chat["id"], job["id"])
-        self.assertEqual([r["tool"] for r in packets[1]["tool_results"]], ["employees"])
-        self.assertEqual([r["tool"] for r in packets[2]["tool_results"]], ["search"])
-        self.assertEqual(packets[1]["history"], [])
+        self.assertEqual([r["tool"] for r in packets[1]["tool_results"]], ["sync_status","employees"])
+        self.assertEqual([r["tool"] for r in packets[2]["tool_results"]], ["sync_status","employees","search"])
+        self.assertEqual(packets[1]["history"][-1]["content"], "Проверь данные")
 
     def test_denied_access_turn_persists_alias_map_before_codex_call(self):
         from app.common import load_rules

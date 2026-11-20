@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from app import supply_documents
@@ -90,6 +91,16 @@ class LogisticsDocumentsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Источник прикреплённых файлов'):
             supply_documents.fetch_forwarder_contracts(object(), {}, dt.date(2026, 11, 1), dt.date(2026, 11, 30))
 
+    def test_forwarder_attachment_uses_typed_owner(self):
+        class Source:
+            def _odata(self, entity, params):
+                assert entity == supply_documents.FORWARDER_FILES
+                assert 'ВладелецФайла_Key' in params['$select']
+                return [] if params['$skip'] else [{'Ref_Key': 'file', 'ВладелецФайла_Key': 'order',
+                                                    'Description': 'договор заявка 11.11'}]
+        files = supply_documents.contract_files(Source(), False, supply_documents.FORWARDER_FILES)
+        self.assertEqual(files[(supply_documents.FORWARDER_TYPE, 'order')], {'file': 'договор заявка 11.11'})
+
     def test_sync_waits_for_source_and_preserves_confirmed_snapshot_on_error(self):
         from app import sync
         config = {**self.config, 'mode': 'real', 'onec': {'base_url': 'https://example.test',
@@ -101,10 +112,11 @@ class LogisticsDocumentsTest(unittest.TestCase):
                 patch('app.sync.onec_money.fetch', return_value=None), \
                 patch('app.sync.supply_documents.fetch_forwarder_contracts') as files:
             source.return_value.fetch.return_value = {'forwarder_orders': []}
+            source.return_value._odata.side_effect = HTTPError('test', 404, 'not published', {}, None)
             self.assertEqual(sync.run(self.con, config)['status'], 'ok')
             files.assert_not_called()
             self.assertIsNone(self.con.execute("SELECT * FROM dataset_state WHERE dataset='forwarder_contracts'").fetchone())
-            config['onec']['datasets']['forwarder_orders']['contract_files_entity'] = 'Catalog_Файлы'
+            source.return_value._odata.side_effect = None
             files.return_value = [{'id': 'one', 'emp': 'logist', 'dt': dt.date.today().isoformat(),
                                    'doc': 'PE', 'files': '["договор.pdf"]', 'has_contract': 1}]
             self.assertEqual(sync.run(self.con, config)['status'], 'ok')

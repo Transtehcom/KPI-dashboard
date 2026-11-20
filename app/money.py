@@ -10,6 +10,7 @@
 Платежи без даты и несогласованные в календарь не входят и выводятся отдельно с суммами; другие валюты — отдельно.
 """
 import datetime as dt
+import json
 
 DAYS = 8
 IN_TYPES = ["Отгрузка", "Аванс"]
@@ -176,11 +177,14 @@ def build(con, today=None, date_from=None, date_to=None):
     cash_rub = round(sum(c["amount"] for c in cash if rub(c["currency"])), 2)
     start = round(cash_rub - st["adjust"], 2)
     cal, bal = [], start
+    calendar_rows = {}
     for d in days:
         iso = d.isoformat()
-        inc = round(sum(o["amount"] for o in owe if o["plan_source"] in {"customer_plan", "manual"}
-                        and o["plan"] == iso and rub(o["currency"])), 2)
-        out = round(sum(p["amount"] for p in pay_main if p["plan"] == iso and rub(p["currency"])), 2)
+        incoming = [o for o in owe if o["plan_source"] in {"customer_plan", "manual"} and o["plan"] == iso and rub(o["currency"])]
+        outgoing = [p for p in pay_main if p["plan"] == iso and rub(p["currency"])]
+        calendar_rows[iso] = {"in": incoming, "out": outgoing}
+        inc = round(sum(o["amount"] for o in incoming), 2)
+        out = round(sum(p["amount"] for p in outgoing), 2)
         cal.append({"date": iso, "begin": round(bal, 2), "in": inc, "out": out, "end": round(bal + inc - out, 2)})
         bal += inc - out
     low = min(c["end"] for c in cal)
@@ -191,6 +195,7 @@ def build(con, today=None, date_from=None, date_to=None):
                 f = foreign.setdefault(x["currency"], {"currency": x["currency"], "cash": 0.0, "in": 0.0, "out": 0.0})
                 f[key] += x[field]
     debtors = [o for o in owe if o["owed"] > 0]
+    debt_rows = con.execute("SELECT value FROM money_settings WHERE key='client_debt_rows'").fetchone()
     return {"asof": iso0, "asof_manual": st["asof"], "adjust": st["adjust"], "cash": cash, "cash_rub": cash_rub, "calendar": cal,
             "sync": {"at": st["synced_at"], "error": st["error"], "last_move": max((c["last"] for c in cash), default=None)},
             "tiles": {"start": start, "in": round(sum(r["amount"] for r in actual_in), 2),
@@ -200,6 +205,8 @@ def build(con, today=None, date_from=None, date_to=None):
                       "out_count": len(actual_out),
                       "low": low, "shortfall": max(0.0, -low), "low_date": next(c["date"] for c in cal if c["end"] == low)},
             "client_debt": st["client_debt"], "client_debt_orders": st["client_debt_orders"],
+            "sources": {"debt": json.loads(debt_rows[0]) if debt_rows else None,
+                        "in": actual_in, "out": actual_out, "calendar": calendar_rows},
             "owe": debtors, "owe_total": round(sum(o["owed"] for o in debtors), 2),
             "owe_late": round(sum(o["owed"] for o in debtors if o["late_days"] > 0), 2),
             "owe_advance": round(sum(o["amount"] for o in debtors if o["type"] == "Аванс"), 2),

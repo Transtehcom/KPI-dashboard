@@ -323,6 +323,32 @@ class OneCWorkloadTest(unittest.TestCase):
         self.assertEqual(workload.build(self.con, self.config, uids={ANNA})["documents"], [])
         self.assertEqual(workload.build(self.con, self.config, uids=set())["documents"], [])
 
+    def test_department_grant_only_exposes_viewers_own_workload(self):
+        from app import section_access
+        from app.common import db_lock
+        from app.server import Handler
+        self.store([onec_document(), onec_document("b", emp="boss")])
+        replace_rows(self.con, "task_ledger", [task("1"), task("2", uid=BOSS)])
+        viewer = {"login":"anna", "department":"ОЛ", "role":"employee"}
+        section_access.save(self.con, "ОЛ", ["workload"], {"ОЛ"})
+        handler = Handler.__new__(Handler)
+        handler.app = SimpleNamespace(con=self.con, config=self.config, rules={}, lock=db_lock(),
+                                      session_user=lambda token: viewer)
+        handler.token = lambda: "fixture"
+        def report():
+            response = handler.api_response("GET", "/api/workload", {"login":"boss","all":"1"})
+            self.assertEqual(response.code, 200)
+            return response.data
+        data = report()
+        self.assertEqual([p["uid"] for p in data["people"]], [ANNA])
+        self.assertEqual([t["id"] for t in data["tasks"]], ["1"])
+        self.assertEqual([d["emp"] for d in data["documents"]], ["anna"])
+        self.assertNotIn("configuration", data)
+        viewer.update(login="unknown")
+        self.assertTrue(all(not report()[k] for k in ("people","tasks","documents")))
+        viewer.update(login="boss", role="manager")
+        self.assertEqual({d["emp"] for d in report()["documents"]}, {"anna","boss"})
+
     def test_other_instant_document_types_have_no_timing_assessment(self):
         entities = [
             'Document_ПоступлениеБезналичныхДенежныхСредств',

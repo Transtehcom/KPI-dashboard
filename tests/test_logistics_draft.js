@@ -9,6 +9,7 @@ const context = {state:{boot:{me:{role:'employee'}}}, document:{getElementById:i
   crmLink:label=>label, fmtVal:value=>value==null?'—':value*100+'%', fmtExtra:x=>x.value,
   detailCell:(details,ri,ci,value)=>value??'—'};
 vm.createContext(context);
+vm.runInContext(html.slice(html.indexOf('  function kpiRulesButton('), html.indexOf('  function showRules(')), context);
 vm.runInContext(source, context);
 context.renderEmp({draft:true, department:'Логистика',position_title:'Логист',name:'Сотрудник',month:'2026-10',setup_issues:[],
   items:[{n:6,weight:.15,title:'Исполнительская дисциплина',period:'Месяц',target_text:'100%',description:'Правила',
@@ -20,6 +21,7 @@ for (const text of ['50%','справочно','1 из 2','Проверка по
 }
 assert.ok(main.innerHTML.includes('начисление премии отключено'));
 assert.ok(!main.innerHTML.includes('<input'));
+assert.match(main.innerHTML, /data-kpi-rules>Методика</);
 console.log('Logistics draft shows the source criterion and missing fields in read-only form');
 
 vm.runInContext(html.slice(html.indexOf('  function detailCell('), html.indexOf('  function renderEmp(d) {')), context);

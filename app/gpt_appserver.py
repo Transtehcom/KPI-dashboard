@@ -403,7 +403,7 @@ class AppServer:
             self._turn_id = (response.get("turn") or {}).get("id")
             if not isinstance(self._turn_id, str) or not self._turn_id:
                 raise RuntimeError("Codex не вернул идентификатор ответа")
-            on_progress("Обрабатываю запрос…")
+            on_progress("Думаю")
             allowed_tools = {spec["name"] for spec in tools if spec.get("type") == "function"}
             answers = {}
             while True:
@@ -444,12 +444,16 @@ class AppServer:
                     continue
                 if method in ("item/started", "item/completed"):
                     item = params.get("item") or {}
+                    if item.get("type") == "webSearch":
+                        raise RuntimeError("Общий поиск в интернете недоступен в этом чате.")
                     if item.get("type") not in ("userMessage", "agentMessage", "reasoning", "dynamicToolCall", "contextCompaction"):
                         raise RuntimeError("Codex попытался использовать недоступный инструмент")
                     if method == "item/completed" and item.get("type") == "agentMessage":
                         answers[item["id"]] = item
                     if item.get("type") == "dynamicToolCall":
                         on_progress("Проверяю данные…")
+                    elif method == "item/started" and item.get("type") == "reasoning":
+                        on_progress("Думаю")
                 elif method == "item/agentMessage/delta":
                     # Final JSON may contain private intermediate data. Publish only safe status.
                     on_progress("Готовлю ответ…")

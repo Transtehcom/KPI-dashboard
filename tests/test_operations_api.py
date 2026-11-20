@@ -46,6 +46,21 @@ class OperationsAPITest(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertEqual(self.request(query=query).code,400)
 
+    def test_department_grant_is_read_only_and_revocable(self):
+        from app import section_access
+        self.user = self.config['employees'][1]
+        self.user['department'] = 'purchase'
+        section_access.save(self.con, 'purchase', ['metrics'], {'purchase'})
+        self.assertEqual(self.request().code, 200)
+        self.assertEqual(self.request('/api/operations/item-scope', body={'request_id': self.entity['id']}).code, 403)
+        self.assertEqual(self.request('/api/carriers').code, 403)
+        self.assertEqual(self.request('/api/staff', body={'action': 'department-sections'}).code, 403)
+        self.user['department'] = 'other'
+        self.assertEqual(self.request().code, 403)
+        self.user['department'] = 'purchase'
+        section_access.save(self.con, 'purchase', [], {'purchase'})
+        self.assertEqual(self.request().code, 403)
+
     def test_scope_is_audited_and_reason_is_required(self):
         body={'request_id':self.entity['id'],'item_id':'row1','included':False,'reason':''}
         self.assertEqual(self.request('/api/operations/item-scope',body=body).code,400)
@@ -67,6 +82,10 @@ class OperationsAPITest(unittest.TestCase):
         response=self.request('/api/operations/document',{'id':self.entity['id'],'date_to':self.today})
         self.assertEqual(response.code,200)
         self.assertNotEqual(response.data['document'].get('title'),'Future version')
+
+    def test_historical_detail_with_only_end_date(self):
+        response = self.request('/api/operations/document', {'id': self.entity['id'], 'date_to':'2020-01-01'})
+        self.assertEqual(response.code, 404)  # Valid cutoff before the first version.
 
 
 if __name__=='__main__':

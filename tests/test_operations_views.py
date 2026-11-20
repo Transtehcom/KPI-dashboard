@@ -6,11 +6,19 @@ from unittest import mock
 
 
 class OperationsViewsTest(unittest.TestCase):
-    def test_missing_submission_history_is_unknown_instead_of_zero(self):
-        self.capture([{'id':'meta','kind':'source_meta','capabilities':{'submission_history':False}}],at='2026-11-09T08:00:00')
-        report=self.report('sales')
-        tile=next(tile for tile in report['tiles'] if tile['key']=='submitted')
-        self.assertIsNone(tile['value'])
+    def test_submitted_counts_distinct_active_documents_even_with_partial_history(self):
+        self.capture([
+            {'id': 'meta', 'kind': 'source_meta', 'capabilities': {'submission_history': False}},
+            {'id': 'kp', 'kind': 'kp', 'status': 'Действует', 'date': '2026-11-09', 'links': ['tender']},
+            {'id': 'tender', 'kind': 'tender', 'status': 'Действует', 'date': '2026-11-01'},
+            {'id': 'old', 'kind': 'kp', 'status': 'Действует', 'date': '2026-11-01'},
+            {'id': 'cancelled', 'kind': 'kp', 'status': 'Отменено'}],
+            [{'id': str(i), 'entity_id': doc, 'kind': 'submitted', 'at': '2026-11-09T10:00:00'}
+             for i, doc in enumerate(['tender', 'tender', 'cancelled'])])
+        tile = next(tile for tile in self.report('sales')['tiles'] if tile['key'] == 'submitted')
+        self.assertEqual(tile['value'], 2)
+        self.assertEqual([(doc['id'], doc['from_history']) for doc in tile['documents']],
+                         [('tender', True), ('kp', False)])
 
     def setUp(self):
         try:

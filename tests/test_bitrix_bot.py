@@ -101,6 +101,110 @@ class BitrixBotTest(unittest.TestCase):
         self.con.commit()
         self.gpt.active.pop(job['chat_id'], None)
 
+    def test_telegram_ticket_binds_dashboard_identity_and_revocation_stops_delivery(self):
+        from app.telegram_bot import Telegram
+        tg = self.bot.telegram = Telegram(self.bot)
+        tg.bot_id, tg.username = 50, 'demo_bot'
+        code = tg.ticket('staff')['url'].split('start=')[1]
+        self.assertIn('подключён', tg.accept(901, {'text':'/start '+code}, 100))
+        self.assertIn('недействительна', tg.accept(902, {'text':'/start '+code}, 101))
+        self.assertIn('дашборде', tg.accept(902, {'text':'вопрос'}, 102))
+        tg.accept(901, {'text':'вопрос'}, 103)
+        tg.accept(901, {'text':'вопрос'}, 103)
+        self.bot.process_jobs(-50)
+        self.assertEqual(len(self.jobs()), 1)
+        self.assertEqual(self.jobs()[0]['user_id'], 8)
+        self.assertEqual(self.jobs()[0]['owner'], 'staff')
+        self.complete()
+        tg.unlink('staff')
+        tg.call = mock.Mock()
+        self.bot.process_jobs(-50)
+        tg.call.assert_not_called()
+        self.assertEqual(self.jobs()[0]['state'], 'ignored')
+
+    def test_activity_for_both_channels_renews_during_task_and_stops_on_delivery(self):
+        self.bot.telegram = mock.Mock()
+        self.bot.telegram.bound.return_value = True
+        self.bot.api = mock.Mock()
+        self.bot.api.call.return_value = {'result': True}
+        for bot, dialog in ((456, '7'), (-50, '901')):
+            self.con.execute("""INSERT INTO bitrix_bot_jobs
+                (bot_id,event_id,message_id,user_id,dialog_id,owner,question,state)
+                VALUES(?,1,1,7,?,'admin','вопрос','task_parsing')""",(bot,dialog))
+        with mock.patch('app.bitrix_bot.time.monotonic', side_effect=[10,10,14,14]):
+            self.bot._refresh_activity()
+            self.bot._refresh_activity()
+        draft = self.bot.telegram.call.call_args_list[0]
+        self.assertEqual(draft.args, ('sendMessageDraft', {'chat_id':901, 'draft_id':2, 'text':'Думаю…'}))
+        self.assertEqual(self.bot.telegram.call.call_count, 3)
+        self.bot.telegram.call.assert_called_with('sendChatAction', {'chat_id':'901','action':'typing'})
+        self.assertEqual(self.bot.api.call.call_count, 1)
+        self.con.execute("UPDATE bitrix_bot_jobs SET state='delivering'")
+        self.bot._refresh_activity()
+        self.assertFalse(self.bot._indicators)
+        self.assertEqual(self.bot.telegram.call.call_count, 3)
+
+    def test_deletion_requires_same_sender_and_matching_confirmation(self):
+        self.activate()
+        self.api.read_for_user = mock.Mock(return_value={'result':{'task':{'id':1493,'title':'Проверка'}}})
+        self.api.delete_user_task = mock.Mock()
+        self.feed(event(1001,text='Удали задачу 1493'))
+        self.api.delete_user_task.assert_not_called()
+        self.feed(event(1002,user=8,text='Подтверждаю удаление 1493'))
+        self.api.delete_user_task.assert_not_called()
+        self.feed(event(1003,text='Подтверждаю удаление 1493'))
+        self.api.delete_user_task.assert_called_once_with(7,1493)
+        self.feed(event(1004,text='Подтверждаю удаление 1493'))
+        self.assertEqual(self.api.delete_user_task.call_count,1)
+
+    def test_send_public_telegram_link_to_bitrix_recipient(self):
+        self.activate()
+        self.bot.telegram = mock.Mock()
+        self.bot.telegram.username = 'ttk59bot'
+        self.bot.telegram.bound.return_value = True
+        self.config['employees'][1]['name'] = 'Валентина Шарлаимова'
+        self.con.execute("""INSERT INTO bitrix_bot_jobs
+            (bot_id,event_id,message_id,user_id,dialog_id,owner,question)
+            VALUES(-50,1,1,7,'901','admin','Кинь ссылку Валентине в Битриксе на тг-бота')""")
+        self.bot.process_jobs(-50)
+        self.assertEqual(len(self.api.sent), 1)
+        sent = self.api.sent[0]
+        self.assertEqual((sent['botId'], sent['dialogId']), (456, '8'))
+        self.assertIn('https://t.me/ttk59bot', sent['fields']['message'])
+        self.assertNotIn('?start=', sent['fields']['message'])
+        self.bot.telegram.deliver.assert_called_once()
+
+    def test_telegram_sends_custom_text_to_employee_outside_dashboard(self):
+        self.activate()
+        self.bot.telegram = mock.Mock()
+        original = self.api.call
+        def call(method, params):
+            if method == 'user.get':
+                self.assertEqual(params['filter'], {'ACTIVE':True,'USER_TYPE':'employee'})
+                return [{'ID':'111','NAME':'Валентина','LAST_NAME':'Шарлаимова'}]
+            return original(method, params)
+        self.api.call = call
+        text = 'Проверь макет: главная страница.\nСпасибо!'
+        self.con.execute("""INSERT INTO bitrix_bot_jobs
+            (bot_id,event_id,message_id,user_id,dialog_id,owner,question)
+            VALUES(-50,1,1,7,'901','admin',?)""", ('Напиши Валентине в Битриксе: '+text,))
+        self.bot.process_jobs(-50)
+        sent, = self.api.sent
+        self.assertEqual((sent['botId'],sent['dialogId'],sent['fields']['message']), (456,'111',text))
+        self.bot.telegram.deliver.assert_called_once()
+
+    def test_send_previous_generated_file_to_own_notes(self):
+        self.activate()
+        chat = self.bot._chat(self.gpt, {'bot_id':456,'user_id':8,'owner':'staff'})
+        doc = self.gpt.document_upload('staff',chat,'report.txt',base64.b64encode(b'report').decode())
+        self.con.execute("""INSERT INTO bitrix_bot_jobs
+          (bot_id,event_id,message_id,user_id,dialog_id,owner,question,state,chat_id,parts)
+          VALUES(456,99,99,8,'8','staff','report','sent',?,?)""",
+          (chat,json.dumps([{'kind':'file','document_id':doc['id']}])) )
+        self.api.write_personal_note = mock.Mock()
+        self.feed(event(1001,user=8,text='Отправь его мне в заметки в Б24'))
+        self.api.write_personal_note.assert_called_once_with(8,'',document=self.gpt.document_download('staff',chat,doc['id']))
+
     def test_registration_happens_only_on_explicit_activation_and_is_persistent(self):
         self.assertIsNone(self.bot.status()['bot_id'])
         self.bot.start()
@@ -126,6 +230,39 @@ class BitrixBotTest(unittest.TestCase):
         self.assertEqual(self.api.sent[0]['fields']['message'], 'Ваш ответ')
         self.assertFalse(self.api.sent[0]['fields']['urlPreview'])
         self.assertEqual(self.jobs()[0]['state'], 'sent')
+
+    def test_explicit_note_uses_event_author_and_message_command_uses_exact_recipient(self):
+        self.activate()
+        self.api.write_personal_note = mock.Mock(return_value=101)
+        self.feed(event(user=8, text='Напиши сообщение "Привет" в мои заметки'))
+        self.api.write_personal_note.assert_called_once_with(8, 'Привет')
+        self.feed(event(1002, user=7, text='/send Сотрудник: Поезд в 16:00'))
+        delivery = self.api.sent[-2]
+        self.assertEqual((delivery['dialogId'], delivery['fields']['message']), ('8', 'Поезд в 16:00'))
+        self.assertNotIn('replyId',delivery['fields'])
+        self.feed(event(1003, user=7, text='/send Сотр: Не отправлять'))
+        self.assertEqual(len([s for s in self.api.sent if s['fields']['message']=='Не отправлять']),0)
+        self.submit.assert_not_called()
+
+    def test_dative_recipient_and_quoted_message(self):
+        self.activate()
+        self.config['employees'][1]['name'] = 'Валентина Шарлаимова'
+        self.feed(event(text='Напиши Валентине "Проверка отправки сообщения через чат-бот"'))
+        self.assertEqual(self.api.sent[0]['dialogId'], '8')
+        self.assertEqual(self.api.sent[0]['fields']['message'], 'Проверка отправки сообщения через чат-бот')
+        self.config['employees'][2]['name'] = 'Валентина Иванова'
+        self.feed(event(1002,text='Напиши Валентине «Встреча в 16:00»'))
+        self.assertEqual(len(self.api.sent),3)
+        self.assertIn('Укажите точное имя',self.api.sent[-1]['fields']['message'])
+        self.submit.assert_not_called()
+
+    def test_quoted_or_forwarded_command_never_dispatches(self):
+        self.activate()
+        incoming = event(text='/send 8: пример')
+        incoming['data']['message']['params'] = {'FORWARD_ID':3}
+        self.feed(incoming)
+        self.assertFalse(self.api.sent)
+        self.submit.assert_called_once()
 
     def test_fetch_offset_and_queue_survive_restart_and_redelivery(self):
         self.activate()
@@ -206,8 +343,8 @@ class BitrixBotTest(unittest.TestCase):
         self.activate()
         self.config['bitrix_app'] = {'model': 'gpt-6.1-sol', 'effort': 'high', 'fast': True}
         self.feed(event(), event(1002, user=8))
-        self.assertEqual(self.submit.call_args_list[0].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'high', 'fast': True})
-        self.assertEqual(self.submit.call_args_list[1].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'medium', 'fast': False})
+        self.assertEqual(self.submit.call_args_list[0].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'high', 'fast': True, 'bot_job_id':self.jobs()[0]['id']})
+        self.assertEqual(self.submit.call_args_list[1].kwargs, {'model': 'gpt-6.1-sol', 'effort': 'medium', 'fast': False, 'bot_job_id':self.jobs()[1]['id']})
 
     def test_changed_access_creates_new_context_and_old_response_is_withheld(self):
         self.activate()
@@ -287,6 +424,22 @@ class BitrixBotTest(unittest.TestCase):
         self.feed(event(1004), event(1005, user=8))
         self.assertNotEqual(self.jobs()[3]['chat_id'], self.jobs()[0]['chat_id'])
         self.assertEqual(self.jobs()[4]['chat_id'], staff_chat)
+
+    def test_dashboard_and_both_private_channels_share_the_owners_chat(self):
+        old = self.gpt.create_chat('admin')['id']
+        job = {'owner':'admin','user_id':7,'bot_id':456}
+        telegram = {**job,'bot_id':-50}
+        self.assertEqual(self.bot._chat(self.gpt, job), old)
+        self.gpt.create_chat('admin')  # A separate workflow must not move the shared chat.
+        self.assertEqual(self.bot._chat(self.gpt, telegram), old)
+        self.assertEqual(self.gpt.shared_chat('admin')['id'], old)
+        self.assertNotEqual(self.gpt.shared_chat('staff')['id'], old)
+        fresh = self.bot._chat(self.gpt, telegram, reset=True)
+        self.assertNotEqual(fresh, old)
+        self.assertEqual(self.bot._chat(self.gpt, job), fresh)
+        self.assertEqual(self.gpt.shared_chat('admin')['id'], fresh)
+        self.gpt.manage_chat('admin', fresh, 'delete')
+        self.assertNotEqual(self.gpt.shared_chat('admin')['id'], fresh)
 
     def test_stale_job_snapshot_cannot_resubmit_or_redeliver_a_finished_turn(self):
         self.activate()
@@ -379,6 +532,14 @@ class BitrixBotTest(unittest.TestCase):
         self.assertEqual(self.submit.call_args.args[2], 'сделай из pdf в word')
         self.assertEqual(len(self.gpt.chat('admin', self.jobs()[0]['chat_id'])['documents']), 1)
         self.assertEqual(json.loads(self.jobs()[0]['attachments'])[0]['id'], 66)
+
+    def test_voice_becomes_a_question_and_cannot_dispatch_a_write_command(self):
+        self.activate()
+        self.files({66: ('voice.ogg', b'OggS')})
+        with mock.patch('app.bitrix_bot.gpt_voice.recognize',return_value='/send 8: Тест'):
+            self.feed(self.attach(event(text=''), 66))
+        self.assertEqual(self.submit.call_args.args[2], '/send 8: Тест')
+        self.assertFalse(self.api.sent)
 
     def test_file_only_message_is_retained_and_has_a_useful_request(self):
         self.activate()

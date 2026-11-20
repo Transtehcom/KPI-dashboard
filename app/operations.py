@@ -89,6 +89,23 @@ def _latest(con, table, source, cutoff=None, lean=False):
     return {row[field]: dict(row) for row in rows}
 
 
+def load_snapshot(payload):
+    entity = json.loads(payload)
+    if entity.get('kind') == 'supply' and str(entity.get('id', '')).startswith('onec:'):
+        entity['currency'] = entity.get('currency') or 'RUB'
+        if entity.get('amount_source') == 'ТаблицаТовары.ЛучшаяСумма':
+            entity['vat_included'] = False
+        for item in entity.get('items') or []:
+            item['currency'] = item.get('currency') or entity['currency']
+            item['vat_included'] = False
+            for offer in item.get('offers') or []:
+                offer['currency'] = offer.get('currency') or item['currency']
+                offer['vat_included'] = False
+    elif entity.get('kind') == 'source_meta' and entity.get('warnings'):
+        entity['warnings'] = ['Цены поставщиков в заявках ОС указаны в рублях без НДС. Дата предложения не подтверждена. Первоначальные цены доступны справочно.' if warning in ('Цены поставщиков в заявках ОС указаны без НДС. Дата предложения и валюта не подтверждены. Первоначальные цены доступны справочно.', 'Предложения ОС не содержат подтверждённых дат предложения, валюты и базы НДС. Первоначальные цены доступны справочно.') else warning for warning in entity['warnings']]
+    return entity
+
+
 def report_summary(entity):
     summary={key:value for key,value in entity.items() if key not in ('items','events','delivery_options')}
     items=[]
@@ -141,7 +158,7 @@ def capture(con, source, entities, source_events, observed_at=None):
         if identity in seen:
             raise ValueError('Повтор ID документа в одном снимке')
         seen.add(identity)
-        previous = json.loads(current[identity]['payload']) if identity in current else None
+        previous = load_snapshot(current[identity]['payload']) if identity in current else None
         _quote_dates(entity, previous, observed_at, initial)
         digest = _digest(entity)
         if identity in current and not current[identity]['deleted'] and current[identity]['hash'] == digest:
@@ -181,7 +198,7 @@ def mark_failure(con, source, error, observed_at=None):
 
 
 def snapshot(con, source, cutoff=None, lean=False):
-    return [{**json.loads(row['payload']), '_observed_at':row['observed_at'], '_source':source} for row in _latest(con, 'operations_snapshots', source, cutoff,lean).values() if not row['deleted']]
+    return [{**load_snapshot(row['payload']), '_observed_at':row['observed_at'], '_source':source} for row in _latest(con, 'operations_snapshots', source, cutoff,lean).values() if not row['deleted']]
 
 
 def get_entity(con, source, identity, cutoff=None):
@@ -190,7 +207,7 @@ def get_entity(con, source, identity, cutoff=None):
         where+=' AND observed_at<=?'
         args.append(_stamp(cutoff))
     row=con.execute('SELECT payload,observed_at,deleted FROM operations_snapshots WHERE '+where+' ORDER BY observed_at DESC,id DESC LIMIT 1',args).fetchone()
-    return {**json.loads(row['payload']),'_observed_at':row['observed_at'],'_source':source} if row and not row['deleted'] else None
+    return {**load_snapshot(row['payload']),'_observed_at':row['observed_at'],'_source':source} if row and not row['deleted'] else None
 
 
 def versions(con, source, cutoff=None, lean=False):
@@ -198,9 +215,13 @@ def versions(con, source, cutoff=None, lean=False):
     if cutoff:
         where += ' AND observed_at<=?'
         args.append(_stamp(cutoff))
-    payload="json_object('id',json_extract(COALESCE(summary,payload),'$.id'),'due',json_extract(COALESCE(summary,payload),'$.due'))" if lean else 'payload'
-    return [{**json.loads(row['payload']), '_observed_at':row['observed_at'], '_source':source} for row in con.execute(
-        'SELECT '+payload+' AS payload,observed_at FROM operations_snapshots WHERE '+where+' ORDER BY observed_at,id', args)]
+    if lean:
+        rows = con.execute("SELECT entity_id, json_extract(COALESCE(summary,payload),'$.due') AS due, observed_at "
+                           "FROM operations_snapshots WHERE " + where + " ORDER BY observed_at,id", args)
+        return [{'id': row['entity_id'], 'due': row['due'], '_observed_at': row['observed_at'], '_source': source}
+                for row in rows]
+    return [{**load_snapshot(row['payload']), '_observed_at':row['observed_at'], '_source':source} for row in con.execute(
+        'SELECT payload,observed_at FROM operations_snapshots WHERE '+where+' ORDER BY observed_at,id', args)]
 
 
 def events(con, source, cutoff=None):

@@ -236,7 +236,9 @@ class OneCMoneyTest(unittest.TestCase):
                    {"ОбъектРасчетов_Key": "c", "СуммаBalance": -500}, {"ОбъектРасчетов_Key": "x", "СуммаBalance": 999},  # не заказ клиента
                    {"ОбъектРасчетов_Key": "d", "СуммаBalance": 100}, {"ОбъектРасчетов_Key": "d", "СуммаBalance": 50.01},
                    {"ОбъектРасчетов_Key": "e", "СуммаBalance": 4199536.76}, {"ОбъектРасчетов_Key": "f", "СуммаBalance": 701362.61}]  # разные валюты/аналитики
-        self.assertEqual(onec_money.client_debt(orders, balance), {"amount": 17595.6, "orders": 2})
+        result = onec_money.client_debt(orders, balance)
+        self.assertEqual((result["amount"], result["orders"]), (17595.6, 2))
+        self.assertEqual([r["amount"] for r in result["rows"]], [17445.59, 150.01])
 
     def test_request_rows(self):
         req = {"Ref_Key": "k", "Number": "00ЦБ-1 ", "Date": "2026-10-20T10:00:00", "Статус": "КОплате", "ХозяйственнаяОперация": "ПеречислениеВБюджет",

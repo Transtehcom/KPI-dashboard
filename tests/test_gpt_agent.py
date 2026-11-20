@@ -44,7 +44,8 @@ class AgentTest(unittest.TestCase):
         chat, reply = self.request("boss", "Покажи сотрудников", behavior)
         self.assertEqual(reply["status"], "completed")
         self.assertEqual(reply["content"], "Данные проверены")
-        self.assertEqual(self.service.sessions.state(chat)["thread_id"], THREAD)
+        self.assertIsNone(self.service.sessions.state(chat)["thread_id"])
+        self.assertTrue(self.calls[-1]["ephemeral"])
         self.assertIsNone(self.service.sessions.state(chat)["active_message"])
         self.assertIn('"tool": "employees"', self.service.preview("boss", chat, reply["id"])["outbound"])
 
@@ -156,13 +157,28 @@ class AgentTest(unittest.TestCase):
         self.assertIsNone(self.service.sessions.state(chat)["thread_id"])
         self.assertNotIn(chat, self.service.active)
 
-    def test_resume_uses_exact_thread_and_only_new_history(self):
+    def test_next_turn_replays_dashboard_history_in_an_ephemeral_thread(self):
         answer = lambda args, payload: {"kind":"answer","answer":"Готово","sources":[]}
         chat, _ = self.request("boss", "Первая реплика", answer)
         self.request("boss", "Вторая реплика", answer, chat)
-        self.assertEqual(self.calls[-1]["thread_id"], THREAD)
+        self.assertIsNone(self.calls[-1]["thread_id"])
+        self.assertTrue(self.calls[-1]["ephemeral"])
         payload = json.loads(self.calls[-1]["input"][0]["text"])
-        self.assertEqual([m["content"] for m in payload["history"]], ["Вторая реплика"])
+        self.assertEqual([m["content"] for m in payload["history"]], ["Первая реплика","Готово","Вторая реплика"])
+
+    def test_long_shared_chat_recalls_older_messages_only_from_this_chat(self):
+        chat = self.service.shared_chat("boss")["id"]
+        other = self.service.create_chat("boss")["id"]
+        for jid, content in [(other, "маркер чужого диалога"), (chat, "маркер общего диалога")] + [(chat, "обычная запись")] * 105:
+            self.con.execute("INSERT INTO gpt_messages(chat_id,role,status,content) VALUES (?,'user','completed',?)", (jid,content))
+        self.con.commit()
+        def behavior(args, payload):
+            self.assertNotIn("маркер общего диалога", str(payload["history"]))
+            result = args["tool_handler"]("ttk_chat_history", {"query":"маркер"})
+            self.assertEqual(json.loads(result[0]["text"])["messages"], [{"role":"user","text":"маркер общего диалога"}])
+            return {"kind":"answer","answer":"Нашёл запись","sources":[]}
+        _, reply = self.request("boss", "Поищи в нашей давней переписке", behavior, chat)
+        self.assertEqual(reply["status"], "completed")
 
     def test_protected_pasted_document_is_masked_before_native_turn(self):
         def behavior(args, payload):

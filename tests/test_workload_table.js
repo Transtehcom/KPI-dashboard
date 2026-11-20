@@ -104,6 +104,29 @@ const data = {generated:'2026-11-16T12:00:00',has_data:true,onec:{loaded:true},t
   {uid:99,name:'Руководитель вне схемы',group:null},
 ]};
 context.renderWorkload(data);
+assert.deepEqual(Array.from(context.workloadComparisonPeriods('month','2026-11-01','2026-11-30','2026-11-18'), p=>Array.from(p)),
+  [['2026-10-01','2026-10-18'],['2026-11-01','2026-11-18']]);
+assert.deepEqual(Array.from(context.workloadComparisonPeriods('month','2024-03-01','2024-03-31','2026-11-18')[0]),['2024-02-01','2024-02-29']);
+assert.deepEqual(Array.from(context.workloadComparisonPeriods('range','2026-11-16','2026-11-22','2026-11-18')[0]),['2026-11-09','2026-11-11']);
+const effectiveness=context.workloadEfficiency(rows,['2026-11-01','2026-11-30'],data.generated,'bitrix');
+assert.deepEqual([effectiveness.done,effectiveness.ontime,effectiveness.late,effectiveness.unassessed,effectiveness.percent],[3,1,1,1,50]);
+const financialEfficiency=context.workloadEfficiency([financialDocument],['2026-11-01','2026-11-30'],data.generated,'onec');
+assert.equal(financialEfficiency.percent,null);
+assert.equal(financialEfficiency.unassessed,1);
+const combined = context.workloadEfficiencyHtml(data.people[0],{per:{mode:'month'}},data,
+  [{uid:1,closed:'2026-11-10',exec_at:'2026-11-10',deadline:'2026-11-11'}],
+  [1,2,3].map(() => ({uid:1,is_closed:true,date:'2026-11-10',closed_at:'2026-11-10',deadline:'2026-11-09'})),
+  '2026-11-01','2026-11-30');
+assert.match(combined,/value="all" aria-pressed="true">Всё/);
+assert.match(combined,/25%<\/strong>В срок: 1 из 4 · с опозданием: 3/);
+context.state.wl.effUid='1';
+context.renderWorkload(data);
+assert.match(main.innerHTML,/class="wl-eff-bars"/);
+context.state.wl.effChart='rings';
+context.renderWorkload(data);
+assert.equal((main.innerHTML.match(/class="wl-eff-ring"/g)||[]).length,2);
+delete context.state.wl.effUid;
+delete context.state.wl.effChart;
 for (const uid of [1,2,3,4]) assert.ok(main.innerHTML.includes(`data-wl-list="${uid}|card"`),'each employee keeps an individual row');
 assert.ok(!main.innerHTML.includes('Руководитель вне схемы'));
 assert.ok(!main.innerHTML.includes('<b>ФО</b>'),'category never substitutes for employee rows');
@@ -156,7 +179,7 @@ assert.ok(receivedList.includes('0 д 15 ч 0 мин 0 с'),'completed document 
 context.state.wl.list={uid:'1',key:'received',source:'onec'};
 context.renderWorkload({...data,documents:tenderDocuments.map((row,index)=>({...row,uid:1,number:String(index),entity:'Document_ТТК_Тендер',owner_field:'ВедущийМенеджер_Key'}))});
 assert.ok(main.innerHTML.includes('В работе · Действует'));
-assert.ok(main.innerHTML.includes('Закрыто · Выиграно'));
+assert.ok(main.innerHTML.includes('Завершён · Выиграно'));
 const supplyTimingRows=[
   {number:'Т-000637',deadline:'2026-07-15T12:00:00',closed_at:'2026-07-15T11:11:50'},
   {number:'exact-supply',deadline:'2026-07-15T12:00:00',closed_at:'2026-07-15T12:00:00'},
@@ -179,6 +202,7 @@ context.renderWorkload({...data,documents:[transport2416]});
 assert.ok(main.innerHTML.includes('Закрыто · Отработана'));
 assert.ok(main.innerHTML.includes('2026-11-26T16:00:00'));
 assert.ok(main.innerHTML.includes('2026-11-16T15:44:43'));
+assert.match(main.innerHTML,/class="nw wl-ok"[^>]*>\+10 д 0 ч 15 мин 17 с/);
 assert.ok(main.innerHTML.includes('СрокДействия документа-основания Т-000910'));
 const paymentRequests=[
   {number:'unpaid-request',posted:true,is_closed:false,status:'КОплате',deadline:'2026-11-20T12:00:00'},
@@ -235,6 +259,8 @@ const lateTask={id:'late-task',uid:1,title:'Задача с опозданием
 context.state.wl.list={uid:'1',key:'done'};
 context.renderWorkload({...data,tasks:[lateTask]});
 assert.ok(main.innerHTML.includes('0 д 0 ч 1 мин 0 с'),'completed Bitrix task shows minute-level overdue duration');
+context.renderWorkload({...data,tasks:[{...lateTask,deadline:'2026-11-05T23:59:59',exec_at:'2026-11-05T17:26:50'}]});
+assert.match(main.innerHTML,/class="nw wl-ok"[^>]*>\+0 д 6 ч 33 мин 9 с/);
 context.state.wl.list=null;
 const configurable = {...data,people:data.people.map(person=>({...person,included:person.uid!==3})),configuration:{
   directions:['ОП','ОС','ФО','ЮО','Помощники руководителя'],members:[

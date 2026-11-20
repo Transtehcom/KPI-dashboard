@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS gpt_document_deletions (
  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, created TEXT,
  parent_id TEXT, size INTEGER, deleted TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS gpt_chat_scopes (chat_id TEXT PRIMARY KEY, scope TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS gpt_shared_chats (owner TEXT PRIMARY KEY, chat_id TEXT NOT NULL UNIQUE
+ REFERENCES gpt_chats(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS gpt_chat_groups (chat_id TEXT PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS gpt_codex_sessions (
  chat_id TEXT PRIMARY KEY, thread_id TEXT UNIQUE, master_hash TEXT NOT NULL, scope TEXT NOT NULL,
@@ -327,6 +329,16 @@ CREATE TABLE IF NOT EXISTS logistics_cargo_summary (
   emp TEXT, month TEXT, cargo_value REAL, comment TEXT, author TEXT, updated TEXT,
   PRIMARY KEY (emp, month));
 
+CREATE TABLE IF NOT EXISTS kpi_decisions (
+    emp TEXT NOT NULL, month TEXT NOT NULL, code TEXT NOT NULL, kind TEXT NOT NULL,
+    ref TEXT NOT NULL, approved INTEGER NOT NULL CHECK (approved IN (0,1)), author TEXT NOT NULL,
+    updated TEXT NOT NULL, PRIMARY KEY(emp, month, code, kind, ref)
+);
+CREATE TABLE IF NOT EXISTS kpi_exclusions (
+    emp TEXT NOT NULL, month TEXT NOT NULL, code TEXT NOT NULL, kind TEXT NOT NULL,
+    ref TEXT NOT NULL, author TEXT NOT NULL, updated TEXT NOT NULL,
+    PRIMARY KEY(emp, month, code, kind, ref)
+);
 CREATE TABLE IF NOT EXISTS client_approvals (
   emp TEXT, month TEXT, ref TEXT, approved INTEGER, author TEXT, updated TEXT,
   PRIMARY KEY (emp, month, ref));
@@ -351,6 +363,11 @@ CREATE TABLE IF NOT EXISTS baselines (
   emp TEXT, metric TEXT, value REAL, PRIMARY KEY (emp, metric));
 
 -- сотрудники дашборда (раздел «Сотрудники»); при первом запуске переносятся из config.json (app/employees.py)
+CREATE TABLE IF NOT EXISTS help_recipient (id INTEGER PRIMARY KEY CHECK(id=1), login TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS department_section_access (department TEXT PRIMARY KEY, sections TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS help_deliveries (
+  sender TEXT, request_id TEXT, digest TEXT NOT NULL, recipient INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, busy INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(sender,request_id));
 CREATE TABLE IF NOT EXISTS employees (
   login TEXT PRIMARY KEY, name TEXT, department TEXT, title TEXT, position TEXT, b24_user_id INTEGER,
   onec_manager TEXT, visible INTEGER, admin INTEGER, absences TEXT, sort INTEGER, listen_dept INTEGER);
@@ -422,7 +439,8 @@ ADDED_COLUMNS = {"activities": [("closed_dt", "TEXT"), ("contact", "TEXT")], "te
                                    ("due_at", "TEXT"), ("order_dt", "TEXT"), ("suppliers", "INTEGER")], "kp": [("doc", "TEXT"), ("ordered", "INTEGER")],
                  "employees": [("listen_dept", "INTEGER")], "call_analysis": [("secretary", "INTEGER")],
                  "transport_requests": [("history", "TEXT"), ("route", "TEXT"), ("carrier", "TEXT"), ("cost", "REAL"), ("due_at", "TEXT")],
-                 "forwarder_orders": [("fact_sum", "REAL"), ("dop", "TEXT"), ("dof", "TEXT"), ("dpp", "TEXT"), ("dfp", "TEXT")],
+                 "forwarder_orders": [("fact_sum", "REAL"), ("dop", "TEXT"), ("dof", "TEXT"), ("dpp", "TEXT"), ("dfp", "TEXT"),
+                                      ("carrier_key", "TEXT"), ("carrier_card", "TEXT")],
                  "logistics_deliveries": [("order_status", "TEXT"), ("quote_key", "TEXT"), ("quote_doc", "TEXT"),
                                           ("quote_date", "TEXT"), ("delivery_novat", "REAL"), ("comparison_kind", "TEXT"),
                                           ("comparison_key", "TEXT"), ("comparison_doc", "TEXT"), ("comparison_date", "TEXT"),

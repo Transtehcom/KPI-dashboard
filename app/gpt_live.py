@@ -45,6 +45,7 @@ class LiveSources:
         self.b24 = Bitrix24({**b24, "request_attempts": 1, "request_timeout_seconds": 25,"response_limit_bytes":4*1024*1024}, log=lambda *args: None) if b24.get("webhook") else None
         self.onec = OneC({**config.get("onec", {}), "request_timeout_seconds": 30,"response_limit_bytes":4*1024*1024}, log=lambda *args: None)
         self._b24_fields = {}
+        self.b24_read = None
         self._metadata = None
         self._metadata_at = 0
 
@@ -125,7 +126,7 @@ class LiveSources:
         return value
 
     def bitrix(self, tool, params, privacy):
-        if self.b24 is None:
+        if self.b24_read is None and self.b24 is None:
             raise ValueError("Подключение Б24 не настроено")
         if tool == "b24_card":
             identity = str(params.get("id") or params.get("text") or "")
@@ -140,12 +141,13 @@ class LiveSources:
         entity = params.get("entity", "company")
         if entity not in B24:
             raise ValueError("Ожидается company, contact, lead, deal, activity, task или user")
+        read = self.b24_read or self.b24.call
         allowed_fields = self.access.b24_fields(entity) if self.access else None
         prefix, search_field = B24[entity]
         offset = self.offset(params)
         if tool == "b24_fields":
             method = prefix + (".getFields" if entity == "task" else ".fields")
-            fields = self.b24.call(method).get("result", {})
+            fields = read(method).get("result", {})
             fields = fields.get("fields", fields) if isinstance(fields, dict) else {}
             text = str(params.get("text", "")).casefold()
             rows = []
@@ -163,7 +165,7 @@ class LiveSources:
                 raise ValueError("Укажите id карточки из результатов поиска")
             method = prefix + (".get" if entity != "user" else ".get")
             arguments = {"taskId": identity} if entity == "task" else {"ID": identity} if entity == "user" else {"id": identity}
-            data = self.b24.call(method, arguments).get("result", {})
+            data = read(method, arguments).get("result", {})
             data = data.get("task", data) if isinstance(data, dict) else next(iter(data), {})
             if self.access:
                 self.access.b24_owns(entity, data)
@@ -175,7 +177,7 @@ class LiveSources:
                     raise ValueError("Укажите до 40 существующих полей карточки")
                 data = {name: data[name] for name in selected}
             if entity not in self._b24_fields:
-                metadata_response=self.b24.call(prefix + (".getFields" if entity == "task" else ".fields")).get("result",{})
+                metadata_response=read(prefix + (".getFields" if entity == "task" else ".fields")).get("result",{})
                 self._b24_fields[entity]=metadata_response.get("fields",metadata_response) if isinstance(metadata_response,dict) else {}
             with privacy.document(document_title):
                 rows = [self.b24_row(entity, data, privacy, identity, offset)]
@@ -212,7 +214,7 @@ class LiveSources:
             arguments={"FILTER":filters,"start":offset}
         elif entity=="task":
             arguments["select"]=["ID","TITLE","RESPONSIBLE_ID","CREATED_BY","DEADLINE","STATUS","DESCRIPTION","GROUP_ID"]
-        response = self.b24.call(prefix + (".get" if entity == "user" else ".list"), arguments)
+        response = read(prefix + (".get" if entity == "user" else ".list"), arguments)
         rows = response.get("result", [])
         rows = rows.get("tasks", []) if isinstance(rows, dict) else rows
         if self.access:
@@ -365,7 +367,8 @@ class LiveSources:
         offset = self.offset(params)
         if tool == "onec_entities":
             text = str(params.get("text", "")).casefold()
-            names = [name for name in metadata if text in name.casefold() and (not self.access or name in self.access.onec_entities())]
+            names = [name for name in metadata if text in name.casefold() and
+                     (not self.access or name in self.access.onec_entities())]
             return {"entities": [{"entity": privacy.register("ТИП", name), "label": privacy.mask(label(name))} for name in names[offset:offset + 40]],
                     "total": len(names), "next_offset": offset + 40 if len(names) > offset + 40 else None}
         entity = params.get("entity")
@@ -373,9 +376,8 @@ class LiveSources:
             raise ValueError("Выберите entity из onec_entities")
         fields = metadata[entity]["fields"]
         owner_filter = None
-        if self.access:
-            allowed_fields, owner_filter = self.access.onec_scope(entity)
-            fields = {name: kind for name, kind in fields.items() if name in allowed_fields}
+        if self.access and entity not in self.access.onec_entities():
+            raise ValueError("Этот вид документа 1С недоступен для вашей должности.")
         if tool == "onec_count":
             return self.count_odata(entity, fields, params, owner_filter, privacy)
         if tool == "onec_schema":

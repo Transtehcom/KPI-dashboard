@@ -122,7 +122,8 @@ class LiveTest(unittest.TestCase):
         result=service.chat("boss",chat["id"])["messages"][-1]
         self.assertEqual(result["status"],"completed")
         self.assertIn("прямой запрос",result["sources"][0]["system"])
-        self.assertIn("acme-private-482",prompts[1]);self.assertIn("89991112233",prompts[1])
+        self.assertIn("acme-private-482",prompts[1])
+        self.assertNotIn("89991112233",prompts[1])
 
 
     def test_named_live_document_masks_its_fields_only(self):
@@ -138,7 +139,7 @@ class LiveTest(unittest.TestCase):
         self.assertNotIn("Мерзлякова",private)
         self.assertNotIn("89991112233",private)
         self.assertIn("Мерзлякова",plain)
-        self.assertIn("89991112233",plain)
+        self.assertNotIn("89991112233",plain)
 
 
     def test_selecting_fields_cannot_remove_document_privacy(self):

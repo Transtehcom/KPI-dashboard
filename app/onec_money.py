@@ -10,6 +10,7 @@
 Графики оплаты сохраняются за все даты: период календаря выбирается после загрузки.
 """
 import datetime as dt
+import json
 
 # регистр движений → поле счёта или кассы
 CASH_REGISTERS = {"ДенежныеСредстваБезналичные": "БанковскийСчет_Key", "ДенежныеСредстваНаличные": "Касса_Key",
@@ -213,9 +214,10 @@ def client_debt(orders, balance):
     for b in balance:
         k = b.get("ОбъектРасчетов_Key")
         by_obj[k] = by_obj.get(k, 0.0) + (b.get("СуммаBalance") or 0)
-    debts = [by_obj[o["ОбъектРасчетов_Key"]] for o in orders
+    debts = [{"doc": o.get("Number"), "dt": _day(o.get("Date")), "party": (o.get("Контрагент") or {}).get("Description"),
+              "amount": by_obj[o["ОбъектРасчетов_Key"]]} for o in orders
              if o.get("Статус") in COUNT_ORDER_STATUSES and by_obj.get(o.get("ОбъектРасчетов_Key"), 0) > 0.005]
-    return {"amount": round(sum(debts), 2), "orders": len(debts)}
+    return {"amount": round(sum(r["amount"] for r in debts), 2), "orders": len(debts), "rows": debts}
 
 
 def store(con, data, now=None):
@@ -233,6 +235,8 @@ def store(con, data, now=None):
     con.executemany("INSERT OR REPLACE INTO money_actual (id,kind,doc,dt,amount,currency) VALUES (?,?,?,?,?,?)",
                     [(r["id"], r["kind"], r["doc"], r["dt"], r["amount"], r["currency"]) for r in data.get("actual", [])])
     if data.get("debt"):
+        con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt_rows', ?)",
+                    (json.dumps(data["debt"].get("rows"), ensure_ascii=False),))
         con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt', ?)", (str(data["debt"]["amount"]),))
         con.execute("INSERT OR REPLACE INTO money_settings VALUES ('client_debt_orders', ?)", (str(data["debt"]["orders"]),))
     con.execute("INSERT OR REPLACE INTO money_settings VALUES ('synced_at', ?)", (now,))

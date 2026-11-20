@@ -69,7 +69,11 @@ assert.ok(sourceItemHtml.includes('Сумма по лучшей цене из 1�
 assert.ok(sourceItemHtml.includes('20.24'));
 assert.ok(sourceItemHtml.includes('&lt;note&gt;'));
 assert.ok(result.includes('data-op-scope'));
-assert.ok(result.includes('data-op-approve'));
+assert.ok(!result.includes('data-op-approve'));
+const historicalOffer = {...item.offers[0], exclusion_reasons:['quantity_mismatch']};
+assert.ok(context.operationsOffers([historicalOffer],record,item,true).includes('data-op-approve'));
+assert.ok(!context.operationsOffers([{...historicalOffer,exclusion_reasons:['quantity_mismatch','currency_unknown']}],record,item,true).includes('data-op-approve'));
+assert.ok(!context.operationsOffers([{...historicalOffer,price:0}],record,item,true).includes('<tr>'));
 assert.ok(result.includes('data-op-deadline'), 'unapproved deadline moves remain visible for review');
 assert.ok(result.includes('data-op-deadline data-request="onec:supply:child"'),'deadline approvals target the active obligation');
 assert.ok(result.includes('#operations-document=onec%3Asupply%3Ar1'),'the parent document keeps its own source drawer');

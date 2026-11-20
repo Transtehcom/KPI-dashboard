@@ -15,6 +15,20 @@ from app import bitrix_app
 
 
 class BitrixAppTest(unittest.TestCase):
+    def test_personal_note_requires_verified_sender_and_favorite_chat_owner(self):
+        stored = dict(user_id=7,member_id='member',portal='https://portal.example.test')
+        with mock.patch.object(self.service,'_installed',return_value=stored), mock.patch.object(self.service,'_access_token',return_value='test'), mock.patch.object(bitrix_app,'_request') as request:
+            with self.assertRaises(ValueError):
+                self.service.write_personal_note(8,'test')
+            request.assert_not_called()
+            request.side_effect = [{'result':{'ID':'7'}},{'result':{'id':88,'owner':8,'entity_type':'FAVORITE'}},{'result':[]}]
+            with self.assertRaises(ValueError):
+                self.service.write_personal_note(7,'test')
+            self.assertFalse(any('im.message.add' in c.args[0] for c in request.call_args_list))
+            request.side_effect = [{'result':{'ID':'7'}},{'result':{'id':33,'owner':7,'entity_type':'FAVORITE'}},{'result':451}]
+            self.assertEqual(self.service.write_personal_note(7,'test'),451)
+            self.assertEqual(request.call_args.args[1]['DIALOG_ID'],'chat33')
+
     def setUp(self):
         self.con = sqlite3.connect(":memory:", check_same_thread=False)
         self.con.row_factory = sqlite3.Row

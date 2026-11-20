@@ -73,7 +73,7 @@ class OperationsSourceTests(unittest.TestCase):
         result=fetch(source,{})
         row=result['entities'][0]
         self.assertEqual(row['best_price_total'],38424181.61)
-        self.assertIsNone(row['vat_included'])
+        self.assertIs(row['vat_included'], False)
         self.assertEqual(row['items'][0]['best_price'],139344.26)
         self.assertEqual(row['items'][0]['note'],'Confirmed')
 
@@ -133,8 +133,9 @@ class OperationsSourceTests(unittest.TestCase):
         self.assertEqual(first["offers"][0]["supplier_name"], "Поставщик")
         self.assertEqual(first["offers"][1]["price"], 0)
         self.assertIsNone(first["offers"][0]["offered_at"])
-        self.assertIsNone(first["offers"][0]["currency"])
-        self.assertIsNone(first["offers"][0]["vat_included"])
+        self.assertEqual(first["currency"], "RUB")
+        self.assertEqual(first["offers"][0]["currency"], "RUB")
+        self.assertIs(first["offers"][0]["vat_included"], False)
         self.assertIsNone(entity["closed_by"])
         self.assertEqual(entity["closed_at"], "2026-11-09T12:13:14")
 

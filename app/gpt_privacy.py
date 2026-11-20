@@ -3,7 +3,14 @@ import json
 import re
 from contextlib import contextmanager
 
-from .anonymize import Pseudonymizer, restore
+from .anonymize import PATTERNS, Pseudonymizer, restore
+
+PERSONAL_CONTACTS = [(kind, re.compile(pattern, re.I)) for kind, pattern in PATTERNS
+                     if kind in ("EMAIL", "ТЕЛЕФОН")]
+PERSONAL_CONTACTS.extend([
+    ("СНИЛС", re.compile(r"\b\d{3}-\d{3}-\d{3}[ -]\d{2}\b")),
+    ("РЕКВИЗИТ", re.compile(r"\b\d{2} ?\d{2}[- ]\d{6}\b")),
+])
 
 LABEL = re.compile(r"(\[[A-ZА-ЯЁ_]+(?:_\d+)?\])")
 
@@ -48,7 +55,7 @@ class PrivacyContext:
         if LABEL.fullmatch(value):
             return value
         if self.documents_only and not self._document_depth:
-            return self.redact_secrets(value)
+            return self.mask_contacts(self.redact_secrets(value))
         existing = self._reverse.get((kind,value.casefold()))
         if existing:
             return existing
@@ -88,6 +95,12 @@ class PrivacyContext:
         text = re.sub(r"(?i)((?:пароль|password|api_key|token)\s*[:=]\s*)\S+", r"\1[СКРЫТО]", text)
         return text
 
+    def mask_contacts(self, text):
+        with self.document("", force=True):
+            for kind, pattern in PERSONAL_CONTACTS:
+                text = pattern.sub(lambda match: self.register(kind, match[0]), text)
+        return text
+
     def mask(self, text):
         text = self.redact_secrets(str(text or ""))
         if self.documents_only and not self._document_depth:
@@ -97,7 +110,7 @@ class PrivacyContext:
                 if DOCUMENT_TITLE.match(heading):
                     with self.document(heading):
                         return self.mask(text)
-            return text
+            return self.mask_contacts(text)
         literals = {}
         def keep_literal(value):
             key = "[РАЗРЕШЕННОЕЗНАЧЕНИЕ_" + str(len(literals) + 1) + "]"

@@ -29,6 +29,49 @@ def set_month_score(con, emp, month, criterion, score, comment, author):
                 (emp,month,criterion,value,str(comment or "")[:500],author))
 
 
+def kpi_exclusions(con, emp, month, code, kind):
+    return {row[0] for row in con.execute("SELECT ref FROM kpi_exclusions WHERE emp=? AND month=? AND code=? AND kind=?",
+                                          (emp, month, code, kind))}
+
+
+def set_kpi_exclusion(con, emp, month, code, kind, ref, value, author):
+    if type(value) is not bool:
+        raise ValueError("Не указано действие с записью")
+    # До октября одна реализация участвует и в доле своевременных оплат, и в максимальной просрочке.
+    # Обе строки ссылаются на один документ: исключение и восстановление действуют для обоих компонентов.
+    kinds = ("payment_on_time", "sale_due") if code == "receivables_pm" and kind in ("payment_on_time", "sale_due") else (kind,)
+    keys = [(emp, month, code, item, ref) for item in kinds]
+    if value:
+        con.executemany("INSERT OR REPLACE INTO kpi_exclusions VALUES(?,?,?,?,?,?,datetime('now'))",
+                        [(*key, author) for key in keys])
+    else:
+        con.executemany("DELETE FROM kpi_exclusions WHERE emp=? AND month=? AND code=? AND kind=? AND ref=?", keys)
+
+
+def kpi_decisions(con, emp, month, code, kind):
+    if (code, kind) == ("base_development", "clients"):
+        return client_approvals(con, emp, month)
+    if (code, kind) == ("qualified_leads", "leads"):
+        return lead_approvals(con, emp, month)
+    return dict(con.execute("SELECT ref,approved FROM kpi_decisions WHERE emp=? AND month=? AND code=? AND kind=?",
+                            (emp, month, code, kind)))
+
+
+def set_kpi_decision(con, emp, month, code, kind, ref, value, author):
+    if value is not None and (type(value) is not int or value not in (0, 1)):
+        raise ValueError("Выберите Авто, Да или Нет")
+    if (code, kind) == ("base_development", "clients"):
+        return set_client_approval(con, emp, month, ref, value, author)
+    if (code, kind) == ("qualified_leads", "leads"):
+        return set_lead_approval(con, emp, month, ref, value, author)
+    key = (emp, month, code, kind, ref)
+    if value is None:
+        con.execute("DELETE FROM kpi_decisions WHERE emp=? AND month=? AND code=? AND kind=? AND ref=?", key)
+    else:
+        con.execute("INSERT OR REPLACE INTO kpi_decisions VALUES(?,?,?,?,?,?,?,datetime('now'))",
+                    (*key, value, author))
+
+
 def client_approvals(con, emp, month):
     return {r["ref"]: r["approved"] for r in con.execute(
         "SELECT ref,approved FROM client_approvals WHERE emp=? AND month=?", (emp,month))}

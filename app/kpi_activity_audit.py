@@ -3,10 +3,112 @@ import datetime as dt
 
 from .crm_activities import activity_datetime
 from .crm_links import reference_url, record_url, client_url, activity_url
+from . import manual
+
+
+class ActivityReviews:
+    def __init__(self, engine, emp, ctx, code):
+        self.engine = engine
+        self.emp = emp
+        self.ctx = ctx
+        self.code = code
+        self.rows = []
+        self.saved = {}
+        self.removed = {}
+
+    def decisions(self, kind):
+        if kind not in self.saved:
+            self.saved[kind] = manual.kpi_decisions(self.engine.con, self.emp, self.ctx["month"], self.code, kind)
+        return self.saved[kind]
+
+    def exclusions(self, kind):
+        if kind not in self.removed:
+            self.removed[kind] = manual.kpi_exclusions(self.engine.con, self.emp, self.ctx["month"], self.code, kind)
+        return self.removed[kind]
+
+    def excluded(self, kind, ref):
+        return str(ref) in self.exclusions(kind)
+
+    def record(self, kind, ref, label, auto):
+        ref = str(ref)
+        value = self.decisions(kind).get(ref)
+        excluded = self.excluded(kind, ref)
+        self.rows.append({"kind": kind, "ref": ref, "label": label or ref, "auto": auto, "value": value,
+                          "excluded": excluded})
+        if excluded:
+            return False
+        return auto if value is None else bool(value)
+
+    def activities(self, kind, candidates, selected, unknown=()):
+        included = {row["id"] for row in selected}
+        count = 0
+        missing = False
+        for row in candidates:
+            auto = None if row["id"] in unknown else row["id"] in included
+            label = " · ".join(str(v) for v in (row["dt"], row.get("client"), row.get("subject") or row["id"]) if v)
+            result = self.record(kind, row["id"], label, auto)
+            count += result is True
+            missing |= result is None
+        return None if missing else count
+
+    def kp(self, params, fact, inputs):
+        kps, letters, pairs = inputs
+        since = self.engine.rules.get("kp_with_letters_from")
+        union = bool(since and self.ctx["month"] >= since)
+        tender = self.code == "base_development"
+        journal = bool(self.engine.config.get("letters_sheet", {}).get("url"))
+        aggregate = not union and not tender and params.get("kp_confirmation", "b24") == "b24"
+        if union and self.exclusions("kp"):
+            pairs = _remaining_pairs(self.engine, kps, letters, self.exclusions("kp"))
+        paired_letters = {l["id"] for l in pairs.values()}
+        fixed = approved_kps = 0
+        untouched_kps = untouched_letters = 0
+        missing = False
+        for prefix, candidates in (("kp", kps), ("letter", letters)):
+            for row in candidates:
+                is_kp = prefix == "kp"
+                ref = prefix + ":" + str(row["id"])
+                if union:
+                    auto = is_kp or row["id"] not in paired_letters
+                elif aggregate:
+                    auto = None
+                    if is_kp and (not letters or len(letters) >= len(kps)):
+                        auto = bool(letters)
+                elif tender and journal:
+                    auto = not is_kp
+                elif is_kp:
+                    flag = row.get("out_of_tender" if tender else "confirmed")
+                    auto = None if flag is None and fact is None else bool(flag)
+                else:
+                    auto = False
+                label = " · ".join(str(v) for v in (row["dt"], row.get("doc") or row.get("subject") or ref,
+                                                     row.get("client") or row.get("deal")) if v)
+                result = self.record("kp", ref, label, auto)
+                if self.excluded("kp", ref):
+                    continue
+                if aggregate and ref not in self.decisions("kp"):
+                    untouched_kps += is_kp
+                    untouched_letters += not is_kp
+                else:
+                    fixed += result is True
+                    approved_kps += aggregate and is_kp and result is True
+                    missing |= result is None
+        if aggregate:
+            return fixed + min(untouched_kps, max(0, untouched_letters - approved_kps))
+        if missing or (fact is None and not kps and not fixed):
+            return None
+        return fixed
 
 
 def _now():
     return dt.datetime.now()
+
+
+def _remaining_pairs(engine, kps, letters, excluded):
+    from .engine import match_kp_letters
+    included_kps = [r for r in kps if "kp:" + str(r["id"]) not in excluded]
+    included_letters = [r for r in letters if "letter:" + str(r["id"]) not in excluded]
+    return match_kp_letters(included_kps, included_letters, engine.rules.get("kp_letter_match_days", 7))
 
 
 def _check(key, label, passed, detail, action=None, required=True):
@@ -26,13 +128,15 @@ def _crm_url(engine, contact):
     return reference_url(engine.config, contact)
 
 
-def _calls(engine, employee, ctx, item):
+def _calls(engine, employee, ctx, item, reviews):
     p, code = item.get("params", {}), item["code"]
     plain = code == "base_development" and p.get("calls_plain", False)
     require_lpr = p.get("require_lpr", True) and not plain
     unique = code == "base_development" and p.get("one_call_per_contact_day", False)
     result, _, simple = engine._result_calls(employee["login"], ctx, p.get("require_lpr", True), unique)
     selected = {r["id"] for r in (simple if plain else result)}
+    if unique:
+        selected = {rid for rid, review in reviews.items() if review["auto"]}
     first, last = ctx["first"].isoformat(), ctx["last"].isoformat() + "T23:59:59"
     rows = engine.q("SELECT * FROM activities WHERE emp=? AND kind='call' AND dt>=? AND dt<=? ORDER BY dt,id",
                     employee["login"], first, last)
@@ -148,17 +252,20 @@ def _meetings(engine, employee, ctx, item):
     return records, rules, 0
 
 
-def _kp(engine, employee, ctx, item, fact):
+def _kp(engine, employee, ctx, item, fact, reviews):
     p = item.get("params", {})
     kps, letters, pairs = engine._kp_inputs(employee["login"], ctx)
     since = engine.rules.get("kp_with_letters_from")
     union = bool(since and ctx["month"] >= since)
+    excluded = {rid for rid, review in reviews.items() if review["excluded"]}
+    if union and excluded:
+        pairs = _remaining_pairs(engine, kps, letters, excluded)
     tender = item["code"] == "base_development"
     journal = bool(engine.config.get("letters_sheet", {}).get("url"))
     confirmation = p.get("kp_confirmation", "b24")
     aggregate = not union and not tender and confirmation == "b24"
     pairs_by_letter = {str(l["id"]): kid for kid, l in pairs.items()}
-    unallocated = int(fact or 0) if aggregate and 0 < len(letters) < len(kps) else 0
+    unallocated = len(letters) if aggregate and 0 < len(letters) < len(kps) else 0
     rules = ["Показаны выгруженные КП и исходящие письма сотрудника за месяц. Дата и ответственный в исходной системе должны соответствовать фактической работе."]
     if union:
         days = engine.rules.get("kp_letter_match_days", 7)
@@ -225,15 +332,37 @@ def _kp(engine, employee, ctx, item, fact):
     return records, rules, unallocated
 
 
-def build(engine, employee, ctx, item, component, kind):
+def build(engine, employee, ctx, item, component, kind, review_rows=()):
+    reviews = {row["ref"]: row for row in review_rows if row["kind"] == kind}
     if kind == "calls":
-        records, rules, unallocated = _calls(engine, employee, ctx, item)
+        records, rules, unallocated = _calls(engine, employee, ctx, item, reviews)
     elif kind == "meetings":
         records, rules, unallocated = _meetings(engine, employee, ctx, item)
     elif kind == "kp":
-        records, rules, unallocated = _kp(engine, employee, ctx, item, component["fact"])
+        records, rules, unallocated = _kp(engine, employee, ctx, item, component["fact"], reviews)
     else:
         raise ValueError("Неизвестная часть KPI")
+    for record in records:
+        review = reviews.get(str(record["id"]))
+        if review:
+            record["review"] = review
+            if review["excluded"]:
+                record["counted"] = False
+            elif review["value"] is not None:
+                record["counted"] = bool(review["value"])
+    since = engine.rules.get("kp_with_letters_from")
+    aggregate = (kind == "kp" and item["code"] == "operational_activity" and
+                 not (since and ctx["month"] >= since) and item.get("params", {}).get("kp_confirmation", "b24") == "b24")
+    reviewed = any(r["value"] is not None or r["excluded"] for r in reviews.values())
+    if aggregate and reviewed:
+        fixed = sum(r["value"] == 1 and not r["excluded"] for r in reviews.values())
+        untouched = [r for r in records if r["id"].startswith("kp:") and r["review"]["value"] is None
+                     and not r["review"]["excluded"]]
+        remaining = component["fact"] - fixed
+        for row in untouched:
+            row["counted"] = None if 0 < remaining < len(untouched) else bool(remaining)
+    if kind == "kp" and reviewed:
+        unallocated = max(0, (component["fact"] or 0) - sum(r["counted"] is True for r in records))
     rules.append("Список содержит все загруженные записи сотрудника за выбранный месяц. Изменения в CRM, 1С и реестре появятся после обновления данных; при отсутствии записи проверьте дату, ответственного и условия выгрузки.")
     return {"kind": kind, "title": component["name"], "fact": component["fact"], "target": component["target"],
             "rules": rules, "records": records,

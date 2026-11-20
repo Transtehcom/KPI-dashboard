@@ -152,7 +152,7 @@ def _linked(onec, row):
 def _amount(kind, row):
     if kind == 'supply':
         amounts=[_number(line.get('ЛучшаяСумма')) for line in row.get('ТаблицаТовары') or []]
-        return (round(sum(amounts),2),None,'ТаблицаТовары.ЛучшаяСумма') if amounts and None not in amounts else (None,None,None)
+        return (round(sum(amounts),2),False,'ТаблицаТовары.ЛучшаяСумма') if amounts and None not in amounts else (None,None,None)
     if kind in ("kp", "order"):
         return _number(row.get("СуммаДокумента")), True, "СуммаДокумента"
     if kind != "tender":
@@ -194,7 +194,7 @@ def _items(entity, row, names, units, suppliers):
                 "quantity": _number(line.get("Количество")), "unit_id": unit_ref,
                 "unit": units.get(unit_ref) or unit_ref,
                 "characteristic": _ref(line.get("Характеристика_Key")), "lot": None,
-                "currency": entity["currency"], "vat_included": None,
+                "currency": entity["currency"], "vat_included": False if entity["kind"] == "supply" else None,
                 "delivery": row.get("ПунктДоставки") or line.get("ТТК_АдресДоставки") or None,
                 "included": True, "source_flag": line.get("Флаг"),
                 "base_row_number": line.get("НомерСтрокиДокументаОснования"),
@@ -216,7 +216,7 @@ def _items(entity, row, names, units, suppliers):
                     "supplier_name": suppliers.get(supplier_id), "price": price,
                     "amount": _number(line.get(f"СуммаПоставки{slot}")),
                     "quantity": item["quantity"], "unit": item["unit"], "unit_id": unit_ref,
-                    "currency": None, "vat_included": None, "delivery": item["delivery"],
+                    "currency": item["currency"], "vat_included": False, "delivery": item["delivery"],
                     "delivery_days": _number(line.get(f"Срок{slot}")), "lot": None,
                     "offered_at": None, "valid_until": None, "source_date_raw": item["source_date_raw"],
                     "selected": bool(supplier_id and supplier_id == supplier), "source": "onec"})
@@ -335,6 +335,8 @@ def fetch(onec, config, since=None):
                       "delivery_terms": row.get("ТТК_СрокОтгрузки") or None,
                       "delivery": row.get("ПунктДоставки") or row.get("АдресДоставки") or row.get("УсловияДоставкиТекст") or None,
                       "posted": row.get("Posted"), "events": [], "items": []}
+            if kind == "supply":
+                entity["currency"] = entity["currency"] or "RUB"
             entity["items"] = _items(entity, row, names, units, partners)
             if kind == 'supply':
                 entity['best_price_total']=amount
@@ -397,7 +399,7 @@ def fetch(onec, config, since=None):
             if matching:
                 entity["closed_by"] = matching[-1]["author"]
     if datasets.get("supply"):
-        warnings.append("Предложения ОС не содержат подтверждённых дат предложения, валюты и базы НДС. Первоначальные цены доступны справочно.")
+        warnings.append("Цены поставщиков в заявках ОС указаны в рублях без НДС. Дата предложения не подтверждена. Первоначальные цены доступны справочно.")
     if any(entity["kind"] == "transport" and not entity["due_verified"] for entity in entities):
         warnings.append("В OData нет собственного срока «Отработать до» ОЛ. Производный срок подачи основания показан отдельно, своевременность ОЛ не подтверждена.")
     return {"entities": entities, "events": events, "errors": errors, "warnings": warnings}

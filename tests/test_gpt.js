@@ -53,16 +53,16 @@ async function attachmentEvents() {
     querySelectorAll() { return []; }, querySelector() { return null; },
     classList:{add(){},remove(){}},contains(){return false;},
     setRangeText(value) { this.value += value; }});
-  for (const id of ['main','gptMessages','gptText','gptFast','gptModel','gptEffort','gptSend','gptFiles','gptDocuments','gptRollback','gptStop','gptRename','gptGroup','gptDeleteChat','gptUploadStatus','gptError','gptForm','gptMonth','gptNew']) nodes[id] = makeNode();
+  for (const id of ['main','gptMessages','gptText','gptFast','gptMic','gptVoiceStatus','gptModel','gptEffort','gptSend','gptFiles','gptDocuments','gptRollback','gptStop','gptRename','gptGroup','gptDeleteChat','gptUploadStatus','gptError','gptForm','gptMonth','gptNew']) nodes[id] = makeNode();
   nodes.gptModel.value = 'model';
   const uploads = [], documents = [], revoked = [];
   const context = {...ctx, state:{view:'gpt',gptDrafts:{},month:'2026-11'},
-    document:{getElementById:id=>nodes[id],querySelectorAll:()=>[]},
+    document:{getElementById:id=>nodes[id],querySelectorAll:()=>[],createElement:()=>({...makeNode(),children:[makeNode(),makeNode(),makeNode()]})},
     URL:{revokeObjectURL:url=>revoked.push(url)}, clearTimeout(){},setTimeout(){return 0;},
     Uint8Array, btoa:value=>Buffer.from(value,'binary').toString('base64'), encodeURIComponent,
     loadError:error=>{throw error;},
     api:async (path, body)=>{
-      if (path === '/api/gpt-chats') return {chats:[{id:'chat',title:'test'}],models:{model:'Model'},efforts:{medium:'Medium'},model_efforts:{model:{medium:'Medium'}}};
+      if (path === '/api/gpt-chats') return {shared_chat_id:'chat',chats:[{id:'old',title:'old'},{id:'chat',title:'test'}],models:{model:'Model'},efforts:{medium:'Medium'},model_efforts:{model:{medium:'Medium'}}};
       if (path.startsWith('/api/gpt-chat?')) return {messages:[],documents,document_history:[]};
       if (path === '/api/gpt-upload') { uploads.push(body); return {}; }
       throw Error('Unexpected API '+path);
@@ -70,7 +70,9 @@ async function attachmentEvents() {
   const loadStart = html.indexOf('  async function loadGPT()');
   const loadEnd = html.indexOf('  // ---------- оценки разбора звонков',loadStart);
   vm.runInNewContext(html.slice(start,loadEnd),context);
+  nodes.gptNew.parentElement = {after(){}};
   await context.loadGPT();
+  assert.equal(context.state.gptChat, 'chat');
   const file = {name:'image.png',size:3,arrayBuffer:async()=>Uint8Array.from([1,2,3]).buffer};
   await nodes.gptFiles.handlers.change({target:{files:[file]}});
   assert.equal(uploads.length,1);
