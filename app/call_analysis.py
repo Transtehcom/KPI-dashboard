@@ -19,7 +19,8 @@ from .anonymize import Pseudonymizer, restore
 from .common import ROOT, db_lock
 from .transcripts import ENGINE
 
-MODELS = {"gpt-6.1-sol": "GPT-6.1 Sol", "gpt-6-astra": "GPT-6 Astra", "gpt-6.1-terra": "GPT-6.1 Terra",
+MODELS = {"gpt-6.2-sol": "GPT-6.2 Sol", "gpt-6.2-astra": "GPT-6.2 Astra",
+          "gpt-6.1-sol": "GPT-6.1 Sol", "gpt-6-astra": "GPT-6 Astra", "gpt-6.1-terra": "GPT-6.1 Terra",
           "gpt-6-sol": "GPT-6 Sol", "gpt-6-luna": "GPT-6 Luna", "gpt-5.6-sol": "GPT-5.6 Sol",
           "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-luna": "GPT-5.6 Luna"}
 MODEL = "gpt-5.6-terra"  # по умолчанию; руководитель выбирает модель в разделе «Звонки»

@@ -78,7 +78,13 @@ class ModelPolicyTest(unittest.TestCase):
     def test_models_and_efforts_are_enforced_by_role(self):
         from app.call_analysis import model_options,validate_selection
         admin=model_options(True);staff=model_options(False)
-        self.assertEqual(len(admin["models"]),8)
+        for model in ("gpt-6.2-sol", "gpt-6.2-astra"):
+            self.assertIn(model, admin["models"])
+            self.assertNotIn(model, staff["models"])
+            for effort in ("low", "medium", "high", "xhigh", "max", "ultra"):
+                validate_selection(model, effort, True)
+            with self.assertRaises(ValueError):
+                validate_selection(model, "low", False)
         self.assertEqual(len(staff["models"]),4)
         validate_selection("gpt-6.1-sol","ultra",True)
         validate_selection("gpt-6.1-sol","medium",False)
