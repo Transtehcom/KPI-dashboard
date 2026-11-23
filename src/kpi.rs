@@ -126,6 +126,8 @@ enum Measure {
 }
 
 struct Row {
+    review_kind: &'static str,
+    source_ref: Option<String>,
     title: String,
     note: String,
     auto: bool,
@@ -150,6 +152,8 @@ fn group(title: &'static str, source: &'static str, measure: Measure) -> Group {
 }
 fn row(title: String, note: String, auto: bool, value: i64) -> Row {
     Row {
+        review_kind: "",
+        source_ref: None,
         title,
         note,
         auto,
@@ -169,6 +173,49 @@ fn day(period: &str, d: usize) -> String {
 }
 
 fn groups(spec: &Spec, period: &str) -> Vec<Group> {
+    let mut groups = source_groups(spec, period);
+    for (index, group) in groups.iter_mut().enumerate() {
+        for row in &mut group.rows {
+            row.review_kind = match spec.code {
+                "logistics_documents" => "forwarder_order",
+                "logistics_delivery" | "logistics_budget" | "on_time_delivery" => "customer_order",
+                "logistics_request_speed" => "transport_request",
+                "logistics_cargo_safety" => "cargo_safety_week",
+                "deferred_payment" => "supplier_order",
+                "competitive_purchases" => "purchase",
+                "exec_discipline" if index == 1 => "tasks",
+                "exec_discipline" => "supply_contracts",
+                "gross_profit" => "order",
+                "qualified_leads" => "leads",
+                "base_development" if spec.person == "tender_lead" => "clients",
+                "base_development" | "operational_activity" => ["calls", "meetings", "kp"][index],
+                "tender_operations" => "tenders",
+                "receivables_overdue" => "receivable",
+                "receivables_pm" if index == 1 => "payment_on_time",
+                "receivables_pm" => "sale_due",
+                "tender_receivables" => "contract_return",
+                "conversion_kp_tenders"
+                | "conversion_tender"
+                | "conversion_sales"
+                | "supply_funnel" => {
+                    if row.value != 0 {
+                        "order"
+                    } else if row.title.starts_with("Тендер") {
+                        "tender"
+                    } else if spec.code == "supply_funnel" {
+                        "supply_request"
+                    } else {
+                        "kp"
+                    }
+                }
+                _ => unreachable!("every rendered KPI record needs an original source kind"),
+            };
+        }
+    }
+    groups
+}
+
+fn source_groups(spec: &Spec, period: &str) -> Vec<Group> {
     let (_, m) = month_parts(period);
     let salt = (m as usize + spec.person.len()) % 7;
     let good = |i: usize| (i + salt) % 5 != 0;
@@ -264,36 +311,62 @@ fn groups(spec: &Spec, period: &str) -> Vec<Group> {
                 Measure::Average,
             );
             let (y, m) = month_parts(period);
-            for (i, thursday) in (1..=month_days(y, m))
-                .filter(|&d| weekday(y, m, d) == 3)
-                .enumerate()
-            {
+            for thursday in (1..=month_days(y, m)).filter(|&d| weekday(y, m, d) == 3) {
                 let monday = chrono::NaiveDate::from_ymd_opt(y, m, thursday).unwrap()
                     - chrono::Duration::days(3);
-                let score = [100, 80, 95, 90, 85][i];
-                g.rows.push(row(
+                let week_id = monday.to_string();
+                let score = crate::http_contract::fixture()
+                    .weekly_scores
+                    .iter()
+                    .find(|score| {
+                        score.emp == spec.person
+                            && score.week == week_id
+                            && score.criterion == "cargo_safety"
+                    });
+                let mut week = row(
                     format!("Неделя с {}", monday.format("%d.%m.%Y")),
                     "Понедельная оценка руководителя".into(),
                     true,
-                    score,
-                ));
+                    score.map_or(0, |item| item.score),
+                );
+                week.source_ref = Some(week_id);
+                week.unknown = score.is_none();
+                g.rows.push(week);
             }
             vec![g]
         }
         "logistics_documents" => {
             let mut g = group("Поручения с договорным файлом", "1С", Measure::Share(98));
-            for i in 0..8 {
-                let file = if good(i) {
-                    ["Договор заявка.pdf", "Дог. на перевозку.pdf", "Договор.pdf"][i % 3]
-                } else {
-                    "Маршрутный лист.pdf"
-                };
-                g.rows.push(row(
-                    doc("Поручение экспедитору", period, i),
-                    format!("{} · Присоединённые файлы: {file}", day(period, 1 + i * 2)),
-                    good(i),
+            let mut orders: Vec<_> = crate::http_contract::fixture()
+                .forwarders
+                .iter()
+                .filter(|o| {
+                    o.deleted.unwrap_or(0) == 0
+                        && o.responsible.as_deref() == Some(spec.person)
+                        && o.dt.as_deref().and_then(|s| s.get(..7)) == Some(period)
+                })
+                .collect();
+            orders.sort_by_key(|o| (&o.dt, &o.doc, &o.id));
+            for order in orders {
+                let matched = order.contract_files.iter().any(|f| {
+                    let name = f.to_lowercase();
+                    name.contains("договор")
+                        || name
+                            .split(|c: char| !matches!(c, 'а'..='я'|'ё'|'a'..='z'))
+                            .any(|s| s == "дог")
+                });
+                let mut record = row(
+                    order.doc.clone().unwrap_or_else(|| order.id.clone()),
+                    format!(
+                        "{} · Присоединённые файлы: {}",
+                        order.dt.as_deref().unwrap_or(""),
+                        order.contract_files.join(", ")
+                    ),
+                    matched,
                     1,
-                ));
+                );
+                record.source_ref = Some(order.id.clone());
+                g.rows.push(record);
             }
             vec![g]
         }
@@ -556,6 +629,18 @@ fn groups(spec: &Spec, period: &str) -> Vec<Group> {
                     days,
                 ));
             }
+            if spec.code == "receivables_pm" {
+                let mut payments = group("Оплачено в срок", "1С", Measure::Share(100));
+                for original in &g.rows {
+                    payments.rows.push(row(
+                        original.title.clone(),
+                        original.note.clone(),
+                        original.value == 0,
+                        1,
+                    ));
+                }
+                return vec![g, payments];
+            }
             vec![g]
         }
         "tender_receivables" => vec![mk(
@@ -572,11 +657,133 @@ fn groups(spec: &Spec, period: &str) -> Vec<Group> {
 fn prefix(s: &State, p: &str, code: &str) -> String {
     format!("review/{}/{p}/{code}/", s.period)
 }
-fn decision<'a>(s: &'a State, base: &str, g: usize, i: usize) -> &'a str {
+pub(crate) struct ReviewSlot {
+    key: String,
+    legacy: Option<String>,
+}
+
+fn slot(base: &str, g: usize, i: usize, row: &Row) -> ReviewSlot {
+    let id = row.source_ref.as_deref().unwrap_or(&row.title);
+    ReviewSlot {
+        key: format!("{base}{}/{id}", row.review_kind),
+        // The old generated forwarder list was replaced by records from the snapshot.
+        legacy: (row.review_kind != "forwarder_order").then(|| format!("{base}{g}/{i}")),
+    }
+}
+fn decision<'a>(s: &'a State, slot: &ReviewSlot) -> &'a str {
     s.values
-        .get(&format!("{base}{g}/{i}"))
+        .get(&slot.key)
+        .or_else(|| slot.legacy.as_ref().and_then(|key| s.values.get(key)))
         .map(String::as_str)
         .unwrap_or("auto")
+}
+
+fn migrate_slot(s: &mut State, target: &ReviewSlot) {
+    if let Some(old) = &target.legacy {
+        for (old, new) in [
+            (old.clone(), target.key.clone()),
+            (format!("prior/{old}"), format!("prior/{}", target.key)),
+        ] {
+            if let Some(value) = s.values.remove(&old) {
+                s.values.entry(new).or_insert(value);
+            }
+        }
+    }
+}
+pub(crate) fn approve(s: &mut State, target: &ReviewSlot, value: &str) {
+    migrate_slot(s, target);
+    let key = if decision(s, target) == "excluded" {
+        format!("prior/{}", target.key)
+    } else {
+        target.key.clone()
+    };
+    if value == "auto" {
+        s.values.remove(&key);
+    } else {
+        s.values.insert(key, value.to_owned());
+    }
+}
+pub(crate) fn exclude(s: &mut State, target: &ReviewSlot, excluded: bool) {
+    migrate_slot(s, target);
+    if (decision(s, target) == "excluded") == excluded {
+        return;
+    }
+    let prior = format!("prior/{}", target.key);
+    if excluded {
+        if let Some(value) = s.values.insert(target.key.clone(), "excluded".into()) {
+            s.values.insert(prior, value);
+        }
+    } else {
+        s.values.remove(&target.key);
+        if let Some(value) = s.values.remove(&prior) {
+            s.values.insert(target.key.clone(), value);
+        }
+    }
+}
+fn weekly_score(state: &State, stored: &str, row: &Row) -> Option<i64> {
+    match state.values.get(&format!("score/{stored}")) {
+        Some(value) => value.parse().ok(),
+        None => (!row.unknown).then_some(row.value),
+    }
+}
+
+fn targets(
+    state: &State,
+    groups: &[Group],
+    base: &str,
+    code: &str,
+    kind: &str,
+    id: &str,
+) -> Option<Vec<ReviewSlot>> {
+    let mut primary = None;
+    let mut linked = Vec::new();
+    for (g, group) in groups.iter().enumerate() {
+        for (i, row) in group.rows.iter().enumerate() {
+            if row.source_ref.as_deref().unwrap_or(&row.title) != id {
+                continue;
+            }
+            if group.measure == Measure::Average
+                && weekly_score(state, &format!("{base}{g}/{i}"), row).is_none()
+            {
+                continue;
+            }
+            if row.review_kind == kind {
+                primary = Some(slot(base, g, i, row));
+            } else if code == "receivables_pm"
+                && matches!(
+                    (kind, row.review_kind),
+                    ("payment_on_time", "sale_due") | ("sale_due", "payment_on_time")
+                )
+            {
+                linked.push(slot(base, g, i, row));
+            }
+        }
+    }
+    let mut slots = vec![primary?];
+    slots.extend(linked);
+    Some(slots)
+}
+pub(crate) fn review_targets(
+    state: &State,
+    emp: &str,
+    period: &str,
+    code: &str,
+    kind: &str,
+    id: &str,
+) -> Option<Vec<ReviewSlot>> {
+    let rule = rules_for(emp, period).find(|r| r.code == code)?;
+    let (year, month) = month_parts(period);
+    if format!("{year:04}-{month:02}") != period {
+        return None;
+    }
+    targets(
+        state,
+        &groups(rule, period),
+        &format!("review/{period}/{emp}/{code}/"),
+        code,
+        kind,
+        id,
+    )
 }
 struct Score {
     ratio: Option<f64>,
@@ -592,7 +799,7 @@ fn score(s: &State, base: &str, gi: usize, g: &Group) -> Score {
     let mut pending = 0;
     let mut unknown = 0;
     for (i, r) in g.rows.iter().enumerate() {
-        let status = decision(s, base, gi, i);
+        let status = decision(s, &slot(base, gi, i, r));
         if status == "excluded"
             || s.values
                 .get(&format!("include/{base}{gi}/{i}"))
@@ -600,7 +807,14 @@ fn score(s: &State, base: &str, gi: usize, g: &Group) -> Score {
         {
             continue;
         }
-        if status == "auto" && r.unknown {
+        let week_value = if g.measure == Measure::Average {
+            weekly_score(s, &format!("{base}{gi}/{i}"), r)
+        } else {
+            None
+        };
+        if (g.measure == Measure::Average && week_value.is_none())
+            || (g.measure != Measure::Average && status == "auto" && r.unknown)
+        {
             unknown += 1;
             continue;
         }
@@ -619,11 +833,7 @@ fn score(s: &State, base: &str, gi: usize, g: &Group) -> Score {
         };
         if ok {
             good += 1;
-            let amount = s
-                .values
-                .get(&format!("score/{base}{gi}/{i}"))
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(r.value);
+            let amount = week_value.unwrap_or(r.value);
             total += amount;
             worst = worst.max(r.value);
             if r.value == 0 {
@@ -867,10 +1077,13 @@ fn detail(s: &State, p: &str, r: &Spec, gs: &[Group]) -> String {
     }
     h.push_str("<div class=\"table-scroll\"><table><thead><tr><th>Запись</th><th>Данные источника</th><th>Согласовано</th></tr></thead><tbody>");
     for (i, row) in g.rows.iter().enumerate().skip(page * 12).take(12) {
-        let value = decision(s, &base, gi, i);
+        let record_slot = slot(&base, gi, i, row);
+        let value = decision(s, &record_slot);
         let id = format!("{gi}/{i}");
+        let week_value = weekly_score(s, &format!("{base}{id}"), row);
+        let awaiting = g.measure == Measure::Average && week_value.is_none();
         let effective = value == "yes" || value == "auto" && row.auto;
-        let auto_label = if row.unknown {
+        let auto_label = if awaiting || (g.measure != Measure::Average && row.unknown) {
             "Нет данных"
         } else if row.pending {
             "Ожидает срока"
@@ -888,7 +1101,9 @@ fn detail(s: &State, p: &str, r: &Spec, gs: &[Group]) -> String {
         };
         write!(
             h,
-            "<tr><td><strong>{}</strong></td><td>{}",
+            "<tr data-review-kind=\"{}\" data-review-ref=\"{}\"><td><strong>{}</strong></td><td>{}",
+            esc(row.review_kind),
+            esc(row.source_ref.as_deref().unwrap_or(&row.title)),
             esc(&row.title),
             esc(&row.note)
         )
@@ -905,19 +1120,17 @@ fn detail(s: &State, p: &str, r: &Spec, gs: &[Group]) -> String {
             }
         }
         if g.measure == Measure::Average {
-            let number = s
-                .values
-                .get(&format!("score/{base}{id}"))
-                .cloned()
-                .unwrap_or_else(|| row.value.to_string());
+            let number = week_value.map(|v| v.to_string()).unwrap_or_default();
             if s.role == "admin" && value != "excluded" {
                 write!(h,r#" <input type="number" aria-label="Оценка недели" min="0" max="100" value="{}" data-act="kpi-score:{id}">"#,esc(&number)).unwrap();
-            } else {
+            } else if !number.is_empty() {
                 write!(h, " · {} из 100", esc(&number)).unwrap();
             }
         }
         h.push_str("</td><td>");
-        if s.role == "admin" && value != "excluded" {
+        if awaiting {
+            h.push_str("Ожидает оценки");
+        } else if s.role == "admin" && value != "excluded" {
             write!(
                 h,
                 r#"<select aria-label="Согласование {}" data-act="kpi-review:{id}">"#,
@@ -934,7 +1147,7 @@ fn detail(s: &State, p: &str, r: &Spec, gs: &[Group]) -> String {
             }
             h.push_str("</select>");
             write!(h,r#" <button type="button" class="btn bad" aria-label="Исключить {}" data-act="kpi-ask" data-val="{id}">×</button>"#,esc(&row.title)).unwrap();
-            if s.values.get("kpi-confirm") == Some(&format!("{base}{id}")) {
+            if s.values.get("kpi-confirm") == Some(&record_slot.key) {
                 h.push_str("<div class=\"detail\">Исключить эту запись из расчёта? ");
                 h.push_str(&btn("kpi-remove", &id, "Исключить", false));
                 h.push_str(&btn("kpi-cancel", "", "Отмена", false));
@@ -1134,7 +1347,15 @@ pub fn action(s: &mut State, key: &str, value: &str) -> bool {
     }
     let base = prefix(s, &p, spec.code);
     let slot = format!("{base}{gi}/{ri}");
-    let excluded = decision(s, &base, gi, ri) == "excluded";
+    let record = &gs[gi].rows[ri];
+    let record_slot = self::slot(&base, gi, ri, record);
+    let excluded = decision(s, &record_slot) == "excluded";
+    if gs[gi].measure == Measure::Average
+        && weekly_score(s, &slot, record).is_none()
+        && !key.starts_with("kpi-score:")
+    {
+        return false;
+    }
     match key.split(':').next().unwrap_or("") {
         "kpi-include" if spec.code == "logistics_budget" && ["yes", "no"].contains(&value) => {
             if value == "no" {
@@ -1144,31 +1365,37 @@ pub fn action(s: &mut State, key: &str, value: &str) -> bool {
             }
         }
         "kpi-review" if !excluded && ["auto", "yes", "no"].contains(&value) => {
-            if value == "auto" {
-                s.values.remove(&slot);
-            } else {
-                s.values.insert(slot, value.into());
-            }
+            approve(s, &record_slot, value);
         }
         "kpi-score"
             if gs[gi].measure == Measure::Average
-                && value.parse::<u8>().is_ok_and(|v| v <= 100) =>
+                && !excluded
+                && (value.is_empty() || value.parse::<u8>().is_ok_and(|v| v <= 100)) =>
         {
             s.values.insert(format!("score/{slot}"), value.into());
         }
         "kpi-ask" if !excluded => {
-            s.values.insert("kpi-confirm".into(), slot);
+            s.values.insert("kpi-confirm".into(), record_slot.key);
             return true;
         }
-        "kpi-remove" if !excluded && s.values.get("kpi-confirm") == Some(&slot) => {
-            if let Some(old) = s.values.insert(slot.clone(), "excluded".into()) {
-                s.values.insert(format!("prior/{slot}"), old);
+        "kpi-remove" | "kpi-restore" => {
+            let removing = key == "kpi-remove";
+            if removing == excluded
+                || (removing && s.values.get("kpi-confirm") != Some(&record_slot.key))
+            {
+                return false;
             }
-        }
-        "kpi-restore" if excluded => {
-            s.values.remove(&slot);
-            if let Some(old) = s.values.remove(&format!("prior/{slot}")) {
-                s.values.insert(slot, old);
+            if let Some(slots) = targets(
+                s,
+                &gs,
+                &base,
+                spec.code,
+                record.review_kind,
+                record.source_ref.as_deref().unwrap_or(&record.title),
+            ) {
+                for target in slots {
+                    exclude(s, &target, removing);
+                }
             }
         }
         _ => return false,
@@ -1236,7 +1463,10 @@ mod tests {
         s.period = "2026-11".into();
         assert!(action(&mut s, "kpi-remove", &id));
         let base = prefix(&s, p, rule.code);
-        assert_eq!(decision(&s, &base, 0, row), "excluded");
+        assert_eq!(
+            decision(&s, &slot(&base, 0, row, &g[0].rows[row])),
+            "excluded"
+        );
         assert!(action(&mut s, "kpi-restore", &id));
         assert_eq!(monthly_payout(&s, p), Some(approved));
         assert!(action(&mut s, &format!("kpi-review:{id}"), "no"));

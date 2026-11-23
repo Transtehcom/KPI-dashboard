@@ -1,16 +1,53 @@
 // Browser adapter. Rust owns routes, access rules, calculations, state transitions and the view.
 const root = document.getElementById("app");
-const storageKey = "ttk-rust-dashboard/v1";
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-let wasm, route, dragged;
-const hash = () => decodeURIComponent(location.hash.slice(1)).split("?")[0];
+let route, revision, dragged;
+let queue = Promise.resolve();
+let needsRefresh = false;
+const hash = () => location.hash.slice(1).split("?")[0];
+function showError(message) {
+    let notice = document.getElementById("connection-status");
+    if (!notice) {
+        notice = document.createElement("aside");
+        notice.id = "connection-status";
+        notice.className = "storage-notice";
+        notice.setAttribute("role", "alert");
+        document.body.prepend(notice);
+    }
+    const retry = document.createElement("button");
+    retry.textContent = "Обновить представление";
+    retry.addEventListener("click", () => start());
+    notice.replaceChildren(document.createTextNode(message + " "),retry);
+}
+async function exchange(endpoint, body) {
+    const response = await fetch(endpoint, {
+        method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin",
+        body:JSON.stringify(body), cache:"no-store"
+    });
+    if (!response.ok) throw new Error(response.status === 409
+        ? "Данные изменились в другой вкладке. Обновите представление перед следующей правкой."
+        : "Не удалось получить ответ сервера. Проверьте сохранённые данные перед повтором.");
+    const result = await response.json();
+    if (typeof result.html !== "string" || !Number.isSafeInteger(result.revision)) throw new Error("Сервер вернул неполный ответ.");
+    return result;
+}
 function dispatch(key, value = "", historyMode = "push") {
-    const input = encoder.encode(JSON.stringify([String(key), String(value)]));
-    const inputPtr = wasm.reserve(input.length);
-    new Uint8Array(wasm.memory.buffer, inputPtr, input.length).set(input);
-    const len = wasm.run();
-    const result = JSON.parse(decoder.decode(new Uint8Array(wasm.memory.buffer, wasm.output(), len)));
+    const next = async () => {
+        if (needsRefresh) return false;
+        try {
+            const result = await exchange("/api/sandbox/action", {key, value:String(value), revision});
+            render(result, key, value, historyMode);
+            return true;
+        } catch (error) {
+            needsRefresh = true;
+            showError(error.message);
+            return false;
+        }
+    };
+    queue = queue.then(next,next);
+    return queue;
+}
+function render(result, key, value, historyMode) {
+    revision = result.revision;
     const active = document.activeElement;
     const samePage = route === result.route && key !== "session";
     const open = samePage ? [...root.querySelectorAll("details[open]")].map(d => d.querySelector("summary")?.textContent) : [];
@@ -18,18 +55,11 @@ function dispatch(key, value = "", historyMode = "push") {
     const cursor = focusKey && active.tagName === "INPUT" ? active.selectionStart : null;
     route = result.route;
     root.innerHTML = result.html;
+    root.dataset.route = result.route;
+    root.dataset.revision = String(result.revision);
     root.removeAttribute("aria-busy");
     document.documentElement.dataset.theme = result.theme;
     document.title = result.title + " · Транстехком";
-    try {
-        localStorage.setItem(storageKey, result.state);
-    } catch {
-        const notice = document.createElement("p");
-        notice.setAttribute("role", "status");
-        notice.className = "storage-notice";
-        notice.textContent = "Браузер не смог сохранить изменения. Они доступны до закрытия или перезагрузки этой страницы.";
-        root.querySelector("main")?.prepend(notice);
-    }
     if (route !== hash()) history[historyMode === "replace" ? "replaceState" : "pushState"](null, "", "#" + route);
     if (!samePage) window.scrollTo({top: 0, behavior: "instant"});
     if (open.length) root.querySelectorAll("details").forEach(d => { if (open.includes(d.querySelector("summary")?.textContent)) d.open = true; });
@@ -41,7 +71,7 @@ function dispatch(key, value = "", historyMode = "push") {
     if ((key === "dialog" && value) || key === "help-save") root.querySelector("[role=dialog] textarea, [role=dialog] button")?.focus();
     if (key === "dialog" && !value) root.querySelector(".head-tools [data-act=dialog]")?.focus({preventScroll:true});
 }
-root.addEventListener("click", event => {
+root.addEventListener("click", async event => {
     const split = event.target.closest("[data-split]");
     if (split) {
         const tile = split.closest(".split");
@@ -57,9 +87,9 @@ root.addEventListener("click", event => {
     if (el.matches("a") && (event.ctrlKey || event.metaKey || event.shiftKey)) return;
     event.preventDefault();
     if (el.dataset.confirm && !window.confirm(el.dataset.confirm)) return;
-    dispatch(el.dataset.act, el.dataset.val ?? el.value ?? "");
     const dest = el.dataset.scroll;
-    if (dest) document.getElementById(dest)?.scrollIntoView({block:"start", behavior:"smooth"});
+    const ok = await dispatch(el.dataset.act, el.dataset.val ?? el.value ?? "");
+    if (ok && dest) document.getElementById(dest)?.scrollIntoView({block:"start", behavior:"smooth"});
 });
 root.addEventListener("change", event => {
     const el = event.target;
@@ -153,7 +183,7 @@ async function submitHelp(form) {
     status.textContent = "Сохраняем обращение…";
     try {
         const images = await Promise.all((pendingHelpFiles.get(form) ?? []).map(helpImage));
-        if (form.isConnected) dispatch("help-save", JSON.stringify({text:form.querySelector("textarea").value, images}));
+        if (form.isConnected) await dispatch("help-save", JSON.stringify({text:form.querySelector("textarea").value, images}));
     } catch {
         status.textContent = "Не удалось прочитать изображение. Уберите его или выберите другой файл.";
     } finally { submit.disabled = false; }
@@ -180,17 +210,20 @@ root.addEventListener("dragstart", e => { dragged = e.target.closest("[data-drag
 root.addEventListener("dragover", e => { if(dragged && e.target.closest("[data-drop-key]")) e.preventDefault(); });
 root.addEventListener("drop", e => { const dest=e.target.closest("[data-drop-key]"); if(dragged && dest){e.preventDefault();dispatch("misc-access-move",dragged+"|"+dest.dataset.dropKey);} dragged=null; });
 root.addEventListener("dragend", () => { dragged=null; });
-window.addEventListener("hashchange", () => {if(wasm && hash() !== route) dispatch("nav",hash() || "home","replace");});
-try {
-    const response = await fetch("dashboard.wasm");
-    if (!response.ok) throw new Error("wasm");
-    wasm = (await WebAssembly.instantiate(await response.arrayBuffer(), {})).instance.exports;
-    let saved = null;
-    try { saved = localStorage.getItem(storageKey); } catch {}
-    dispatch("init", JSON.stringify({saved, route:hash(), time:new Date().toISOString()}),"replace");
-} catch (err) {
-    root.textContent = "Дашборд не загрузился. Обновите страницу в браузере с поддержкой WebAssembly.";
-    root.removeAttribute("aria-busy");
-    console.error(err);
+window.addEventListener("hashchange", () => {if(revision && hash() !== route) dispatch("nav",hash() || "home","replace");});
+async function start() {
+    const button = document.querySelector("#connection-status button");
+    if (button) button.disabled = true;
+    try {
+        const result = await exchange("/api/sandbox/session",{route:hash() || "home",time:new Date().toISOString()});
+        needsRefresh = false;
+        render(result,"init","","replace");
+        document.getElementById("connection-status")?.remove();
+    } catch (error) {
+        needsRefresh = true;
+        root.removeAttribute("aria-busy");
+        showError(error.message);
+    }
 }
+await start();
 

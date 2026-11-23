@@ -65,23 +65,6 @@ fn archive(files: &[(&str, &str)]) -> Vec<u8> {
     u16le(&mut out, 0);
     out
 }
-fn base64(data: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = (chunk[0] as u32) << 16
-            | (chunk.get(1).copied().unwrap_or(0) as u32) << 8
-            | chunk.get(2).copied().unwrap_or(0) as u32;
-        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            out.push(if i > chunk.len() {
-                '='
-            } else {
-                ALPHABET[((n >> shift) & 63) as usize] as char
-            });
-        }
-    }
-    out
-}
 fn column(mut n: usize) -> String {
     let mut letters = vec![];
     while n != 0 {
@@ -91,19 +74,26 @@ fn column(mut n: usize) -> String {
     }
     letters.into_iter().rev().collect()
 }
-const TYPES: &str = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#;
+const TYPES: &str = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>"#;
 const ROOT_REL: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
-const BOOK_REL: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#;
+const BOOK_REL: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
 
-pub(super) fn workbook(title: &str, headers: &[&str], rows: &[Vec<String>]) -> Vec<u8> {
-    let mut sheet = String::from(
-        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><cols>"#,
+const STYLES: &str = r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF3F438D"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#;
+pub(crate) fn workbook(title: &str, headers: &[&str], rows: &[Vec<String>]) -> Vec<u8> {
+    let supplier = title == "Лист 1";
+    let (split, top) = if supplier { (3, "D2") } else { (1, "B2") };
+    let mut sheet = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane xSplit="{split}" ySplit="1" topLeftCell="{top}" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><cols>"#
     );
     for (i, h) in headers.iter().enumerate() {
-        let w = if i == 0 || h.contains("Название") || h.contains("Маршрут") {
-            38
+        let w = if supplier {
+            if crate::http_contract::DISPLAY.contains(h) {
+                38
+            } else {
+                20
+            }
         } else {
-            22
+            [42, 15, 25, 20, 65, 18, 32, 30, 30, 40, 38][i]
         };
         write!(
             sheet,
@@ -116,15 +106,27 @@ pub(super) fn workbook(title: &str, headers: &[&str], rows: &[Vec<String>]) -> V
     sheet.push_str("</cols><sheetData>");
     let headings = headers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     for (r, row) in std::iter::once(&headings).chain(rows).enumerate() {
-        write!(sheet, "<row r=\"{}\">", r + 1).unwrap();
+        let height = if supplier && r == 0 {
+            " ht=\"45\" customHeight=\"1\""
+        } else {
+            ""
+        };
+        write!(sheet, "<row r=\"{}\"{height}>", r + 1).unwrap();
         for (c, text) in row.iter().enumerate().filter(|(_, t)| !t.is_empty()) {
             let cell = format!("{}{}", column(c + 1), r + 1);
             if r > 0 && headers[c] == "Поручений" && text.parse::<usize>().is_ok() {
                 write!(sheet, "<c r=\"{cell}\"><v>{text}</v></c>").unwrap();
             } else {
+                let style = if !supplier {
+                    ""
+                } else if r == 0 {
+                    " s=\"2\""
+                } else {
+                    " s=\"1\""
+                };
                 write!(
                     sheet,
-                    "<c r=\"{cell}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+                    "<c r=\"{cell}\"{style} t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
                     crate::esc(text)
                 )
                 .unwrap();
@@ -149,14 +151,8 @@ pub(super) fn workbook(title: &str, headers: &[&str], rows: &[Vec<String>]) -> V
         ("xl/workbook.xml", &book),
         ("xl/_rels/workbook.xml.rels", BOOK_REL),
         ("xl/worksheets/sheet1.xml", &sheet),
+        ("xl/styles.xml", STYLES),
     ])
-}
-pub(super) fn link(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String {
-    let data = base64(&workbook(title, headers, rows));
-    format!(
-        r#"<a class="btn" download="{}.xlsx" href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{data}">Скачать Excel</a>"#,
-        crate::esc(title)
-    )
 }
 #[cfg(test)]
 mod tests {
@@ -164,8 +160,6 @@ mod tests {
     #[test]
     fn package_primitives() {
         assert_eq!(crc32(b"123456789"), 0xcbf43926);
-        assert_eq!(base64(b"x"), "eA==");
-        assert_eq!(base64(b"xy"), "eHk=");
         assert_eq!(column(81), "CC");
     }
 }

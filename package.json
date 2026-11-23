@@ -1,0 +1,17 @@
+{
+  "name": "ttk-dashboard-rust-sites",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:worker": "node scripts/build-worker.mjs",
+    "db:generate": "drizzle-kit generate",
+    "test:worker": "node --test verification/worker.test.mjs",
+    "test:workerd": "node verification/workerd-smoke.mjs"
+  },
+  "devDependencies": {
+    "binaryen": "132.0.0",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "miniflare": "4.20260730.0"
+  }
+}

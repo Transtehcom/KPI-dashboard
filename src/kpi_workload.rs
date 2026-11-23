@@ -223,17 +223,26 @@ fn tasks(s: &State, person: &str, period: &str) -> Vec<Task> {
                     (!open).then_some(actual),
                     !open,
                 ),
-                ("Продажи", 0 | 2) => (
-                    "Тендер",
-                    if open {
-                        "Действует"
-                    } else {
-                        "Выиграно"
-                    },
-                    Some(deadline),
-                    (!open).then_some(actual),
-                    !open,
-                ),
+                ("Продажи", 0 | 2) => {
+                    let statuses = [
+                        "Черновик",
+                        "Подготавливается",
+                        "Действует",
+                        "Отменено",
+                        "Выиграно",
+                        "Проиграно",
+                        "Отклонён",
+                    ];
+                    let status = statuses[(i + pi + m as usize) % statuses.len()];
+                    let closed = !matches!(status, "Черновик" | "Подготавливается");
+                    (
+                        "Тендер",
+                        status,
+                        Some(deadline),
+                        closed.then_some(actual),
+                        closed,
+                    )
+                }
                 ("Продажи", 1) => (
                     "Коммерческое предложение",
                     if open {

@@ -10,7 +10,9 @@ mod partners;
 #[path = "sections/staff.rs"]
 mod staff;
 #[path = "sections/xlsx.rs"]
-mod xlsx;
+pub(crate) mod xlsx;
+#[path = "sections/supplier_columns.rs"]
+pub(crate) mod supplier_columns;
 
 fn setting<'a>(s: &'a State, key: &str) -> &'a str {
     s.values.get(key).map(String::as_str).unwrap_or("")

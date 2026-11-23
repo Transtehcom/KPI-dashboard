@@ -4,6 +4,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 mod help;
+pub mod http_contract;
+pub mod review_contract;
+pub mod sandbox;
 mod home;
 mod kpi;
 mod ops;
@@ -454,6 +457,17 @@ pub extern "C" fn run() -> usize {
 #[no_mangle]
 pub extern "C" fn output() -> *const u8 {
     OUTPUT.with(|b| b.borrow().as_ptr())
+}
+
+/// Server-side entry point. Each call receives only the session selected by its host.
+#[no_mangle]
+pub extern "C" fn server_run() -> usize {
+    let response = INPUT.with(|b| sandbox::handle_bytes(&b.borrow()));
+    OUTPUT.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        *buf = serde_json::to_vec(&response).expect("serializable HTTP response");
+        buf.len()
+    })
 }
 
 #[cfg(test)]

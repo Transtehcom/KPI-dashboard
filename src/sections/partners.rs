@@ -1,111 +1,58 @@
 use super::*;
-#[path = "supplier_columns.rs"]
-mod supplier_columns;
+use crate::http_contract as api;
+use std::sync::OnceLock;
 
-pub(super) struct Partner {
-    pub name: &'static str,
-    pub inn: &'static str,
-    pub region: &'static str,
-    pub category: &'static str,
-    mail: &'static str,
-    contact: &'static str,
+struct Partner {
+    inn: &'static str,
     item: &'static str,
     price: i64,
 }
-pub(super) const SUPPLIERS: [Partner; 6] = [
+const SUPPLIERS: [Partner; 6] = [
     Partner {
-        name: "Северная опора, ГК ООО",
         inn: "0000000101",
-        region: "59-Пермский край",
-        category: "Металлоконструкции",
-        mail: "supply-1@example.invalid",
-        contact: "Отдел поставок, доб. 101",
         item: "Опора У110",
-        price: 82_400,
+        price: 82400,
     },
     Partner {
-        name: "Линия металла, ООО",
         inn: "0000000102",
-        region: "66-Свердловская область",
-        category: "Металлопрокат",
-        mail: "supply-2@example.invalid",
-        contact: "Отдел поставок, доб. 102",
         item: "Балка двутавровая",
-        price: 61_200,
+        price: 61200,
     },
     Partner {
-        name: "Контур света, ТД ООО",
         inn: "0000000103",
-        region: "74-Челябинская область",
-        category: "Освещение",
-        mail: "supply-3@example.invalid",
-        contact: "Отдел поставок, доб. 103",
         item: "Мачта освещения",
-        price: 146_100,
+        price: 146100,
     },
     Partner {
-        name: "Кабельная линия, АО",
         inn: "0000000104",
-        region: "50-Московская область",
-        category: "Кабельная продукция",
-        mail: "supply-4@example.invalid",
-        contact: "Отдел поставок, доб. 104",
         item: "Кабель силовой",
-        price: 1_460,
+        price: 1460,
     },
     Partner {
-        name: "Формат крепежа, ПК ООО",
         inn: "0000000105",
-        region: "16-Республика Татарстан",
-        category: "Крепёж",
-        mail: "supply-5@example.invalid",
-        contact: "Отдел поставок, доб. 105",
         item: "Комплект крепежа М24",
-        price: 3_720,
+        price: 3720,
     },
     Partner {
-        name: "Вектор покрытия, ООО",
         inn: "0000000106",
-        region: "52-Нижегородская область",
-        category: "Изоляция",
-        mail: "supply-6@example.invalid",
-        contact: "Отдел поставок, доб. 106",
         item: "Изоляционная муфта",
-        price: 4_820,
+        price: 4820,
     },
 ];
-pub(super) const CARRIERS: [Partner; 3] = [
-    Partner {
-        name: "Восточный маршрут, ТК ООО",
-        inn: "0000000201",
-        region: "66-Свердловская область",
-        category: "Автоперевозки",
-        mail: "route-1@example.invalid",
-        contact: "Диспетчерская, доб. 201",
-        item: "Екатеринбург — Пермь",
-        price: 74000,
-    },
-    Partner {
-        name: "Рельсовый путь, ООО",
-        inn: "0000000202",
-        region: "59-Пермский край",
-        category: "Железнодорожные перевозки",
-        mail: "route-2@example.invalid",
-        contact: "Диспетчерская, доб. 202",
-        item: "Пермь — Казань",
-        price: 59000,
-    },
-    Partner {
-        name: "Волга транзит, ТК ООО",
-        inn: "0000000203",
-        region: "16-Республика Татарстан",
-        category: "Сборные грузы",
-        mail: "route-3@example.invalid",
-        contact: "Диспетчерская, доб. 203",
-        item: "Казань — Нижний Новгород",
-        price: 48000,
-    },
-];
+impl Partner {
+    fn name(&self) -> &str {
+        static FORMATTED: OnceLock<Vec<api::Supplier>> = OnceLock::new();
+        FORMATTED
+            .get_or_init(|| {
+                let d = api::fixture();
+                api::suppliers(d, "", d.snapshot_at)
+            })
+            .iter()
+            .find(|r| r.get("Реквизит: ИНН") == self.inn)
+            .map(|r| r.get("Название"))
+            .unwrap_or(self.inn)
+    }
+}
 struct Line {
     doc: String,
     day: usize,
@@ -140,163 +87,113 @@ fn lines(period: &str) -> Vec<Line> {
         })
         .collect()
 }
-fn carrier_docs(period: &str, idx: usize) -> Vec<(String, usize, &'static str)> {
-    let m = month_index(period);
-    let n = 2 + (m + idx) % 4;
-    (0..n)
-        .rev()
-        .map(|i| {
-            (
-                format!("ПЭ-ДМ-{}-{:03}", period, 10 * (idx + 1) + i),
-                2 + i * 4 + idx,
-                if i == n - 1 {
-                    ["В пути", "Выдан", "Завершено"][idx]
-                } else {
-                    "Завершено"
-                },
+
+fn contact_lines(fields: &[String]) -> String {
+    fields
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| esc(s))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+fn directory(s: &State, is_carrier: bool) -> String {
+    let data = api::fixture();
+    let (title, group, endpoint) = if is_carrier {
+        ("Перевозчики", "Логистика", "carriers")
+    } else {
+        ("База поставщиков", "Поставщики", "supplier-directory")
+    };
+    let mut html = head(title, group);
+    html += &text_filter(s, "Наименование, ИНН, регион или контакты");
+    let mut body = String::new();
+    let mut detail = String::new();
+    let count = if is_carrier {
+        let rows = api::carriers(data, &s.search);
+        for carrier in &rows {
+            let cells = carrier.cells.iter().map(api::cell).collect::<Vec<_>>();
+            let contact = contact_lines(&cells[7..11]);
+            write!(
+                body,
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                row_button("misc-detail", &carrier.key, &cells[0]),
+                esc(&cells[5]),
+                esc(&cells[6]),
+                cells[1],
+                contact
             )
-        })
-        .collect()
-}
-const CARRIER_HEADERS: [&str; 11] = [
-    "Перевозчик",
-    "Поручений",
-    "Последнее поручение",
-    "Дата поручения",
-    "Маршрут последнего поручения",
-    "ИНН",
-    "Регион",
-    "Рабочий телефон",
-    "Мобильный телефон",
-    "Рабочий e-mail",
-    "Корпоративный сайт",
-];
-fn supplier_row(p: &Partner) -> Vec<String> {
-    supplier_columns::COLUMNS
-        .iter()
-        .map(|k| {
-            match *k {
-                "Название" => p.name,
-                "Тип компании" => "Поставщик",
-                "Реквизит: ИНН" => p.inn,
-                "Регион" => p.region,
-                "Рабочий телефон" => p.contact,
-                "Рабочий e-mail" => p.mail,
-                "Теги отдела снабжения" => p.category,
-                _ => "",
+            .unwrap();
+            if carrier.key != s.selected {
+                continue;
             }
-            .to_owned()
-        })
-        .collect()
-}
-fn carrier_row(p: &Partner, idx: usize, period: &str) -> Vec<String> {
-    let docs = carrier_docs(period, idx);
-    vec![
-        p.name.into(),
-        docs.len().to_string(),
-        docs[0].0.clone(),
-        day_label(period, docs[0].1),
-        p.item.into(),
-        p.inn.into(),
-        p.region.into(),
-        p.contact.into(),
-        String::new(),
-        p.mail.into(),
-        String::new(),
-    ]
-}
-fn directory(s: &State, carrier: bool) -> String {
-    let set: &[Partner] = if carrier { &CARRIERS } else { &SUPPLIERS };
-    let title = if carrier {
-        "Перевозчики"
-    } else {
-        "База поставщиков"
-    };
-    let mut html = head(
-        title,
-        if carrier {
-            "Логистика"
-        } else {
-            "Поставщики"
-        },
-    );
-    html += &text_filter(s, "Название, ИНН, регион или специализация");
-    let seen: Vec<_> = set
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| match_text(&s.search, &[p.name, p.inn, p.region, p.category, p.mail]))
-        .collect();
-    let export = if carrier {
-        xlsx::link(
-            title,
-            &CARRIER_HEADERS,
-            &seen
-                .iter()
-                .map(|&(i, p)| carrier_row(p, i, &s.period))
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        xlsx::link(
-            title,
-            &supplier_columns::COLUMNS,
-            &seen
-                .iter()
-                .map(|&(_, p)| supplier_row(p))
-                .collect::<Vec<_>>(),
-        )
-    };
-    write!(html,"<section class=\"panel\"><div class=\"panel-head\"><h2>Контрагенты · {}</h2>{export}</div><div class=\"table-scroll\"><table><thead><tr><th>Наименование</th><th>ИНН</th><th>Регион</th><th>{}</th><th>Контакты</th></tr></thead><tbody>",seen.len(),if carrier{"Поручений за период"}else{"Специализация"}).unwrap();
-    for &(i, p) in &seen {
-        write!(
-            html,
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            row_button("misc-detail", p.inn, p.name),
-            p.inn,
-            p.region,
-            if carrier {
-                carrier_docs(&s.period, i).len().to_string()
-            } else {
-                p.category.into()
-            },
-            p.mail
-        )
-        .unwrap();
-    }
-    if seen.is_empty() {
-        html += &empty(5);
-    }
-    html += "</tbody></table></div></section>";
-    if let Some((i, p)) = seen.into_iter().find(|(_, p)| p.inn == s.selected) {
-        write!(html,"<section class=\"panel detail\"><div class=\"panel-head\"><h2>{}</h2>{}</div><p>{} · ИНН {} · {}</p><p>{} · {}</p>",p.name,row_button("misc-detail",p.inn,"Закрыть"),p.region,p.inn,p.category,p.contact,p.mail).unwrap();
-        if carrier {
-            html+="<h3>Поручения экспедитору</h3><div class=\"table-scroll\"><table><thead><tr><th>Поручение</th><th>Дата</th><th>Маршрут</th><th>Статус</th></tr></thead><tbody>";
-            for (doc, day, status) in carrier_docs(&s.period, i) {
+            write!(detail,"<section class=\"panel detail\"><div class=\"panel-head\"><h2>{}</h2>{}</div><p>{} · ИНН {}</p><p>{contact}</p><h3>Поручения экспедитору</h3><div class=\"table-scroll\"><table><thead><tr><th>Поручение</th><th>Дата</th><th>Маршрут</th><th>Статус</th></tr></thead><tbody>",esc(&cells[0]),row_button("misc-detail",&carrier.key,"Закрыть"),esc(&cells[6]),esc(&cells[5])).unwrap();
+            for doc in &carrier.docs {
                 write!(
-                    html,
-                    "<tr><td>{doc}</td><td>{}</td><td>{}</td><td>{status}</td></tr>",
-                    day_label(&s.period, day),
-                    p.item
+                    detail,
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    esc(doc.doc.as_deref().unwrap_or("")),
+                    esc(doc.dt.as_deref().unwrap_or("")),
+                    esc(doc.route.as_deref().unwrap_or("")),
+                    esc(doc.status.as_deref().unwrap_or(""))
                 )
                 .unwrap();
             }
-            html += "</tbody></table></div>";
-        } else {
-            let ledger = lines(&s.period);
-            let received = ledger
-                .iter()
-                .filter(|l| l.partner == i)
-                .map(|l| l.qty * l.price)
-                .sum();
+            detail += "</tbody></table></div></section>";
+        }
+        rows.len()
+    } else {
+        let rows = api::suppliers(data, &s.search, data.snapshot_at);
+        for row in &rows {
+            let inn = row.get("Реквизит: ИНН");
+            let contacts = [
+                "Рабочий телефон",
+                "Мобильный телефон",
+                "Рабочий e-mail",
+                "Корпоративный сайт",
+            ]
+            .iter()
+            .map(|k| row.get(k).to_owned())
+            .collect::<Vec<_>>();
+            let contact = contact_lines(&contacts);
             write!(
-                html,
-                "<p>Закупки за период <strong>{}</strong></p>{}",
-                money(received),
-                row_button("misc-vendor-ledger", p.inn, "Посмотреть закупки")
+                body,
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                row_button("misc-detail", &row.id, row.get("Название")),
+                esc(inn),
+                esc(row.get("Регион")),
+                esc(row.get("Теги отдела снабжения")),
+                contact
             )
             .unwrap();
+            if row.id != s.selected {
+                continue;
+            }
+            write!(detail,"<section class=\"panel detail\"><div class=\"panel-head\"><h2>{}</h2>{}</div><p>{} · ИНН {}</p><p>{contact}</p>",esc(row.get("Название")),row_button("misc-detail",&row.id,"Закрыть"),esc(row.get("Регион")),esc(inn)).unwrap();
+            if let Some(index) = SUPPLIERS.iter().position(|p| p.inn == inn) {
+                let sum = lines(&s.period)
+                    .iter()
+                    .filter(|l| l.partner == index)
+                    .map(|l| l.qty * l.price)
+                    .sum();
+                write!(
+                    detail,
+                    "<p>Закупки за период <strong>{}</strong></p>{}",
+                    money(sum),
+                    row_button("misc-vendor-ledger", inn, "Посмотреть закупки")
+                )
+                .unwrap();
+            }
+            detail += "</section>";
         }
-        html += "</section>";
+        rows.len()
+    };
+    let q = api::query_encode(&s.search);
+    write!(html,"<section class=\"panel\"><div class=\"panel-head\"><h2>Контрагенты · {count}</h2><a class=\"btn\" download=\"{endpoint}.xlsx\" href=\"/api/{endpoint}.xlsx?search={q}\">Скачать Excel</a></div><div class=\"table-scroll\"><table><thead><tr><th>Наименование</th><th>ИНН</th><th>Регион</th><th>{}</th><th>Контакты</th></tr></thead><tbody>",if is_carrier{"Поручений"}else{"Специализация"}).unwrap();
+    html += &body;
+    if count == 0 {
+        html += &empty(5);
     }
+    html += "</tbody></table></div></section>";
+    html += &detail;
     html
 }
 fn ledger(s: &State, request: bool) -> String {
@@ -309,7 +206,7 @@ fn ledger(s: &State, request: bool) -> String {
     let mut html = head(title, "Поставщики");
     let mut choices = opt("", "Все поставщики", &s.filter);
     for p in &SUPPLIERS {
-        choices += &opt(p.inn, p.name, &s.filter);
+        choices += &opt(p.inn, p.name(), &s.filter);
     }
     write!(html,"<div class=\"toolbar\"><label>Поставщик <select data-act=\"misc-filter\">{choices}</select></label></div>").unwrap();
     html += &text_filter(s, "Документ, поставщик или номенклатура");
@@ -326,7 +223,7 @@ fn ledger(s: &State, request: bool) -> String {
             let p = &SUPPLIERS[l.partner];
             (!request || !l.returned)
                 && (s.filter.is_empty() || s.filter == "all" || s.filter == p.inn)
-                && match_text(&s.search, &[p.name, p.item, &doc_id(l)])
+                && match_text(&s.search, &[p.name(), p.item, &doc_id(l)])
         })
         .collect();
     let sum: i64 = displayed.iter().map(|l| l.price * l.qty).sum();
@@ -344,7 +241,7 @@ fn ledger(s: &State, request: bool) -> String {
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             row_button("misc-detail", &doc_id(line), &doc_id(line)),
             day_label(&s.period, line.day),
-            p.name,
+            p.name(),
             p.item,
             line.qty,
             money(line.qty * line.price)
@@ -359,7 +256,7 @@ fn ledger(s: &State, request: bool) -> String {
         let p = &SUPPLIERS[l.partner];
         let delta = l.price - l.previous;
         write!(html,"<section class=\"panel detail\"><div class=\"panel-head\"><h2>{} · {}</h2>{}</div><p>{} · {}</p><div class=\"table-scroll\"><table><thead><tr><th>Номенклатура</th><th>Цена за единицу</th><th>Предыдущая цена</th><th>Изменение</th></tr></thead><tbody><tr><td>{}</td><td>{}</td><td>{}</td><td class=\"{}\">{}{}</td></tr></tbody></table></div></section>",
-            if request{"Заявка отработана"}else if l.returned{"Возврат поставщику"}else{"Приобретение товаров и услуг"},doc_id(l),row_button("misc-detail",&doc_id(l),"Закрыть"),p.name,day_label(&s.period,l.day),p.item,money(l.price),money(l.previous),if delta>0{"bad"}else if delta<0{"good"}else{""},if delta>0{"+"}else{""},money(delta)).unwrap();
+            if request{"Заявка отработана"}else if l.returned{"Возврат поставщику"}else{"Приобретение товаров и услуг"},doc_id(l),row_button("misc-detail",&doc_id(l),"Закрыть"),p.name(),day_label(&s.period,l.day),p.item,money(l.price),money(l.previous),if delta>0{"bad"}else if delta<0{"good"}else{""},if delta>0{"+"}else{""},money(delta)).unwrap();
     }
     html
 }
@@ -388,22 +285,28 @@ pub(super) fn answer(s: &State, question: &str) -> Option<(String, &'static str)
         if !allowed(s, "carriers") {
             return None;
         }
-        let count: usize = (0..CARRIERS.len())
-            .map(|i| carrier_docs(&s.period, i).len())
-            .sum();
+        let data = api::fixture();
+        let carriers = api::carriers(data, "");
+        let orders = carriers
+            .iter()
+            .flat_map(|c| c.docs.iter().map(move |d| (&c.cells[0], d)))
+            .filter(|(_, d)| d.dt.as_ref().is_some_and(|dt| dt.starts_with(&s.period)));
+        let mut counts = std::collections::BTreeMap::new();
+        for (name, _) in orders {
+            *counts.entry(name.as_str().unwrap_or("")).or_insert(0usize) += 1;
+        }
+        let total: usize = counts.values().sum();
+        let top = counts
+            .iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(n, _)| format!(" Больше всего у {n}."))
+            .unwrap_or_default();
         return Some((
             format!(
-                "За {} у {} перевозчиков {} поручений. Больше всего у {}.",
+                "За {} у {} перевозчиков {} поручений.{top}",
                 s.period,
-                CARRIERS.len(),
-                count,
-                CARRIERS
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(i, _)| carrier_docs(&s.period, *i).len())
-                    .unwrap()
-                    .1
-                    .name
+                counts.len(),
+                total
             ),
             "carriers",
         ));
@@ -423,20 +326,18 @@ pub(super) fn answer(s: &State, question: &str) -> Option<(String, &'static str)
 mod tests {
     use super::*;
     #[test]
-    fn supplier_schema_and_returns() {
-        assert_eq!(supplier_columns::COLUMNS.len(), 81);
-        let p = supplier_row(&SUPPLIERS[0]);
-        assert_eq!(p[80], "0000000101");
-        assert!(p[52].is_empty());
-        let l = lines("2026-11");
-        assert!(l.iter().any(|l| l.qty < 0));
-        assert!(l.iter().any(|l| l.qty > 0));
+    fn postings_include_receipts_and_returns() {
+        let lines = lines("2026-11");
+        assert!(lines.iter().any(|l| l.qty < 0));
+        assert!(lines.iter().any(|l| l.qty > 0));
     }
     #[test]
-    fn latest_carrier_doc_is_first() {
-        for i in 0..CARRIERS.len() {
-            let d = carrier_docs("2026-11", i);
-            assert!(d.windows(2).all(|p| p[0].1 > p[1].1));
-        }
+    fn directory_links_keep_search_with_reserved_characters() {
+        let mut state = State::default();
+        state.search = "a + #".into();
+        assert!(
+            directory(&state, false).contains("/api/supplier-directory.xlsx?search=a%20%2B%20%23")
+        );
+        assert!(directory(&state, true).contains("/api/carriers.xlsx?search=a%20%2B%20%23"));
     }
 }

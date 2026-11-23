@@ -128,7 +128,7 @@ pub fn save(s: &mut State, value: &str) {
     if occupied + json.len() > TICKETS_BUDGET {
         s.values.insert(
             "support/error".into(),
-            "Хранилище обращений в этом браузере заполнено. Уменьшите вложения.".into(),
+            "Хранилище обращений этого тестового сеанса заполнено. Уменьшите вложения.".into(),
         );
         return;
     }
@@ -178,7 +178,7 @@ pub fn dialog(s: &State) -> String {
             let messages=inbox(s);
             format!(r#"<h2>Помощь</h2><p>Получатель · {dest}. Обращение появится во входящих этого профиля в тестовой копии.</p><form data-act="help-save"><label>Текст обращения<textarea data-value-field maxlength="2000" required rows="4">{text}</textarea></label><label>Скриншоты <input type="file" data-help-files multiple accept="image/png,image/jpeg,image/webp"></label><p class="muted">Можно вставить скриншот из буфера обмена. До трёх изображений.</p><ul data-help-list></ul><p role="status" data-help-status>{error}</p><button class="btn primary" type="submit">Сохранить обращение</button></form>{messages}"#)
         },
-        Some("help-saved")=>format!("<h2>Обращение сохранено</h2><p>Получатель · {dest}. Обращение доступно в этом браузере.</p>"),
+        Some("help-saved")=>format!("<h2>Обращение сохранено</h2><p>Получатель · {dest}. Обращение доступно получателю в этом тестовом сеансе.</p>"),
         _=>return String::new(),
     };
     format!(

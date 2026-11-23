@@ -1,4 +1,4 @@
-pub(super) const COLUMNS: [&str; 81] = [
+pub(crate) const COLUMNS: [&str; 81] = [
     "ID",
     "Логотип",
     "Название",
